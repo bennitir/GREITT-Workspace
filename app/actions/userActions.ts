@@ -142,11 +142,27 @@ export async function removeUserCompany(
   revalidatePath("/stjornbord");
 }
 export async function setActiveUser(userId: number) {
+  const cookieStore = await cookies();
+  const sessionToken = cookieStore.get("sessionToken")?.value;
 
-    const user = await prisma.user.findUnique({
-    where: {
-      id: userId,
-    },
+  const session = sessionToken
+    ? await prisma.session.findUnique({
+        where: { token: sessionToken },
+        include: { user: true },
+      })
+    : null;
+
+  if (
+    !session ||
+    session.expiresAt < new Date() ||
+    !session.user.isActive ||
+    session.user.role !== "ADMIN"
+  ) {
+    throw new Error("Aðeins ADMIN má prófa sem annar notandi.");
+  }
+
+  const user = await prisma.user.findUnique({
+    where: { id: userId },
   });
 
   if (!user) {
@@ -154,12 +170,8 @@ export async function setActiveUser(userId: number) {
   }
 
   if (!user.isActive) {
-  redirect("/stjornbord?error=inactive-user");
-
+    redirect("/stjornbord?error=inactive-user");
   }
-  const { cookies } = await import("next/headers");
-
-  const cookieStore = await cookies();
 
   cookieStore.set("activeUserId", String(userId), {
     path: "/",
