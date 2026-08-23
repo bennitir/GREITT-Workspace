@@ -11,9 +11,15 @@ export function proxy(request: NextRequest) {
   }
 
   // Enginn virkur notandi:
-  // ekki hleypa inn á aðrar síður kerfisins.
- 
-  return NextResponse.next();
+// ekki hleypa inn á aðrar síður kerfisins.
+
+if (!activeUserId && pathname !== "/innskraning") {
+  const url = request.nextUrl.clone();
+  url.pathname = "/innskraning";
+  return NextResponse.redirect(url);
+}
+
+return NextResponse.next();
 }
 
 export const config = {
