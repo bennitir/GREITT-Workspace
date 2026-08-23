@@ -1,0 +1,280 @@
+generator client {
+  provider = "prisma-client"
+  output   = "../app/generated/prisma"
+}
+
+datasource db {
+  provider = "postgresql"
+}
+
+model Company {
+  nextVoucherNumber       Int             @default(1)
+  id                      Int             @id @default(autoincrement())
+  name                    String
+  kennitala               String          @unique
+  address                 String
+  phone                   String
+  email                   String
+  contact                 String
+  vatNumber               String?
+  receiptEntryMode        String          @default("AI")
+  isActive                Boolean         @default(true)
+  rskRegisteredActivities String?
+  activeActivities        String?
+  rskCertificatePath      String?
+  rskDataUpdatedAt        DateTime?
+  activitiesConfirmedAt   DateTime?
+  activitiesConfirmedBy   String?
+  closedAt                DateTime?
+  accounts                Account[]
+  receipts                Receipt[]
+  users                   UserCompany[]
+  modules                 CompanyModule[]
+  imports                 ImportBatch[]
+  usageEvents             UsageEvent[]
+  aiUsage                 AiUsage[]
+}
+
+model Customer {
+  id        Int    @id @default(autoincrement())
+  name      String
+  kennitala String @unique
+  email     String
+  phone     String
+  address   String
+}
+
+model Receipt {
+  id                     Int                  @id @default(autoincrement())
+  date                   DateTime?
+  description            String
+  amount                 Float
+  fileName               String?
+  filePath               String?
+  fileHash               String?
+  status                 String               @default("NEW")
+  receiptNumber          String?
+  voucherNumber          Int?
+  merchantName           String?
+  merchantKennitala      String?
+  ocrText                String?
+  ocrConfidence          Float?
+  ocrStatus              String?
+  aiDate                 DateTime?
+  aiAmount               Float?
+  aiApprovedAt           DateTime?
+  documentCount          Int?
+  suggestedDebitAccount  String?
+  suggestedCreditAccount String?
+  suggestedBookingText   String?
+  companyId              Int
+  createdAt              DateTime             @default(now())
+  updatedAt              DateTime             @updatedAt
+  aiBookingEntries       AiBookingEntry[]
+  aiDetectedDocuments    AiDetectedDocument[]
+  company                Company              @relation(fields: [companyId], references: [id])
+  entries                ReceiptEntry[]
+}
+
+model ReceiptEntry {
+  id        Int     @id @default(autoincrement())
+  account   String
+  text      String
+  debit     Float   @default(0)
+  credit    Float   @default(0)
+  receiptId Int
+  receipt   Receipt @relation(fields: [receiptId], references: [id], onDelete: Cascade)
+}
+
+model AiBookingEntry {
+  id        Int     @id @default(autoincrement())
+  account   String
+  text      String
+  debit     Float   @default(0)
+  credit    Float   @default(0)
+  receiptId Int
+  receipt   Receipt @relation(fields: [receiptId], references: [id], onDelete: Cascade)
+}
+
+model AiDetectedDocument {
+  id                     Int                       @id @default(autoincrement())
+  merchantName           String?
+  date                   DateTime?
+  receiptNumber          String?
+  totalAmount            Float?
+  summary                String
+  receiptId              Int
+  approvedAt             DateTime?
+  voucherNumber          Int?
+  reviewedAt             DateTime?
+  pageNumber             Int?
+  duplicateMarkedAt      DateTime?
+  duplicateOfDocumentId  Int?
+  duplicateVoucherNumber Int?
+  merchantKennitala      String?
+  receipt                Receipt                   @relation(fields: [receiptId], references: [id], onDelete: Cascade)
+  bookingEntries         AiDetectedDocumentEntry[]
+}
+
+model AiDetectedDocumentEntry {
+  id         Int                @id @default(autoincrement())
+  account    String
+  text       String
+  debit      Float              @default(0)
+  credit     Float              @default(0)
+  documentId Int
+  document   AiDetectedDocument @relation(fields: [documentId], references: [id], onDelete: Cascade)
+}
+
+model Account {
+  id                      Int      @id @default(autoincrement())
+  number                  String
+  name                    String
+  type                    String
+  isActive                Boolean  @default(true)
+  entryRole               String   @default("GENERAL")
+  vatRate                 Int?
+  vatAccount              String?
+  vatRequiresConfirmation Boolean  @default(false)
+  companyId               Int
+  createdAt               DateTime @default(now())
+  updatedAt               DateTime @updatedAt
+  company                 Company  @relation(fields: [companyId], references: [id], onDelete: Cascade)
+
+  @@unique([companyId, number])
+}
+
+model User {
+  id           Int           @id @default(autoincrement())
+  name         String
+  email        String        @unique
+  passwordHash String?
+  role         String        @default("CLIENT")
+  isActive     Boolean       @default(true)
+  createdAt    DateTime      @default(now())
+  updatedAt    DateTime      @updatedAt
+  companies    UserCompany[]
+  sessions     Session[]
+}
+
+model UserCompany {
+  id         Int     @id @default(autoincrement())
+  userId     Int
+  companyId  Int
+  isActive   Boolean @default(true)
+  accessRole String  @default("MANAGER")
+  company    Company @relation(fields: [companyId], references: [id], onDelete: Cascade)
+  user       User    @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, companyId])
+}
+
+model Session {
+  id        Int      @id @default(autoincrement())
+  token     String   @unique
+  userId    Int
+  expiresAt DateTime
+  createdAt DateTime @default(now())
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+}
+
+model AiUsage {
+  id                Int      @id @default(autoincrement())
+  companyId         Int?
+  company           Company? @relation(fields: [companyId], references: [id], onDelete: SetNull)
+  userId            Int?
+  receiptId         Int?
+  action            String
+  model             String
+  inputTokens       Int      @default(0)
+  cachedInputTokens Int      @default(0)
+  outputTokens      Int      @default(0)
+  totalTokens       Int      @default(0)
+  costUsd           Float    @default(0)
+  costIsk           Float    @default(0)
+  usdIskRate        Float    @default(0)
+  durationMs        Int?
+  success           Boolean  @default(true)
+  errorMessage      String?
+  createdAt         DateTime @default(now())
+}
+
+model CompanyModule {
+  id        Int      @id @default(autoincrement())
+  moduleId  String
+  enabled   Boolean  @default(true)
+  companyId Int
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  company Company @relation(fields: [companyId], references: [id], onDelete: Cascade)
+
+  @@unique([companyId, moduleId])
+  @@index([companyId])
+}
+
+model VoucherNumberReservation {
+  id            Int      @id @default(autoincrement())
+  companyId     Int
+  voucherNumber Int
+  sourceType    String
+  sourceId      Int
+  createdAt     DateTime @default(now())
+
+  @@unique([companyId, voucherNumber])
+  @@index([companyId])
+}
+
+model ImportBatch {
+  id         Int      @id @default(autoincrement())
+  companyId  Int
+  fileName   String
+  sourceType String   @default("CSV")
+  status     String   @default("NEW")
+  createdAt  DateTime @default(now())
+  updatedAt  DateTime @updatedAt
+
+  company Company     @relation(fields: [companyId], references: [id], onDelete: Cascade)
+  rows    ImportRow[]
+}
+
+model ImportRow {
+  id            Int       @id @default(autoincrement())
+  importBatchId Int
+  rowNumber     Int
+  voucherNumber Int?
+  date          DateTime?
+  account       String?
+  text          String?
+  debit         Float     @default(0)
+  credit        Float     @default(0)
+  status        String    @default("NEW")
+  errorMessage  String?
+  rawData       String?
+  createdAt     DateTime  @default(now())
+  updatedAt     DateTime  @updatedAt
+
+  importBatch ImportBatch @relation(fields: [importBatchId], references: [id], onDelete: Cascade)
+
+  @@unique([importBatchId, rowNumber])
+}
+
+model UsageEvent {
+  id           Int      @id @default(autoincrement())
+  companyId    Int
+  eventType    String
+  description  String?
+  quantity     Float    @default(1)
+  unitCostIsk  Float    @default(0)
+  totalCostIsk Float    @default(0)
+  metadata     String?
+  createdAt    DateTime @default(now())
+
+  company Company @relation(fields: [companyId], references: [id], onDelete: Cascade)
+
+  @@index([companyId])
+  @@index([createdAt])
+  @@index([eventType])
+}

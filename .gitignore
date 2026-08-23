@@ -39,3 +39,15 @@ yarn-error.log*
 # typescript
 *.tsbuildinfo
 next-env.d.ts
+
+/app/generated/prisma
+# local databases
+*.db
+
+# uploaded customer documents
+/public/uploads/
+# generated developer packages
+/_dev-package/
+/GLOGGT-dev-package.zip
+# temporary database test file
+dev.db.TEST
