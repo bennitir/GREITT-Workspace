@@ -51,3 +51,5 @@ next-env.d.ts
 /GLOGGT-dev-package.zip
 # temporary database test file
 dev.db.TEST
+.vercel
+.env*
