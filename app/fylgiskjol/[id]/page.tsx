@@ -14,6 +14,7 @@ import {
 import DetectedDocumentEntriesEditor from "@/components/DetectedDocumentEntriesEditor";
 
 import { prisma } from "@/lib/prisma";
+import { supabaseAdmin } from "@/lib/supabase";
 import { notFound, redirect } from "next/navigation";
 import { cookies } from "next/headers";
 import { getCompanyModuleSettings } from "@/lib/core/company-module-repository";
@@ -73,6 +74,17 @@ const canEdit = companyAccess.canWrite ?? false;
 });
 if (!receipt) {
   notFound();
+}
+let originalFileUrl = receipt.filePath ?? null;
+
+if (receipt.storagePath) {
+  const { data } = await supabaseAdmin.storage
+    .from("fylgiskjol")
+    .createSignedUrl(receipt.storagePath, 60 * 10);
+
+  if (data?.signedUrl) {
+    originalFileUrl = data.signedUrl;
+  }
 }
 
 const moduleSettings = await getCompanyModuleSettings(receipt.companyId);
@@ -137,7 +149,7 @@ const visibleDocuments = selectedDocument
       {receipt.filePath && (
   <>
     <a
-      href={receipt.filePath}
+      href={originalFileUrl ?? "#"}
       target="_blank"
       rel="noopener noreferrer"
       className="ml-2 rounded border px-3 py-2 font-medium text-blue-600 hover:bg-blue-50"

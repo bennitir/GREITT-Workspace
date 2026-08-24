@@ -16,11 +16,31 @@ import {
 import path from "path";
 import crypto from "crypto";
 import { prisma } from "@/lib/prisma";
+import { supabaseAdmin } from "@/lib/supabase";
 import { revalidatePath } from "next/cache";
 
-async function saveReceiptFile(file: File) {
+async function saveReceiptFile(file: File, companyId: number) {
   const bytes = await file.arrayBuffer();
   const buffer = Buffer.from(bytes);
+  const safeFileName = file.name
+  .replace(/ð/gi, "d")
+  .replace(/þ/gi, "th")
+  .replace(/æ/gi, "ae")
+  .normalize("NFD")
+  .replace(/[\u0300-\u036f]/g, "")
+  .replace(/[^a-zA-Z0-9._-]/g, "_");
+
+const storagePath = `${companyId}/${Date.now()}-${safeFileName}`;
+  const { error } = await supabaseAdmin.storage
+  .from("fylgiskjol")
+  .upload(storagePath, buffer, {
+    contentType: file.type || "application/octet-stream",
+    upsert: false,
+  });
+
+if (error) {
+  throw new Error(`Mistókst að vista fylgiskjal í Supabase: ${error.message}`);
+}
 
   const uploadDir = path.join(
     process.cwd(),
@@ -36,9 +56,10 @@ async function saveReceiptFile(file: File) {
   await writeFile(filePath, buffer);
 
   return {
-    fileName,
-    filePath: `/uploads/${fileName}`,
-  };
+  fileName,
+  filePath: `/uploads/${fileName}`,
+  storagePath,
+};
 }
 async function backfillMissingReceiptHashes() {
   const receipts = await prisma.receipt.findMany({
@@ -262,7 +283,7 @@ if (receiptNumber) {
   }
 }
 
-  const uploaded = await saveReceiptFile(file);
+  const uploaded = await saveReceiptFile(file, companyId);
 
   const createdReceipt = await prisma.receipt.create({
     data: {
@@ -281,6 +302,7 @@ amount: formData.get("amount")
       companyId,
       fileName: uploaded.fileName,
       filePath: uploaded.filePath,
+      storagePath: uploaded.storagePath,
       fileHash,
     },
   });
@@ -344,7 +366,7 @@ export async function createManualReceipt(formData: FormData) {
 
  const uploaded =
   file instanceof File && file.size > 0
-    ? await saveReceiptFile(file)
+    ? await saveReceiptFile(file, Number(activeCompanyId))
     : null;
 
     const rawVoucherNumber =

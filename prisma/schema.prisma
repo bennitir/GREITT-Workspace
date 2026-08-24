@@ -51,6 +51,7 @@ model Receipt {
   amount                 Float
   fileName               String?
   filePath               String?
+  storagePath String?
   fileHash               String?
   status                 String               @default("NEW")
   receiptNumber          String?

@@ -1,6 +1,7 @@
 import Link from "next/link";
 import { notFound } from "next/navigation";
 import { prisma } from "@/lib/prisma";
+import { supabaseAdmin } from "@/lib/supabase";
 import { cookies } from "next/headers";
 import { redirect } from "next/navigation";
 import { getCompanyModuleSettings } from "@/lib/core/company-module-repository";
@@ -85,6 +86,18 @@ const document = aiDocument
       receipt: importedReceipt!,
     };
 
+    let originalFileUrl = document.receipt.filePath ?? null;
+
+if (document.receipt.storagePath) {
+  const { data } = await supabaseAdmin.storage
+    .from("fylgiskjol")
+    .createSignedUrl(document.receipt.storagePath, 60 * 10);
+
+  if (data?.signedUrl) {
+    originalFileUrl = data.signedUrl;
+  }
+}
+
   return (
     <main className="p-8 text-lg">
       <div className="mx-auto max-w-5xl">
@@ -101,7 +114,7 @@ const document = aiDocument
 <div className="flex gap-3">
   {document.receipt.filePath ? (
   <a
-    href={document.receipt.filePath}
+    href={originalFileUrl ?? "#"}
     target="_blank"
     rel="noopener noreferrer"
     className="rounded border border-blue-600 px-4 py-2 font-medium text-blue-700 hover:bg-blue-50"
