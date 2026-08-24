@@ -264,7 +264,7 @@ bookedDocuments.sort((a, b) => {
           <tbody>
             {bookedDocuments.map((document) => (
               <BookedDocumentRow
-  key={document.id}
+  key={`${document.source}-${document.id}`}
   href={`/fylgiskjol/bokud/${document.voucherNumber}`}
 >
   <td className="border-b p-3 font-semibold">

@@ -185,3 +185,25 @@ export async function requireActiveCompanyWriteAccess() {
   
 }
 
+export async function requireActiveCompanyReadAccess() {
+  const cookieStore = await cookies();
+
+  const activeCompanyId = Number(
+    cookieStore.get("activeCompanyId")?.value || 0,
+  );
+
+  if (!activeCompanyId) {
+    throw new Error("Ekkert virkt fyrirtæki valið.");
+  }
+
+  const access = await getCompanyAccess(activeCompanyId);
+
+  if (!access.allowed) {
+    throw new Error(
+      "Þú hefur ekki aðgang að þessu fyrirtæki.",
+    );
+  }
+
+  return activeCompanyId;
+}
+

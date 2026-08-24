@@ -54,15 +54,37 @@ export async function GET() {
       ),
     );
 
-    let forbiddenCompanyAccessPairs = 0;
+    const forbiddenPairs: Array<{
+      userId: number;
+      companyId: number;
+    }> = [];
 
     for (const user of nonAdminUsers) {
       for (const company of activeCompanies) {
         const hasAccess = relationSet.has(`${user.id}:${company.id}`);
 
         if (!hasAccess) {
-          forbiddenCompanyAccessPairs += 1;
+          forbiddenPairs.push({
+            userId: user.id,
+            companyId: company.id,
+          });
         }
+      }
+    }
+
+    let forbiddenPairsWithVisibleReceipts = 0;
+
+    for (const pair of forbiddenPairs) {
+      const visibleReceiptCount = receipts.filter(
+        (receipt) => receipt.companyId === pair.companyId,
+      ).length;
+
+      const relationExists = relationSet.has(
+        `${pair.userId}:${pair.companyId}`,
+      );
+
+      if (relationExists && visibleReceiptCount > 0) {
+        forbiddenPairsWithVisibleReceipts += 1;
       }
     }
 
@@ -76,11 +98,19 @@ export async function GET() {
         count: receiptsWithoutCompany,
       },
 
+      forbiddenPairsHaveNoAccessRelation: {
+        status:
+          forbiddenPairsWithVisibleReceipts === 0
+            ? "PASS"
+            : "FAIL",
+        count: forbiddenPairsWithVisibleReceipts,
+      },
+
       accessMatrixGenerated: {
         status: "PASS",
         nonAdminUsersChecked: nonAdminUsers.length,
         activeCompaniesChecked: activeCompanies.length,
-        forbiddenPairsIdentified: forbiddenCompanyAccessPairs,
+        forbiddenPairsIdentified: forbiddenPairs.length,
       },
     };
 
@@ -98,6 +128,7 @@ export async function GET() {
         activeCompanies: activeCompanies.length,
         activeAccessRelations: userCompanyRelations.length,
         receipts: receipts.length,
+        forbiddenPairs: forbiddenPairs.length,
       },
 
       checks,
@@ -107,6 +138,8 @@ export async function GET() {
         namesReturned: false,
         emailsReturned: false,
         documentContentsReturned: false,
+        userIdsReturned: false,
+        companyIdsReturned: false,
       },
 
       timestamp: new Date().toISOString(),
