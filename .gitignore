@@ -30,7 +30,7 @@ yarn-debug.log*
 yarn-error.log*
 .pnpm-debug.log*
 
-# env files (can opt-in for committing if needed)
+# env files
 .env*
 
 # vercel
@@ -40,16 +40,37 @@ yarn-error.log*
 *.tsbuildinfo
 next-env.d.ts
 
+# generated prisma client
 /app/generated/prisma
+
 # local databases
 *.db
+dev.db.TEST
 
 # uploaded customer documents
 /public/uploads/
+
 # generated developer packages
 /_dev-package/
 /GLOGGT-dev-package.zip
-# temporary database test file
-dev.db.TEST
-.vercel
-.env*
+
+# local ZIP backups
+/*.zip
+
+# temporary folders
+/temp-baseline-check/
+/temp-yesterday/
+
+# local page backups
+*.backup-*.tsx
+
+# old SQLite migration archives
+/prisma/migrations-sqlite-backup/
+/prisma/migrations-sqlite-history/
+# local diagnostic and migration helper files
+/check-*.ts
+/scripts/check-*.ts
+/CHANGES-*.txt
+
+/prisma/*.sql
+/prisma/schema-*.prisma

@@ -14,6 +14,10 @@ import {
 import DetectedDocumentEntriesEditor from "@/components/DetectedDocumentEntriesEditor";
 
 import { prisma } from "@/lib/prisma";
+import {
+  formatDate,
+  formatNumber,
+} from "@/lib/locale";
 import { supabaseAdmin } from "@/lib/supabase";
 import { notFound, redirect } from "next/navigation";
 import { cookies } from "next/headers";
@@ -36,6 +40,21 @@ if (!activeCompanyId) {
 }
 
 const companyId = Number(activeCompanyId);
+const accounts = await prisma.account.findMany({
+  where: {
+    companyId,
+    isActive: true,
+  },
+  select: {
+    number: true,
+    name: true,
+  },
+  orderBy: {
+    number: "asc",
+  },
+});
+
+
 const companyAccess = await getCompanyAccess(companyId);
 const canBook = companyAccess.canBook ?? false;
 const canDelete = companyAccess.canDelete ?? false;
@@ -143,8 +162,8 @@ const visibleDocuments = selectedDocument
       )}
 
       <span className="font-semibold">
-        {receipt.amount.toLocaleString("is-IS")} kr.
-      </span>
+  {formatNumber(receipt.amount)} kr.
+</span>
 
       {receipt.filePath && (
   <>
@@ -301,18 +320,14 @@ const visibleDocuments = selectedDocument
 
       <span>
         {entry.debit > 0
-          ? `Debet ${entry.debit.toLocaleString(
-              "is-IS"
-            )} kr.`
-          : ""}
+  ? `Debet ${formatNumber(entry.debit)} kr.`
+  : ""}
       </span>
 
       <span>
         {entry.credit > 0
-          ? `Kredit ${entry.credit.toLocaleString(
-              "is-IS"
-            )} kr.`
-          : ""}
+  ? `Kredit ${formatNumber(entry.credit)} kr.`
+  : ""}
       </span>
     </div>
   ))}
@@ -329,22 +344,16 @@ const visibleDocuments = selectedDocument
             <p>
               <strong>Dagsetning:</strong>{" "}
               {receipt.aiDate
-                ? receipt.aiDate.toLocaleDateString(
-                    "is-IS"
-                  )
-                : "Engin tillaga"}
+  ? formatDate(receipt.aiDate)
+  : "Engin tillaga"}
             </p>
 
             <p className="mt-1">
               <strong>Upphæð:</strong>{" "}
 {selectedDocumentId && visibleDocuments[0]?.totalAmount != null
-  ? `${visibleDocuments[0].totalAmount.toLocaleString(
-      "is-IS"
-    )} kr.`
+  ? `${formatNumber(visibleDocuments[0].totalAmount)} kr.`
   : receipt.aiAmount != null
-    ? `${receipt.aiAmount.toLocaleString(
-        "is-IS"
-      )} kr.`
+    ? `${formatNumber(receipt.aiAmount)} kr.`
     : "Engin tillaga"}
             </p>
           </div>
@@ -377,24 +386,19 @@ const visibleDocuments = selectedDocument
                           "Ekki úthlutað"}
                       </p>
 
-                      <p className="mt-2">
-                        <strong>Dagsetning:</strong>{" "}
-                        {document.date
-                          ? document.date.toLocaleDateString(
-                              "is-IS"
-                            )
-                          : "Óþekkt"}
-                      </p>
+                    <p className="mt-2">
+  <strong>Dagsetning:</strong>{" "}
+  {document.date
+    ? formatDate(document.date)
+    : "Óþekkt"}
+</p>
 
-                      <p>
-                        <strong>Upphæð:</strong>{" "}
-                        {document.totalAmount != null
-                          ? `${document.totalAmount.toLocaleString(
-                              "is-IS"
-                            )} kr.`
-                          : "Óþekkt"}
-                      </p>
-
+<p>
+  <strong>Upphæð:</strong>{" "}
+  {document.totalAmount != null
+    ? `${formatNumber(document.totalAmount)} kr.`
+    : "Óþekkt"}
+</p>
                       <p className="mt-2 text-sm">
                         {document.summary}
                       </p>
@@ -402,6 +406,7 @@ const visibleDocuments = selectedDocument
                       <DetectedDocumentEntriesEditor
   documentId={document.id}
   entries={document.bookingEntries}
+  accounts={accounts}
   date={document.date}
   totalAmount={document.totalAmount}
   reviewedAt={document.reviewedAt}

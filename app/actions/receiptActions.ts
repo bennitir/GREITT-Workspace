@@ -324,6 +324,10 @@ try {
 });
 }
   revalidatePath("/fylgiskjol");
+
+  return {
+  receiptId: createdReceipt.id,
+};
 }
 
 export async function createManualReceipt(formData: FormData) {
@@ -1522,6 +1526,39 @@ if (usedByAi || usedByManual) {
         })
       ),
     });
+
+    const hasVatActivity = document.bookingEntries.some(
+  (entry) =>
+    entry.account === "2510" ||
+    entry.account === "2520"
+);
+
+const isVatSettlement = document.bookingEntries.some(
+  (entry) => entry.account === "2590"
+);
+
+if (hasVatActivity && !isVatSettlement) {
+  const vatYear = document.date!.getUTCFullYear();
+  const vatPeriod =
+    Math.floor(document.date!.getUTCMonth() / 2) + 1;
+
+  await tx.vatPeriod.upsert({
+    where: {
+      companyId_year_period: {
+        companyId: company.id,
+        year: vatYear,
+        period: vatPeriod,
+      },
+    },
+    update: {},
+    create: {
+      companyId: company.id,
+      year: vatYear,
+      period: vatPeriod,
+      status: "OPEN",
+    },
+  });
+}
 
     await tx.aiDetectedDocument.update({
       where: {

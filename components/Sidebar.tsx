@@ -26,10 +26,16 @@ export default function Sidebar({
     Workspace
   </p>
 </Link>
-<div className="mt-4 rounded-lg bg-slate-800 p-3">
+<Link
+  href="/fyrirtaeki"
+  className="mt-4 block rounded-lg bg-slate-800 p-3 hover:bg-slate-700 transition-colors"
+>
   <p className="text-xs uppercase tracking-wide text-slate-400">
     Virkt fyrirtæki
   </p>
+
+
+
 
   <p className="mt-1 font-semibold text-white">
   {activeCompanyName ?? "Ekkert valið"}
@@ -48,8 +54,8 @@ export default function Sidebar({
             : activeCompanyRole}
   </p>
 )}
-  
-</div>
+
+</Link>
 {activeUserRole === "ADMIN" ? (
   <Link
     href="/fyrirtaeki/nytt"
@@ -166,7 +172,7 @@ export default function Sidebar({
 {enabledModuleIds.includes("bokhald") && (
 
 <Link
-  href="#"
+  href="/banki"
   className="block rounded-lg px-4 py-3 text-slate-300 hover:bg-slate-800"
 >
   🏦 Banki
@@ -176,8 +182,8 @@ export default function Sidebar({
 {enabledModuleIds.includes("bokhald") && (
 
 <Link
-  href="#"
-  className="block rounded-lg px-4 py-3 text-slate-300 hover:bg-slate-800"
+  href="/vsk"
+  className={`block rounded-lg px-4 py-3 transition-colors ${pathname.startsWith("/vsk") ? "bg-blue-600 text-white" : "text-slate-300 hover:bg-slate-800"}`}
 >
   🧾 VSK og skil
 </Link>
@@ -200,6 +206,19 @@ export default function Sidebar({
   </Link>
 )}
 
+  {enabledModuleIds.includes("verk") && (
+  <Link
+    href="/verk"
+    className={`block rounded-lg px-4 py-3 transition-colors ${
+      pathname.startsWith("/verk")
+        ? "bg-blue-600 text-white"
+        : "text-slate-300 hover:bg-slate-800"
+    }`}
+  >
+    🔧 Verk
+  </Link>
+)}
+
       </nav>
 
       <form action={logoutUser} className="mt-auto pt-6">
@@ -212,4 +231,6 @@ export default function Sidebar({
 </form>
     </aside>
   );
+
+
 }

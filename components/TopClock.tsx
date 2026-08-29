@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
+import { DEFAULT_LOCALE } from "@/lib/locale";
 
 export default function TopClock() {
   const [now, setNow] = useState<Date | null>(null);
@@ -73,7 +74,7 @@ const weekdayIndex = new Date(
 const dateText =
   `${weekdays[weekdayIndex]} ${day}. ${months[month - 1]} ${year}`;
 
-  const timeText = new Intl.DateTimeFormat("is-IS", {
+  const timeText = new Intl.DateTimeFormat(DEFAULT_LOCALE, {
     hour: "2-digit",
     minute: "2-digit",
     hour12: false,
@@ -85,7 +86,7 @@ const dateText =
       <div className="text-right text-sm text-gray-600">
         <span className="capitalize">{dateText}</span>
         <span className="mx-2">·</span>
-        <span>{timeText}</span>
+        <span className="text-xl font-bold">{timeText}</span>
       </div>
     </div>
   );

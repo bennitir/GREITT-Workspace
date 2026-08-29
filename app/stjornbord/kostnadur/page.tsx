@@ -1,3 +1,4 @@
+import { formatNumber } from "@/lib/locale";
 import { prisma } from "@/lib/prisma";
 
 export default async function KostnadurPage({
@@ -56,6 +57,24 @@ export default async function KostnadurPage({
 },
   });
 
+    const totalActions = companies.reduce(
+    (sum, company) => sum + company.aiUsage.length,
+    0
+  );
+
+  const totalAiCost = companies.reduce(
+    (sum, company) =>
+      sum +
+      company.aiUsage.reduce(
+        (companySum, item) => companySum + item.costIsk,
+        0
+      ),
+    0
+  );
+
+  const overallAverageCost =
+    totalActions > 0 ? totalAiCost / totalActions : 0;
+
   return (
     <main className="p-8">
       <h1 className="text-3xl font-bold">Kostnaður</h1>
@@ -110,6 +129,41 @@ export default async function KostnadurPage({
   </a>
 </div>
 
+      <div className="mt-6 grid gap-3 sm:grid-cols-3">
+        <div className="rounded border bg-white p-4">
+          <div className="text-sm text-slate-600">
+            AI-aðgerðir
+          </div>
+          <div className="mt-1 text-2xl font-bold">
+            {totalActions}
+          </div>
+        </div>
+
+        <div className="rounded border bg-white p-4">
+          <div className="text-sm text-slate-600">
+            AI-kostnaður samtals
+          </div>
+          <div className="mt-1 text-2xl font-bold">
+            {formatNumber(totalAiCost, {
+  maximumFractionDigits: 2,
+})}
+            kr.
+          </div>
+        </div>
+
+        <div className="rounded border bg-white p-4">
+          <div className="text-sm text-slate-600">
+            Meðalverð á aðgerð
+          </div>
+          <div className="mt-1 text-2xl font-bold">
+            {formatNumber(overallAverageCost, {
+  maximumFractionDigits: 2,
+})}
+            kr.
+          </div>
+        </div>
+      </div>
+
       <div className="mt-6 overflow-x-auto rounded border bg-white">
         <table className="w-full border-collapse text-left">
           <thead className="bg-slate-100">
@@ -133,6 +187,8 @@ export default async function KostnadurPage({
                   ? totalCost / company.aiUsage.length
                   : 0;
 
+
+
               return (
                 <tr key={company.id}>
                   <td className="border-b p-3 font-semibold">
@@ -144,22 +200,49 @@ export default async function KostnadurPage({
                   </td>
 
                   <td className="border-b p-3">
-                    {totalCost.toLocaleString("is-IS", {
-                      maximumFractionDigits: 2,
-                    })}{" "}
+                    {formatNumber(totalCost, {
+  maximumFractionDigits: 2,
+})}
                     kr.
                   </td>
 
                   <td className="border-b p-3">
-                    {averageCost.toLocaleString("is-IS", {
-                      maximumFractionDigits: 2,
-                    })}{" "}
+                    {formatNumber(averageCost, {
+  maximumFractionDigits: 2,
+})}
                     kr.
                   </td>
                 </tr>
               );
             })}
           </tbody>
+
+          <tfoot className="bg-slate-100 font-bold">
+            <tr>
+              <td className="border-t p-3">
+                SAMTALS
+              </td>
+
+              <td className="border-t p-3">
+                {totalActions}
+              </td>
+
+              <td className="border-t p-3">
+                {formatNumber(totalAiCost, {
+  maximumFractionDigits: 2,
+})}
+                kr.
+              </td>
+
+              <td className="border-t p-3">
+                {formatNumber(overallAverageCost, {
+  maximumFractionDigits: 2,
+})}
+                kr.
+              </td>
+            </tr>
+          </tfoot>
+
         </table>
       </div>
     </main>

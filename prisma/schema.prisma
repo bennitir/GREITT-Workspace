@@ -27,12 +27,16 @@ model Company {
   activitiesConfirmedBy   String?
   closedAt                DateTime?
   accounts                Account[]
-  receipts                Receipt[]
-  users                   UserCompany[]
+  aiUsage                 AiUsage[]
   modules                 CompanyModule[]
   imports                 ImportBatch[]
+  receipts                Receipt[]
   usageEvents             UsageEvent[]
-  aiUsage                 AiUsage[]
+  users                   UserCompany[]
+  workLogs                WorkLog[]
+  workOrders              WorkOrder[]
+  bankAccounts              BankAccount[]
+    vatPeriods              VatPeriod[]
 }
 
 model Customer {
@@ -51,7 +55,6 @@ model Receipt {
   amount                 Float
   fileName               String?
   filePath               String?
-  storagePath String?
   fileHash               String?
   status                 String               @default("NEW")
   receiptNumber          String?
@@ -71,6 +74,7 @@ model Receipt {
   companyId              Int
   createdAt              DateTime             @default(now())
   updatedAt              DateTime             @updatedAt
+  storagePath            String?
   aiBookingEntries       AiBookingEntry[]
   aiDetectedDocuments    AiDetectedDocument[]
   company                Company              @relation(fields: [companyId], references: [id])
@@ -146,16 +150,20 @@ model Account {
 }
 
 model User {
-  id           Int           @id @default(autoincrement())
-  name         String
-  email        String        @unique
-  passwordHash String?
-  role         String        @default("CLIENT")
-  isActive     Boolean       @default(true)
-  createdAt    DateTime      @default(now())
-  updatedAt    DateTime      @updatedAt
-  companies    UserCompany[]
-  sessions     Session[]
+  id                 Int           @id @default(autoincrement())
+  name               String
+  email              String        @unique
+  passwordHash       String?
+  mustChangePassword Boolean       @default(false)
+  role               String        @default("CLIENT")
+  isActive           Boolean       @default(true)
+  createdAt          DateTime      @default(now())
+  updatedAt          DateTime      @updatedAt
+  sessions           Session[]
+  companies          UserCompany[]
+  workLogs           WorkLog[]
+  createdWorkOrders  WorkOrder[]
+  vatSubmissions     VatSubmission[]
 }
 
 model UserCompany {
@@ -168,7 +176,7 @@ model UserCompany {
   user       User    @relation(fields: [userId], references: [id], onDelete: Cascade)
 
   @@unique([userId, companyId])
-}
+   }
 
 model Session {
   id        Int      @id @default(autoincrement())
@@ -184,7 +192,6 @@ model Session {
 model AiUsage {
   id                Int      @id @default(autoincrement())
   companyId         Int?
-  company           Company? @relation(fields: [companyId], references: [id], onDelete: SetNull)
   userId            Int?
   receiptId         Int?
   action            String
@@ -200,6 +207,7 @@ model AiUsage {
   success           Boolean  @default(true)
   errorMessage      String?
   createdAt         DateTime @default(now())
+  company           Company? @relation(fields: [companyId], references: [id])
 }
 
 model CompanyModule {
@@ -209,8 +217,7 @@ model CompanyModule {
   companyId Int
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
-
-  company Company @relation(fields: [companyId], references: [id], onDelete: Cascade)
+  company   Company  @relation(fields: [companyId], references: [id], onDelete: Cascade)
 
   @@unique([companyId, moduleId])
   @@index([companyId])
@@ -229,35 +236,36 @@ model VoucherNumberReservation {
 }
 
 model ImportBatch {
-  id         Int      @id @default(autoincrement())
-  companyId  Int
-  fileName   String
-  sourceType String   @default("CSV")
-  status     String   @default("NEW")
-  createdAt  DateTime @default(now())
-  updatedAt  DateTime @updatedAt
+  id            Int          @id @default(autoincrement())
+  companyId     Int
+  bankAccountId Int?
+  fileName      String
+  sourceType    String       @default("CSV")
+  status        String       @default("NEW")
+  createdAt     DateTime     @default(now())
+  updatedAt     DateTime     @updatedAt
+  company       Company      @relation(fields: [companyId], references: [id], onDelete: Cascade)
+  bankAccount   BankAccount? @relation(fields: [bankAccountId], references: [id], onDelete: Cascade)
+  rows          ImportRow[]
 
-  company Company     @relation(fields: [companyId], references: [id], onDelete: Cascade)
-  rows    ImportRow[]
 }
 
 model ImportRow {
-  id            Int       @id @default(autoincrement())
+  id            Int         @id @default(autoincrement())
   importBatchId Int
   rowNumber     Int
   voucherNumber Int?
   date          DateTime?
   account       String?
   text          String?
-  debit         Float     @default(0)
-  credit        Float     @default(0)
-  status        String    @default("NEW")
+  debit         Float       @default(0)
+  credit        Float       @default(0)
+  status        String      @default("NEW")
   errorMessage  String?
   rawData       String?
-  createdAt     DateTime  @default(now())
-  updatedAt     DateTime  @updatedAt
-
-  importBatch ImportBatch @relation(fields: [importBatchId], references: [id], onDelete: Cascade)
+  createdAt     DateTime    @default(now())
+  updatedAt     DateTime    @updatedAt
+  importBatch   ImportBatch @relation(fields: [importBatchId], references: [id], onDelete: Cascade)
 
   @@unique([importBatchId, rowNumber])
 }
@@ -272,10 +280,132 @@ model UsageEvent {
   totalCostIsk Float    @default(0)
   metadata     String?
   createdAt    DateTime @default(now())
-
-  company Company @relation(fields: [companyId], references: [id], onDelete: Cascade)
+  company      Company  @relation(fields: [companyId], references: [id], onDelete: Cascade)
 
   @@index([companyId])
   @@index([createdAt])
   @@index([eventType])
+}
+
+model WorkOrder {
+  id          Int       @id @default(autoincrement())
+  companyId   Int
+  createdById Int?
+  title       String
+  description String?
+  address     String?
+  priority    String    @default("NORMAL")
+  status      String    @default("NEW")
+  createdAt   DateTime  @default(now())
+  startedAt   DateTime?
+  completedAt DateTime?
+  workLogs    WorkLog[]
+  company     Company   @relation(fields: [companyId], references: [id], onDelete: Cascade)
+  createdBy   User?     @relation(fields: [createdById], references: [id])
+
+  @@index([companyId])
+  @@index([status])
+  @@index([createdById])
+}
+
+model WorkLog {
+  id              Int       @id @default(autoincrement())
+  companyId       Int
+  workOrderId     Int
+  userId          Int?
+  workDate        DateTime
+  startedAt       DateTime?
+  endedAt         DateTime?
+  breakMinutes    Int       @default(0)
+  durationMinutes Int?
+  description     String?
+  createdAt       DateTime  @default(now())
+  updatedAt       DateTime  @updatedAt
+  company         Company   @relation(fields: [companyId], references: [id], onDelete: Cascade)
+  user            User?     @relation(fields: [userId], references: [id])
+  workOrder       WorkOrder @relation(fields: [workOrderId], references: [id], onDelete: Cascade)
+
+  @@index([companyId])
+  @@index([workOrderId])
+  @@index([userId])
+  @@index([workDate])
+}
+
+model BankAccount {
+  id          Int      @id @default(autoincrement())
+  companyId   Int
+  name        String
+  bankName    String
+  accountNumber String?
+  iban        String?
+  isActive    Boolean  @default(true)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  company     Company  @relation(fields: [companyId], references: [id], onDelete: Cascade)
+  transactions BankTransaction[]
+  importBatches ImportBatch[]
+}
+
+model BankTransaction {
+  id              Int      @id @default(autoincrement())
+  bankAccountId   Int
+  date            DateTime
+  text            String
+  amount          Decimal
+    reference       String?
+  fingerprint     String?
+  status          String   @default("UNRECONCILED")
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+
+  bankAccount     BankAccount @relation(fields: [bankAccountId], references: [id], onDelete: Cascade)
+
+  @@unique([bankAccountId, fingerprint])
+}
+
+model VatPeriod {
+  id          Int      @id @default(autoincrement())
+  companyId   Int
+  year        Int
+  period      Int
+  status      String   @default("OPEN")
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  company     Company  @relation(fields: [companyId], references: [id], onDelete: Cascade)
+  submissions VatSubmission[]
+
+  @@unique([companyId, year, period])
+  @@index([companyId, year, period])
+}
+
+model VatSubmission {
+  id             Int      @id @default(autoincrement())
+  vatPeriodId    Int
+  version        Int      @default(1)
+  submissionType String   @default("ORIGINAL")
+  status         String   @default("DRAFT")
+
+  a              Float    @default(0)
+  b              Float    @default(0)
+  c              Float    @default(0)
+  d              Float    @default(0)
+  e              Float    @default(0)
+  f              Float    @default(0)
+  g              Float    @default(0)
+  h              Float    @default(0)
+
+  createdById    Int?
+  submittedAt    DateTime?
+  rskReference   String?
+  rskReceiptPath String?
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+
+  vatPeriod      VatPeriod @relation(fields: [vatPeriodId], references: [id], onDelete: Cascade)
+  createdBy      User?     @relation(fields: [createdById], references: [id], onDelete: SetNull)
+
+  @@unique([vatPeriodId, version])
+  @@index([vatPeriodId])
 }

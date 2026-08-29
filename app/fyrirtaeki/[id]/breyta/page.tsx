@@ -1,6 +1,6 @@
 import CompanyEditForm from "@/components/CompanyEditForm";
 import { prisma } from "@/lib/prisma";
-import { cookies } from "next/headers";
+import { getEffectiveUser } from "@/lib/core/access-control";
 import { redirect } from "next/navigation";
 
 type Props = {
@@ -9,40 +9,39 @@ type Props = {
   }>;
 };
 
-export default async function BreytaFyrirtaekiPage({ params }: Props) {
+export default async function BreytaFyrirtaekiPage({
+  params,
+}: Props) {
   const { id } = await params;
-  const cookieStore = await cookies();
-const activeUserId = cookieStore.get("activeUserId")?.value;
+  const companyId = Number(id);
 
-const activeUser = activeUserId
-  ? await prisma.user.findUnique({
-      where: {
-        id: Number(activeUserId),
-      },
-    })
-  : null;
+  if (!Number.isInteger(companyId)) {
+    redirect("/fyrirtaeki");
+  }
 
-if (!activeUser || activeUser.role !== "ADMIN") {
-  redirect(`/fyrirtaeki/${id}`);
-}
+  const activeUser = await getEffectiveUser();
+
+  if (!activeUser) {
+    redirect("/innskraning");
+  }
+
+  if (activeUser.role !== "ADMIN") {
+    redirect("/fyrirtaeki");
+  }
 
   const company = await prisma.company.findUnique({
     where: {
-      id: Number(id),
+      id: companyId,
     },
   });
 
   if (!company) {
-    return (
-      <main className="p-8">
-        <h1>Fyrirtæki fannst ekki.</h1>
-      </main>
-    );
+    redirect("/fyrirtaeki");
   }
 
   return (
     <main className="p-8">
-      <h1 className="text-3xl font-bold mb-6">
+      <h1 className="mb-6 text-3xl font-bold">
         Breyta fyrirtæki
       </h1>
 

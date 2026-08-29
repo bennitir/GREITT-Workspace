@@ -1,3 +1,7 @@
+import {
+  formatDate,
+  formatNumber,
+} from "@/lib/locale";
 import Link from "next/link";
 import { notFound } from "next/navigation";
 import { prisma } from "@/lib/prisma";
@@ -145,8 +149,8 @@ if (document.receipt.storagePath) {
   <strong>Dagsetning:</strong>
   <span>
     {document.date
-      ? document.date.toLocaleDateString("is-IS")
-      : "—"}
+  ? formatDate(document.date)
+  : "—"}
   </span>
 
   <strong>Seljandi:</strong>
@@ -157,7 +161,7 @@ if (document.receipt.storagePath) {
 
   <strong>Upphæð:</strong>
   <span>
-    {(document.totalAmount ?? 0).toLocaleString("is-IS")} kr.
+    {formatNumber(document.totalAmount ?? 0)} kr.
   </span>
 </div>
           </section>
@@ -174,11 +178,11 @@ if (document.receipt.storagePath) {
                   <strong>{entry.account}</strong>
                   <span>{entry.text}</span>
                   <span className="text-right whitespace-nowrap">
-  Debet {entry.debit.toLocaleString("is-IS")} kr.
+  Debet {formatNumber(entry.debit)} kr.
 </span>
 
 <span className="text-right whitespace-nowrap">
-  Kredit {entry.credit.toLocaleString("is-IS")} kr.
+  Kredit {formatNumber(entry.credit)} kr.
 </span>
                 </div>
               ))}
@@ -199,12 +203,12 @@ if (document.receipt.storagePath) {
     <div className="mt-4 border-t pt-4">
       <div className="flex justify-between">
         <strong>Debet samtals:</strong>
-        <strong>{totalDebit.toLocaleString("is-IS")} kr.</strong>
+        <strong>{formatNumber(totalDebit)} kr.</strong>
       </div>
 
       <div className="mt-1 flex justify-between">
         <strong>Kredit samtals:</strong>
-        <strong>{totalCredit.toLocaleString("is-IS")} kr.</strong>
+        <strong>{formatNumber(totalCredit)} kr.</strong>
       </div>
 
       <div

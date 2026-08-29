@@ -22,14 +22,16 @@ export default function NyrNotandiPage() {
       </div>
 
       <div className="max-w-2xl rounded-lg border bg-white p-6">
-  <form action={createUser} className="space-y-5">
+        <form action={createUser} className="space-y-5">
           <div>
             <label className="mb-1 block font-semibold">
               Nafn
             </label>
+
             <input
               type="text"
               name="name"
+              required
               className="w-full rounded border px-3 py-2"
             />
           </div>
@@ -38,26 +40,27 @@ export default function NyrNotandiPage() {
             <label className="mb-1 block font-semibold">
               Netfang
             </label>
+
             <input
               type="email"
               name="email"
+              required
               className="w-full rounded border px-3 py-2"
             />
           </div>
 
-<div>
-  <label className="mb-1 block font-semibold">
-    Lykilorð
-  </label>
+          <div className="rounded-lg border border-blue-200 bg-blue-50 p-4">
+            <p className="font-semibold text-blue-900">
+              Aðgangsupplýsingar
+            </p>
 
-  <input
-    type="password"
-    name="password"
-    required
-    minLength={8}
-    className="w-full rounded border px-3 py-2"
-  />
-</div>
+            <p className="mt-1 text-sm text-blue-800">
+              GLÖGGT býr sjálfkrafa til tímabundið lykilorð
+              og sendir það á netfang notandans.
+              Við fyrstu innskráningu þarf notandinn að
+              velja sitt eigið lykilorð.
+            </p>
+          </div>
 
           <div>
             <label className="mb-1 block font-semibold">
@@ -72,9 +75,11 @@ export default function NyrNotandiPage() {
               <option value="ADMIN">
                 Kerfisstjóri
               </option>
+
               <option value="BOOKKEEPER">
                 Bókari
               </option>
+
               <option value="CLIENT">
                 Viðskiptavinur
               </option>
@@ -85,10 +90,10 @@ export default function NyrNotandiPage() {
             type="submit"
             className="rounded bg-blue-600 px-4 py-2 font-medium text-white"
           >
-            Stofna notanda
+            Stofna notanda og senda aðgang
           </button>
         </form>
-</div>
+      </div>
     </main>
   );
 }

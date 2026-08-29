@@ -1,23 +1,15 @@
+import { getEffectiveUser } from "@/lib/core/access-control";
+import { formatNumber } from "@/lib/locale";
 import { cookies } from "next/headers";
 import { redirect } from "next/navigation";
 import { prisma } from "@/lib/prisma";
 
 export default async function InnsynPage() {
   const cookieStore = await cookies();
-  const sessionToken = cookieStore.get("sessionToken")?.value;
 
-const session = sessionToken
-  ? await prisma.session.findUnique({
-      where: {
-        token: sessionToken,
-      },
-      include: {
-        user: true,
-      },
-    })
-  : null;
+const activeUser = await getEffectiveUser();
 
-if (!session || session.expiresAt < new Date() || !session.user.isActive) {
+if (!activeUser) {
   redirect("/innskraning");
 }
   const activeCompanyId =
@@ -35,11 +27,11 @@ if (!session || session.expiresAt < new Date() || !session.user.isActive) {
   }
 
   const companyId = Number(activeCompanyId);
-if (session.user.role !== "ADMIN") {
+if (activeUser.role !== "ADMIN") {
   const access = await prisma.userCompany.findUnique({
     where: {
       userId_companyId: {
-        userId: session.user.id,
+        userId: activeUser.id,
         companyId,
       },
     },
@@ -146,9 +138,9 @@ if (session.user.role !== "ADMIN") {
   const vatBalance = outputVat - inputVat;
 
   const formatKr = (amount: number) =>
-    amount.toLocaleString("is-IS", {
-      maximumFractionDigits: 0,
-    });
+  formatNumber(amount, {
+    maximumFractionDigits: 0,
+  });
 
   return (
     <div className="p-8">

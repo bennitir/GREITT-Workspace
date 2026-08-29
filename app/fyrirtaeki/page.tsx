@@ -1,3 +1,4 @@
+import { getEffectiveUser } from "@/lib/core/access-control";
 import { redirect } from "next/navigation";
 import { setActiveCompany } from "@/app/actions/companyActions";
 import Link from "next/link";
@@ -7,28 +8,14 @@ import PageHeader from "@/components/ui/PageHeader";
 import Card from "@/components/ui/Card";
 import Button from "@/components/ui/Button";
 import EmptyState from "@/components/ui/EmptyState";
-import { cookies } from "next/headers";
+
 
 export default async function FyrirtaekiPage() {
-  const cookieStore = await cookies();
-  const sessionToken = cookieStore.get("sessionToken")?.value;
+    const activeUser = await getEffectiveUser();
 
-const session = sessionToken
-  ? await prisma.session.findUnique({
-      where: {
-        token: sessionToken,
-      },
-      include: {
-        user: true,
-      },
-    })
-  : null;
-
-if (!session || session.expiresAt < new Date() || !session.user.isActive) {
+if (!activeUser) {
   redirect("/innskraning");
 }
-
-const activeUser = session.user;
   const companies = await prisma.company.findMany({
   where: {
     isActive: true,

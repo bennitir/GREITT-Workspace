@@ -1,5 +1,6 @@
 "use client";
 
+import { formatNumber } from "@/lib/locale";
 import { useEffect, useState } from "react";
 
 type BookingRow = {
@@ -392,21 +393,21 @@ entryRole: "EXPENSE",
     <div>
       <span className="text-sm text-gray-600">Debet samtals</span>
       <div className="font-semibold">
-        {totalDebit.toLocaleString("is-IS")} kr.
+        {formatNumber(totalDebit)} kr.
       </div>
     </div>
 
     <div>
       <span className="text-sm text-gray-600">Kredit samtals</span>
       <div className="font-semibold">
-        {totalCredit.toLocaleString("is-IS")} kr.
+        {formatNumber(totalCredit)} kr.
       </div>
     </div>
 
     <div>
       <span className="text-sm text-gray-600">Mismunur</span>
       <div className="font-semibold">
-        {Math.abs(difference).toLocaleString("is-IS")} kr.
+        {formatNumber(Math.abs(difference))} kr.
       </div>
     </div>
   </div>

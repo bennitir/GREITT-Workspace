@@ -1,3 +1,4 @@
+import { formatDate } from "@/lib/locale";
 import Link from "next/link";
 import { prisma } from "@/lib/prisma";
 import PageHeader from "@/components/ui/PageHeader";
@@ -45,8 +46,8 @@ export default async function ClosedCompaniesPage() {
               <p className="mt-2 text-sm text-slate-500">
                 Lokað:{" "}
                 {company.closedAt
-                  ? company.closedAt.toLocaleDateString("is-IS")
-                  : "Dagsetning óþekkt"}
+  ? formatDate(company.closedAt)
+  : "Dagsetning óþekkt"}
               </p>
 
               <div className="mt-4 flex gap-2">

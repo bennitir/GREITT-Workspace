@@ -1,5 +1,9 @@
 "use client";
 
+import {
+  formatDate,
+  formatNumber,
+} from "@/lib/locale";
 import { useState } from "react";
 import { useRouter } from "next/navigation";
 import { approveDetectedDocument } from "@/app/actions/receiptActions";
@@ -34,9 +38,9 @@ setCanBookAnyway(false);
     const [, receiptId, olderDocumentId, olderDate] =
       message.split("|");
 
-    setError(
-      `Bókun stöðvuð. Eldra óbókað fylgiskjal er til frá ${new Date(olderDate).toLocaleDateString("is-IS")}.`
-    );
+   setError(
+  `Bókun stöðvuð. Eldra óbókað fylgiskjal er til frá ${formatDate(new Date(olderDate))}.`
+);
 
     setOlderDocumentUrl(
       `/fylgiskjol/${receiptId}?document=${olderDocumentId}`
@@ -52,14 +56,13 @@ setCanBookAnyway(false);
     ] = message.split("|");
 
     setError(
-      `Möguleg tvíbókun: ${merchantName} – ${Number(
-        totalAmount
-      ).toLocaleString("is-IS")} kr.` +
-        (voucherNumber
-          ? ` Fannst áður sem fylgiskjal ${voucherNumber}.`
-          : " Sambærilegt fylgiskjal fannst áður.")
-          
-    );
+  `Möguleg tvíbókun: ${merchantName} – ${formatNumber(
+    Number(totalAmount)
+  )} kr.` +
+    (voucherNumber
+      ? ` Fannst áður sem fylgiskjal ${voucherNumber}.`
+      : " Sambærilegt fylgiskjal fannst áður.")
+);
 setCanBookAnyway(true);
     setOlderDocumentUrl(
       `/fylgiskjol/${receiptId}?document=${duplicateDocumentId}`

@@ -1,3 +1,8 @@
+import { getEffectiveUser } from "@/lib/core/access-control";
+import {
+  formatDate,
+  formatNumber,
+} from "@/lib/locale";
 import { redirect } from "next/navigation";
 import {
   getCompanyModuleSettings,
@@ -24,20 +29,10 @@ export default async function BokudFylgiskjolPage({
     const sortOption = sort ?? "voucher-desc";
 const searchVoucherNumber = q ? Number(q) : null;
   const cookieStore = await cookies();
-  const sessionToken = cookieStore.get("sessionToken")?.value;
 
-const session = sessionToken
-  ? await prisma.session.findUnique({
-      where: {
-        token: sessionToken,
-      },
-      include: {
-        user: true,
-      },
-    })
-  : null;
+const activeUser = await getEffectiveUser();
 
-if (!session || session.expiresAt < new Date() || !session.user.isActive) {
+if (!activeUser) {
   redirect("/innskraning");
 }
   const activeCompanyId = cookieStore.get("activeCompanyId")?.value;
@@ -48,11 +43,11 @@ if (!session || session.expiresAt < new Date() || !session.user.isActive) {
 
 const companyId = Number(activeCompanyId);
 
-if (session.user.role !== "ADMIN") {
+if (activeUser.role !== "ADMIN") {
   const access = await prisma.userCompany.findUnique({
     where: {
       userId_companyId: {
-        userId: session.user.id,
+        userId: activeUser.id,
         companyId,
       },
     },
@@ -282,8 +277,8 @@ bookedDocuments.sort((a, b) => {
 
   <td className="border-b p-3">
     {document.date
-      ? document.date.toLocaleDateString("is-IS")
-      : "—"}
+  ? formatDate(document.date)
+  : "—"}
   </td>
 
                 <td className="border-b p-3">
@@ -295,7 +290,7 @@ bookedDocuments.sort((a, b) => {
                 </td>
 
                 <td className="border-b p-3">
-                  {(document.totalAmount ?? 0).toLocaleString("is-IS")} kr.
+                  {formatNumber(document.totalAmount ?? 0)} kr.
                 </td>
 
                 <td className="border-b p-3">

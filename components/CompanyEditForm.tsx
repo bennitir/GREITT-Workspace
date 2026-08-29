@@ -1,5 +1,5 @@
 "use client";
-
+import IcelandicDateInput from "@/components/ui/IcelandicDateInput";
 import { useState } from "react";
 import {
   updateCompany,
@@ -220,20 +220,16 @@ export default function CompanyEditForm({ company }: Props) {
             Dagsetning staðfestingar
           </label>
 
-          <input
-            type="date"
-            name="activitiesConfirmedAt"
-            defaultValue={
-              company.activitiesConfirmedAt
-                ? new Date(
-                    company.activitiesConfirmedAt
-                  )
-                    .toISOString()
-                    .slice(0, 10)
-                : ""
-            }
-            className="block w-full rounded border p-2"
-          />
+          <IcelandicDateInput
+  name="activitiesConfirmedAt"
+  defaultValue={
+    company.activitiesConfirmedAt
+      ? new Date(company.activitiesConfirmedAt)
+          .toISOString()
+          .slice(0, 10)
+      : ""
+  }
+/>
         </div>
 
         <div>

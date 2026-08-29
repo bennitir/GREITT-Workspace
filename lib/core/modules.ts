@@ -27,10 +27,17 @@ export const GLOGGT_MODULES = {
     available: false,
   },
 
-  vinnustundir: {
+    vinnustundir: {
     id: "vinnustundir",
     name: "Vinnustundir",
     description: "Tímaskráning og vinnustundastýring.",
+    available: false,
+  },
+
+  verk: {
+    id: "verk",
+    name: "Verk",
+    description: "Verk, vinnustundir, tæki, efni og verkasaga.",
     available: false,
   },
 } as const;

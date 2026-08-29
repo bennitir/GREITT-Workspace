@@ -21,6 +21,12 @@ type Entry = {
 type Props = {
   documentId: number;
   entries: Entry[];
+
+  accounts: {
+    number: string;
+    name: string;
+  }[];
+
   date: Date | string | null;
   totalAmount: number | null;
   reviewedAt: Date | string | null;
@@ -36,16 +42,17 @@ canEdit: boolean;
 export default function DetectedDocumentEntriesEditor({
   documentId,
   entries,
+  accounts,
   date,
   totalAmount,
   reviewedAt,
   approvedAt,
-    voucherNumber,
-    duplicateOfDocumentId,
-duplicateVoucherNumber,
-duplicateMarkedAt,
-canBook,
-canEdit,
+  voucherNumber,
+  duplicateOfDocumentId,
+  duplicateVoucherNumber,
+  duplicateMarkedAt,
+  canBook,
+  canEdit,
 }: Props) {
   const router = useRouter();
 
@@ -230,19 +237,44 @@ disabled={!canEdit}
           key={entry.id}
           className="grid grid-cols-5 gap-2 border-t py-3 text-sm"
         >
-          <input
-            value={entry.account}
-            disabled={!canEdit}
-            onChange={(e) =>
-              updateRow(
-                entry.id,
-                "account",
-                e.target.value
-              )
-            }
-            className="rounded border px-2 py-1"
-            placeholder="Reikningslykill"
-          />
+          <div className="relative">
+  <input
+    list={`account-options-${entry.id}`}
+    value={entry.account}
+    disabled={!canEdit}
+    onChange={(e) =>
+      updateRow(
+        entry.id,
+        "account",
+        e.target.value
+      )
+    }
+    className="w-full rounded border px-2 py-1"
+    placeholder="Reikningslykill"
+  />
+
+  <select
+  value={entry.account}
+  disabled={!canEdit}
+  onChange={(e) =>
+    updateRow(
+      entry.id,
+      "account",
+      e.target.value
+    )
+  }
+  className="w-full rounded border px-2 py-1"
+>
+  {accounts.map((account) => (
+    <option
+      key={account.number}
+      value={account.number}
+    >
+      {account.number} – {account.name}
+    </option>
+  ))}
+</select>
+</div>
 
           <input
             value={entry.text}
@@ -355,7 +387,7 @@ disabled={!canEdit}
 </div>
       </div>
 
-{reviewedAt && !voucherNumber && !duplicateMarkedAt && (
+{!voucherNumber && !duplicateMarkedAt && (
   <>
     {hasUnsavedChanges ? (
   <button

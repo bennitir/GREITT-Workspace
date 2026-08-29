@@ -1,3 +1,8 @@
+import { getEffectiveUser } from "@/lib/core/access-control";
+import {
+  formatDate,
+  formatNumber,
+} from "@/lib/locale";
 import { redirect } from "next/navigation";
 import { getCompanyModuleSettings } from "@/lib/core/company-module-repository";
 import { getEnabledCompanyModules } from "@/lib/core/company-modules";
@@ -11,20 +16,10 @@ import Button from "@/components/ui/Button";
 
 export default async function FylgiskjolPage() {
     const cookieStore = await cookies();
-    const sessionToken = cookieStore.get("sessionToken")?.value;
 
-const session = sessionToken
-  ? await prisma.session.findUnique({
-      where: {
-        token: sessionToken,
-      },
-      include: {
-        user: true,
-      },
-    })
-  : null;
+const activeUser = await getEffectiveUser();
 
-if (!session || session.expiresAt < new Date() || !session.user.isActive) {
+if (!activeUser) {
   redirect("/innskraning");
 }
 const activeCompanyId = cookieStore.get("activeCompanyId")?.value;
@@ -37,11 +32,11 @@ if (!companyId) {
   redirect("/fyrirtaeki");
 }
 
-if (session.user.role !== "ADMIN") {
+if (activeUser.role !== "ADMIN") {
   const access = await prisma.userCompany.findUnique({
     where: {
       userId_companyId: {
-        userId: session.user.id,
+        userId: activeUser.id,
         companyId,
       },
     },
@@ -167,52 +162,73 @@ const bookedItems = displayItems
 
     return numberA - numberB;
   });
-    function renderItems(items: DisplayItem[]) {
-  return items.map((item) => (
-    <Card key={item.key}>
-      <h2 className="text-xl font-semibold">
-        {item.title}
-      </h2>
+     function renderItems(items: DisplayItem[]) {
+  return items.map((item) => {
+    const href = item.documentId
+      ? `/fylgiskjol/${item.receiptId}?document=${item.documentId}`
+      : `/fylgiskjol/${item.receiptId}`;
 
-      <p className="text-sm font-semibold text-green-700">
-  Fylgiskjal: {item.voucherNumber ?? "EKKERT NÚMER"}
-</p>
+    const statusClass =
+      item.statusText === "Yfirfarið"
+        ? "text-green-700"
+        : item.statusText === "NEEDS_ATTENTION"
+          ? "text-orange-700"
+          : "text-red-600";
 
+    const statusLabel =
+      item.statusText === "NEW"
+        ? "ÓYFIRFARIÐ"
+        : item.statusText === "NEEDS_ATTENTION"
+          ? "⚠ ÞARF SÉR SKOÐUN"
+          : item.statusText;
 
-      <p className="text-sm text-slate-500">
-        {item.date
-          ? item.date.toLocaleDateString("is-IS")
-          : "Dagsetning óþekkt"}
-      </p>
+    return (
+      <div
+        key={item.key}
+        className="grid grid-cols-[110px_minmax(220px,1fr)_140px_140px_170px_140px] items-center gap-3 border-b px-3 py-2"
+      >
+        <div className="font-medium">
+          {item.date
+  ? formatDate(item.date)
+  : "Óþekkt"}
+        </div>
 
-      <p className="mt-2">
-        {item.amount.toLocaleString("is-IS")} kr.
-      </p>
+        <div className="min-w-0">
+          <p className="truncate font-semibold">
+            {item.title}
+          </p>
 
-      <p className="mt-2 text-xl font-bold text-red-600">
-        {item.statusText === "NEW"
-  ? "ÓYFIRFARIÐ – EKKI MÁ BÓKA"
-  : item.statusText === "NEEDS_ATTENTION"
-    ? "⚠ ÞARF SÉR SKOÐUN – EKKI MÁ BÓKA"
-    : item.statusText}
-      </p>
+          <p className="text-sm text-slate-500">
+            Fylgiskjal:{" "}
+            {item.voucherNumber ?? "EKKERT NÚMER"}
+          </p>
+        </div>
 
-      <div className="mt-4">
-        <a
-          href={
-            item.documentId
-              ? `/fylgiskjol/${item.receiptId}?document=${item.documentId}`
-              : `/fylgiskjol/${item.receiptId}`
-          }
-        >
-          <Button>
-            Opna fylgiskjal
-          </Button>
-        </a>
+        <div className="text-right font-semibold">
+          {formatNumber(item.amount)} kr.
+        </div>
+
+        <div className={`font-semibold ${statusClass}`}>
+          {statusLabel}
+        </div>
+
+        <div className="text-sm text-slate-500">
+          {item.companyName}
+        </div>
+
+        <div className="text-right">
+          <a
+            href={href}
+            className="inline-block rounded bg-blue-600 px-3 py-2 font-medium text-white hover:bg-blue-700"
+          >
+            Opna
+          </a>
+        </div>
       </div>
-    </Card>
-  ));
+    );
+  });
 }
+
   return (
     <main className="p-8">
       <PageHeader
@@ -221,47 +237,46 @@ const bookedItems = displayItems
       />
 
       <div className="mb-6">
-  <a
-    href="/fylgiskjol/nytt"
-    className="inline-block rounded bg-blue-600 px-4 py-2 text-white"
-  >
-    + Nýtt fylgiskjal
-  </a>
-</div>
-     <div className="space-y-8">
-  {needsReviewItems.length > 0 && (
-    <section>
-      <h2 className="mb-3 text-2xl font-bold">
-        Þarf yfirferð
-      </h2>
-
-      <div className="space-y-4">
-        {renderItems(needsReviewItems)}
+        <a
+          href="/fylgiskjol/nytt"
+          className="inline-block rounded bg-blue-600 px-4 py-2 text-white"
+        >
+          + Nýtt fylgiskjal
+        </a>
       </div>
-    </section>
-  )}
 
-  {reviewedItems.length > 0 && (
-    <section>
-      <h2 className="mb-3 text-2xl font-bold">
-        Yfirfarið – bíður bókunar
-      </h2>
+      <div className="space-y-8">
+        {needsReviewItems.length > 0 && (
+          <section>
+            <h2 className="mb-3 text-2xl font-bold">
+              Þarf yfirferð
+            </h2>
 
-      <div className="space-y-4">
-        {renderItems(reviewedItems)}
+            <div className="overflow-hidden rounded-lg border">
+              {renderItems(needsReviewItems)}
+            </div>
+          </section>
+        )}
+
+        {reviewedItems.length > 0 && (
+          <section>
+            <h2 className="mb-3 text-2xl font-bold">
+              Yfirfarið – bíður bókunar
+            </h2>
+
+            <div className="overflow-hidden rounded-lg border">
+              {renderItems(reviewedItems)}
+            </div>
+          </section>
+        )}
+
+        {displayItems.length === 0 && (
+          <EmptyState
+            title="Engin fylgiskjöl komin inn"
+            description="Næsta skref verður að bæta við fyrsta fylgiskjalinu."
+          />
+        )}
       </div>
-    </section>
-  )}
-
-  
-
-  {displayItems.length === 0 && (
-    <EmptyState
-      title="Engin fylgiskjöl komin inn"
-      description="Næsta skref verður að bæta við fyrsta fylgiskjalinu."
-    />
-  )}
-</div>
-</main>
-);
+    </main>
+  );
 }

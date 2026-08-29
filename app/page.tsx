@@ -1,3 +1,4 @@
+import { getEffectiveUser } from "@/lib/core/access-control";
 import { cookies } from "next/headers";
 import { prisma } from "@/lib/prisma";
 import StatCard from "@/components/StatCard";
@@ -19,7 +20,9 @@ const session = sessionToken
     })
   : null;
 
-const loggedInUserName = session?.user.name ?? "notandi";
+  const effectiveUser = await getEffectiveUser();
+
+const loggedInUserName = effectiveUser?.name ?? "notandi";
   const activeCompanyId =
     cookieStore.get("activeCompanyId")?.value;
 

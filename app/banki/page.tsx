@@ -1,5 +1,6 @@
 import { cookies } from "next/headers";
 import { prisma } from "@/lib/prisma";
+import Link from "next/link";
 
 export default async function BankiPage() {
   const cookieStore = await cookies();
@@ -16,9 +17,11 @@ export default async function BankiPage() {
     );
   }
 
+  const companyId = Number(activeCompanyId);
+
   const company = await prisma.company.findUnique({
     where: {
-      id: Number(activeCompanyId),
+      id: companyId,
     },
   });
 
@@ -32,6 +35,16 @@ export default async function BankiPage() {
       </main>
     );
   }
+
+  const bankAccounts = await prisma.bankAccount.findMany({
+    where: {
+      companyId,
+      isActive: true,
+    },
+    orderBy: {
+      id: "asc",
+    },
+  });
 
   return (
     <main className="p-8">
@@ -50,15 +63,41 @@ export default async function BankiPage() {
           Bankareikningar þessa fyrirtækis
         </p>
 
-        <div className="mt-6 rounded-lg border bg-gray-50 p-4">
-          <p>Enginn bankareikningur hefur verið tengdur enn.</p>
+        <div className="mt-6 space-y-4">
+          {bankAccounts.length === 0 ? (
+            <div className="rounded-lg border bg-gray-50 p-4">
+              <p>Enginn bankareikningur hefur verið tengdur enn.</p>
+            </div>
+          ) : (
+            bankAccounts.map((account) => (
+              <Link
+  key={account.id}
+  href={`/banki/${account.id}`}
+  className="block rounded-lg border bg-gray-50 p-4 hover:bg-gray-100"
+>
+  <p className="text-lg font-semibold">
+    {account.bankName}
+  </p>
 
-          <button
-            type="button"
-            className="mt-4 rounded-lg bg-blue-600 px-4 py-2 font-medium text-white"
+  <p className="mt-2">
+    <strong>Reikningsnúmer:</strong>{" "}
+    {account.accountNumber ?? "Ekki skráð"}
+  </p>
+
+  <p className="mt-1">
+    <strong>IBAN:</strong>{" "}
+    {account.iban ?? "Ekki skráð"}
+  </p>
+</Link>
+            ))
+          )}
+
+          <Link
+            href="/banki/tengja"
+            className="inline-block rounded-lg bg-blue-600 px-4 py-2 font-medium text-white"
           >
             + Tengja bankareikning
-          </button>
+          </Link>
         </div>
       </div>
     </main>
