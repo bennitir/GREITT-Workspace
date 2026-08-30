@@ -201,9 +201,10 @@ export default async function RootLayout({
     ekki að sýna Sidebar eða bókhaldsviðmótið.
   */
   const plainPage =
-    !sessionUser ||
-    pathname === "/innskraning" ||
-    pathname === "/skipta-lykilordi";
+  !sessionUser ||
+  pathname === "/innskraning" ||
+  pathname === "/skipta-lykilordi" ||
+  pathname.startsWith("/mobile");
 
   return (
     <html
