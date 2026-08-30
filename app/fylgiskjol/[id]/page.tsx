@@ -97,9 +97,17 @@ if (!receipt) {
 let originalFileUrl = receipt.filePath ?? null;
 
 if (receipt.storagePath) {
-  const { data } = await supabaseAdmin.storage
+  const { data, error } = await supabaseAdmin.storage
     .from("fylgiskjol")
     .createSignedUrl(receipt.storagePath, 60 * 10);
+
+    if (error) {
+  console.error("SIGNED URL ERROR", {
+    receiptId: receipt.id,
+    storagePath: receipt.storagePath,
+    message: error.message,
+  });
+}
 
   if (data?.signedUrl) {
     originalFileUrl = data.signedUrl;
