@@ -10,5 +10,17 @@ export default function manifest(): MetadataRoute.Manifest {
     background_color: "#ffffff",
     theme_color: "#ffffff",
     lang: "is",
+    icons: [
+      {
+        src: "/gloggt-192.png",
+        sizes: "192x192",
+        type: "image/png",
+      },
+      {
+        src: "/gloggt-512.png",
+        sizes: "512x512",
+        type: "image/png",
+      },
+    ],
   };
 }
