@@ -214,14 +214,18 @@ const veljaFyrirtaeki = params.velja === "1";
             </div>
           </button>
 
-          <button className="rounded-2xl border bg-white p-5 text-left shadow-sm">
-            <div className="text-lg font-bold">
-              Verk
-            </div>
-            <div className="mt-1 text-sm text-slate-500">
-              Verkefni
-            </div>
-          </button>
+          <Link
+  href="/mobile/verk"
+  className="rounded-2xl border bg-white p-5 text-left shadow-sm"
+>
+  <div className="text-lg font-bold">
+    Verk
+  </div>
+
+  <div className="mt-1 text-sm text-slate-500">
+    Verkefni
+  </div>
+</Link>
 
           <button className="rounded-2xl border bg-white p-5 text-left shadow-sm">
             <div className="text-lg font-bold">
