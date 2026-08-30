@@ -2,6 +2,10 @@ import { Resend } from "resend";
 
 function getResend() {
   const apiKey = process.env.RESEND_API_KEY;
+  console.log("RESEND ENV CHECK:", {
+  hasKey: Boolean(apiKey),
+  length: apiKey?.length ?? 0,
+});
 
   if (!apiKey) {
     throw new Error("RESEND_API_KEY vantar.");
