@@ -22,7 +22,7 @@ export async function sendTemporaryPasswordEmail({
   const resend = getResend();
 
   const result = await resend.emails.send({
-    from: "GLÖGGT <onboarding@resend.dev>",
+    from: "GLÖGGT <noreply@gloggt.is>",
     to: email,
     subject: "Aðgangur að GLÖGGT",
     text: [
