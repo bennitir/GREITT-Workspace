@@ -6,6 +6,7 @@ export default function manifest(): MetadataRoute.Manifest {
     short_name: "GLÖGGT",
     description: "GLÖGGT Mobile",
     start_url: "/mobile",
+    scope: "/mobile",
     display: "standalone",
     background_color: "#ffffff",
     theme_color: "#ffffff",
