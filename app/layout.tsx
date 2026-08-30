@@ -1,3 +1,4 @@
+import ServiceWorkerRegister from "@/components/ServiceWorkerRegister";
 import MobileAwareShell from "@/components/MobileAwareShell";
 import BackNavigationRefresh from "@/components/BackNavigationRefresh";
 import TopClock from "@/components/TopClock";
@@ -212,8 +213,8 @@ export default async function RootLayout({
       className={`${geistSans.variable} ${geistMono.variable} h-full antialiased`}
     >
       <body className="min-h-full">
-        <BackNavigationRefresh />
-
+  <ServiceWorkerRegister />
+  <BackNavigationRefresh />
         {plainPage ? (
           children
         ) : (
