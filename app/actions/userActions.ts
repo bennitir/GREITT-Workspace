@@ -121,6 +121,64 @@ export async function createUser(formData: FormData) {
   redirect("/stjornbord");
 }
 
+export async function updateUserEmailAndResendAccess(formData: FormData) {
+  await requireEffectiveAdmin();
+
+  const userId = Number(formData.get("userId"));
+
+  const email = String(formData.get("email") || "")
+    .trim()
+    .toLowerCase();
+
+  if (!Number.isInteger(userId) || userId <= 0) {
+    throw new Error("Ógilt notandaauðkenni.");
+  }
+
+  if (!email) {
+    throw new Error("Netfang vantar.");
+  }
+
+  const user = await prisma.user.findUnique({
+    where: { id: userId },
+  });
+
+  if (!user) {
+    throw new Error("Notandi fannst ekki.");
+  }
+
+  const existingUser = await prisma.user.findUnique({
+    where: { email },
+  });
+
+  if (existingUser && existingUser.id !== userId) {
+    throw new Error("Notandi með þetta netfang er þegar skráður.");
+  }
+
+  const temporaryPassword = createTemporaryPassword();
+
+  const passwordHash = await bcrypt.hash(
+    temporaryPassword,
+    12
+  );
+
+  await prisma.user.update({
+    where: { id: userId },
+    data: {
+      email,
+      passwordHash,
+      mustChangePassword: true,
+    },
+  });
+
+  await sendTemporaryPasswordEmail({
+    name: user.name,
+    email,
+    temporaryPassword,
+  });
+
+  revalidatePath("/stjornbord");
+}
+
 export async function setUserActive(
   id: number,
   isActive: boolean

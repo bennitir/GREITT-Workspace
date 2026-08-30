@@ -16,6 +16,7 @@ import {
   addUserCompany,
   removeUserCompany,
   setUserCompanyRole,
+  updateUserEmailAndResendAccess,
 } from "@/app/actions/userActions";
 import { setActiveCompanyFromAdmin } from "@/app/actions/companyActions";
 import DeleteCompanyButton from "@/components/DeleteCompanyButton";
@@ -304,6 +305,37 @@ export default async function CompanyAdminPage({
                   </p>
                 </div>
 
+<form
+  action={updateUserEmailAndResendAccess}
+  className="mt-3 flex flex-wrap items-end gap-2"
+>
+  <input
+    type="hidden"
+    name="userId"
+    value={access.userId}
+  />
+
+  <label className="block">
+    <span className="mb-1 block text-xs font-medium text-slate-600">
+      Netfang
+    </span>
+
+    <input
+      type="email"
+      name="email"
+      defaultValue={access.user.email}
+      required
+      className="min-w-[280px] rounded-lg border px-3 py-2 text-sm"
+    />
+  </label>
+
+  <button
+    type="submit"
+    className="rounded-lg bg-blue-600 px-3 py-2 text-sm font-medium text-white"
+  >
+    Leiðrétta netfang og senda aðgang aftur
+  </button>
+</form>
                 <div className="flex flex-wrap items-center gap-3">
                   <form
                     action={async (formData: FormData) => {
