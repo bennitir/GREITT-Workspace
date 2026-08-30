@@ -14,6 +14,7 @@ import {
 import DetectedDocumentEntriesEditor from "@/components/DetectedDocumentEntriesEditor";
 
 import { prisma } from "@/lib/prisma";
+import Link from "next/link";
 import {
   formatDate,
   formatNumber,
@@ -24,7 +25,7 @@ import { cookies } from "next/headers";
 import { getCompanyModuleSettings } from "@/lib/core/company-module-repository";
 import { getEnabledCompanyModules } from "@/lib/core/company-modules";
 export default async function ReceiptPage({
-  params,
+    params,
   searchParams,
 }: {
   params: Promise<{ id: string }>;
@@ -167,14 +168,12 @@ const visibleDocuments = selectedDocument
 
       {receipt.filePath && (
   <>
-    <a
-      href={originalFileUrl ?? "#"}
-      target="_blank"
-      rel="noopener noreferrer"
+    <Link
+  href={`/fylgiskjol/${receipt.id}/frumskjal`}
       className="ml-2 rounded border px-3 py-2 font-medium text-blue-600 hover:bg-blue-50"
     >
       Opna frumskjal
-    </a>
+    </Link>
 {!receipt.aiDetectedDocuments.some(
   (document) => document.reviewedAt !== null
 ) && (
