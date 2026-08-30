@@ -1,3 +1,4 @@
+import { getCompanyAccess } from "@/lib/core/access-control";
 import Link from "next/link";
 import { prisma } from "@/lib/prisma";
 import Card from "@/components/ui/Card";
@@ -35,6 +36,7 @@ function priorityText(priority: string) {
 
 export default async function VerkPage() {
   const companyId = await requireCompanyModule("verk");
+  const access = await getCompanyAccess(companyId);
 
   const workOrders = await prisma.workOrder.findMany({
     where: {
@@ -63,9 +65,11 @@ export default async function VerkPage() {
         title="Verk"
         description="Yfirlit yfir verk, stöðu þeirra og verkasögu."
       >
-        <Link href="/verk/nytt">
-          <Button>＋ Nýtt verk</Button>
-        </Link>
+        {access.canWrite && (
+  <Link href="/verk/nytt">
+    <Button>＋ Nýtt verk</Button>
+  </Link>
+)}
       </PageHeader>
 
       <div className="grid gap-4 md:grid-cols-4">
@@ -129,11 +133,13 @@ export default async function VerkPage() {
               Byrjaðu á að stofna fyrsta verkið.
             </p>
 
-            <div className="mt-4">
-              <Link href="/verk/nytt">
-                <Button>＋ Stofna nýtt verk</Button>
-              </Link>
-            </div>
+            {access.canWrite && (
+  <div className="mt-4">
+    <Link href="/verk/nytt">
+      <Button>＋ Stofna nýtt verk</Button>
+    </Link>
+  </div>
+)}
           </div>
         ) : (
           <div className="mt-6 space-y-3">

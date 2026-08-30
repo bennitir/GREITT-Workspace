@@ -1,3 +1,4 @@
+import { requireCompanyWriteAccess } from "@/lib/core/access-control";
 import { redirect } from "next/navigation";
 import { cookies } from "next/headers";
 import { revalidatePath } from "next/cache";
@@ -24,6 +25,8 @@ async function createWorkOrder(formData: FormData) {
   if (!Number.isInteger(companyId)) {
     redirect("/fyrirtaeki");
   }
+
+  await requireCompanyWriteAccess(companyId);
 
   const title = String(formData.get("title") ?? "").trim();
   const description = String(formData.get("description") ?? "").trim();
@@ -58,6 +61,21 @@ async function createWorkOrder(formData: FormData) {
 }
 
 export default async function NýttVerkPage() {
+  const cookieStore = await cookies();
+  const activeCompanyId = cookieStore.get("activeCompanyId")?.value;
+
+  if (!activeCompanyId) {
+    redirect("/fyrirtaeki");
+  }
+
+  const companyId = Number(activeCompanyId);
+
+  if (!Number.isInteger(companyId)) {
+    redirect("/fyrirtaeki");
+  }
+
+  await requireCompanyWriteAccess(companyId);
+
   return (
     <main className="space-y-6 p-8">
       <PageHeader
