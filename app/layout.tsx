@@ -72,18 +72,23 @@ export default async function RootLayout({
       ? session.user
       : null;
 
+      const publicAuthPage =
+  pathname === "/innskraning" ||
+  pathname === "/gleymt-lykilord" ||
+  pathname === "/endurstilla-lykilord";
+
   /*
     Ef session-cookie er til en sessionið sjálft er
     útrunnið, ógilt eða notandinn orðinn óvirkur,
     má viðkomandi ekki halda áfram inn í kerfið.
   */
   if (
-    sessionToken &&
-    !sessionUser &&
-    pathname !== "/innskraning"
-  ) {
-    redirect("/innskraning");
-  }
+  sessionToken &&
+  !sessionUser &&
+  !publicAuthPage
+) {
+  redirect("/innskraning");
+}
 
   /*
     Skyldubreyting lykilorðs.
@@ -203,7 +208,7 @@ export default async function RootLayout({
   */
   const plainPage =
   !sessionUser ||
-  pathname === "/innskraning" ||
+  publicAuthPage ||
   pathname === "/skipta-lykilordi" ||
   pathname.startsWith("/mobile");
 
