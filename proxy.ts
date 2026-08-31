@@ -11,7 +11,11 @@ export function proxy(request: NextRequest) {
   requestHeaders.set("x-gloggt-pathname", pathname);
 
   // Innskráningarsíðan þarf alltaf að vera aðgengileg.
-  if (pathname === "/innskraning") {
+  if (
+  pathname === "/innskraning" ||
+  pathname === "/gleymt-lykilord" ||
+  pathname === "/endurstilla-lykilord"
+) {
     return NextResponse.next({
       request: {
         headers: requestHeaders,

@@ -37,13 +37,71 @@ export async function sendTemporaryPasswordEmail({
       "Nýja lykilorðið þarf að vera að minnsta kosti 10 stafir.",
       "Við mælum með að nota sterkt lykilorð sem vafrinn þinn leggur til.",
       "",
+      "GLÖGGT í tölvu:",
+      "https://www.gloggt.is",
+      "",
+      "GLÖGGT Mobile í síma:",
+      "https://www.gloggt.is/mobile",
+      "",
+      "GLÖGGT Mobile má setja upp á heimaskjá símans og nota eins og app.",
+      "",
+      "Kveðja,",
       "GLÖGGT",
+      "Lausnir fyrir reksturinn",
     ].join("\n"),
   });
 
   if (result.error) {
     throw new Error(
       `Ekki tókst að senda aðgangspóst: ${result.error.message}`
+    );
+  }
+
+  return result.data;
+}
+
+export async function sendPasswordResetEmail({
+  name,
+  email,
+  resetUrl,
+}: {
+  name: string;
+  email: string;
+  resetUrl: string;
+}) {
+  const resend = getResend();
+
+  const result = await resend.emails.send({
+    from: "GLÖGGT <noreply@gloggt.is>",
+    to: email,
+    subject: "Endurstilla lykilorð í GLÖGGT",
+    text: [
+      `Góðan daginn ${name},`,
+      "",
+      "Beðið hefur verið um að endurstilla lykilorðið þitt í GLÖGGT.",
+      "",
+      "Veldu nýtt lykilorð hér:",
+      resetUrl,
+      "",
+      "Hlekkurinn gildir aðeins í takmarkaðan tíma og verður ónothæfur eftir notkun.",
+      "",
+      "Ef þú baðst ekki um endurstillingu geturðu hunsað þennan póst.",
+      "",
+      "GLÖGGT í tölvu:",
+      "https://www.gloggt.is",
+      "",
+      "GLÖGGT Mobile í síma:",
+      "https://www.gloggt.is/mobile",
+      "",
+      "Kveðja,",
+      "GLÖGGT",
+      "Lausnir fyrir reksturinn",
+    ].join("\n"),
+  });
+
+  if (result.error) {
+    throw new Error(
+      `Ekki tókst að senda lykilorðsendurstillingu: ${result.error.message}`
     );
   }
 

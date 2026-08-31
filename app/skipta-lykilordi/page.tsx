@@ -1,3 +1,4 @@
+import PasswordInput from "@/components/ui/PasswordInput";
 import { cookies } from "next/headers";
 import { redirect } from "next/navigation";
 
@@ -80,16 +81,13 @@ export default async function SkiptaLykilordiPage() {
                 Nýtt lykilorð
               </label>
 
-              <input
-                id="newPassword"
-                name="newPassword"
-                type="password"
-                autoComplete="new-password"
-                minLength={10}
-                required
-                autoFocus
-                className="w-full rounded-xl border border-slate-300 px-4 py-3 text-lg text-slate-900 outline-none transition focus:border-blue-500 focus:ring-2 focus:ring-blue-200"
-              />
+              <PasswordInput
+  id="newPassword"
+  name="newPassword"
+  required
+  minLength={10}
+  autoComplete="new-password"
+/>
 
               <p className="mt-2 text-sm text-slate-600">
                 Lykilorðið þarf að vera að minnsta kosti
@@ -106,15 +104,13 @@ export default async function SkiptaLykilordiPage() {
                 Endurtaktu nýja lykilorðið
               </label>
 
-              <input
-                id="confirmPassword"
-                name="confirmPassword"
-                type="password"
-                autoComplete="new-password"
-                minLength={10}
-                required
-                className="w-full rounded-xl border border-slate-300 px-4 py-3 text-lg text-slate-900 outline-none transition focus:border-blue-500 focus:ring-2 focus:ring-blue-200"
-              />
+              <PasswordInput
+  id="confirmPassword"
+  name="confirmPassword"
+  required
+  minLength={10}
+  autoComplete="new-password"
+/>
             </div>
 
             <button

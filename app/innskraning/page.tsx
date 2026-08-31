@@ -1,3 +1,4 @@
+import PasswordInput from "@/components/ui/PasswordInput";
 import { loginUser } from "@/app/actions/userActions";
 
 export default async function InnskraningPage({
@@ -72,15 +73,22 @@ export default async function InnskraningPage({
                   Lykilorð
                 </label>
 
-                <input
-                  id="password"
-                  type="password"
-                  name="password"
-                  required
-                  autoComplete="current-password"
-                  className="w-full rounded-lg border border-slate-300 bg-white px-4 py-3 text-base text-slate-900 outline-none transition focus:border-blue-500 focus:ring-2 focus:ring-blue-100"
-                />
+                <PasswordInput
+  id="password"
+  name="password"
+  required
+  autoComplete="current-password"
+/>
               </div>
+
+              <div className="text-right">
+  <a
+    href="/gleymt-lykilord"
+    className="text-sm font-semibold text-blue-600 hover:underline"
+  >
+    Gleymt lykilorð?
+  </a>
+</div>
 
               <button
                 type="submit"

@@ -150,20 +150,34 @@ model Account {
 }
 
 model User {
-  id                 Int           @id @default(autoincrement())
-  name               String
-  email              String        @unique
-  passwordHash       String?
-  mustChangePassword Boolean       @default(false)
-  role               String        @default("CLIENT")
-  isActive           Boolean       @default(true)
-  createdAt          DateTime      @default(now())
-  updatedAt          DateTime      @updatedAt
-  sessions           Session[]
-  companies          UserCompany[]
-  workLogs           WorkLog[]
-  createdWorkOrders  WorkOrder[]
-  vatSubmissions     VatSubmission[]
+  id                  Int                  @id @default(autoincrement())
+  name                String
+  email               String               @unique
+  passwordHash        String?
+  mustChangePassword  Boolean              @default(false)
+  role                String               @default("CLIENT")
+  isActive            Boolean              @default(true)
+  createdAt           DateTime              @default(now())
+  updatedAt           DateTime              @updatedAt
+  sessions            Session[]
+  companies           UserCompany[]
+  workLogs            WorkLog[]
+  createdWorkOrders   WorkOrder[]
+  vatSubmissions      VatSubmission[]
+  passwordResetTokens PasswordResetToken[]
+}
+
+model PasswordResetToken {
+  id        Int       @id @default(autoincrement())
+  tokenHash String    @unique
+  expiresAt DateTime
+  usedAt    DateTime?
+  createdAt DateTime  @default(now())
+
+  userId Int
+  user   User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
 }
 
 model UserCompany {
