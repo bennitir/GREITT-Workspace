@@ -512,10 +512,12 @@ export async function loginUser(
   formData: FormData
 ) {
   const email = String(
-    formData.get("email") || ""
-  )
-    .trim()
-    .toLowerCase();
+  formData.get("email") || ""
+)
+  .trim()
+  .toLowerCase();
+
+const next = String(formData.get("next") ?? "");
 
   const password = String(
     formData.get("password") || ""
@@ -586,10 +588,14 @@ export async function loginUser(
   cookieStore.delete("activeCompanyId");
 
   if (user.mustChangePassword) {
-    redirect("/skipta-lykilordi");
-  }
+  redirect("/skipta-lykilordi");
+}
 
-  redirect("/");
+if (next === "/mobile") {
+  redirect("/mobile");
+}
+
+redirect("/");
 }
 
 export async function logoutUser() {

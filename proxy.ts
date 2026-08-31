@@ -7,8 +7,6 @@ export function proxy(request: NextRequest) {
     request.cookies.get("sessionToken")?.value;
 
   // Sendum núverandi slóð áfram til server-side layout.
-  // Þar getum við borið hana saman við stöðu notandans
-  // í gagnagrunninum.
   const requestHeaders = new Headers(request.headers);
   requestHeaders.set("x-gloggt-pathname", pathname);
 
@@ -21,14 +19,12 @@ export function proxy(request: NextRequest) {
     });
   }
 
-  // Lykilorðaskiptasíðan þarf að vera aðgengileg
-  // þegar session-cookie er til.
+  // Lykilorðaskiptasíðan þarf session-cookie.
   if (pathname === "/skipta-lykilordi") {
     if (!sessionToken) {
-      const url = request.nextUrl.clone();
-      url.pathname = "/innskraning";
-
-      return NextResponse.redirect(url);
+      return NextResponse.redirect(
+        new URL("/innskraning", request.url)
+      );
     }
 
     return NextResponse.next({
@@ -38,12 +34,17 @@ export function proxy(request: NextRequest) {
     });
   }
 
-  // Án session-cookie má ekki sjá neitt annað í GLÖGGT.
+  // Án session-cookie má ekki sjá annað í GLÖGGT.
   if (!sessionToken) {
-    const url = request.nextUrl.clone();
-    url.pathname = "/innskraning";
+    if (pathname.startsWith("/mobile")) {
+      return NextResponse.redirect(
+        new URL("/innskraning?next=%2Fmobile", request.url)
+      );
+    }
 
-    return NextResponse.redirect(url);
+    return NextResponse.redirect(
+      new URL("/innskraning", request.url)
+    );
   }
 
   return NextResponse.next({

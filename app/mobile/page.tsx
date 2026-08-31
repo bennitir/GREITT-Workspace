@@ -45,8 +45,8 @@ export default async function MobilePage({
 const veljaFyrirtaeki = params.velja === "1";
 
   if (!user) {
-    redirect("/innskraning");
-  }
+  redirect("/innskraning?next=/mobile");
+}
 
   const cookieStore = await cookies();
   const activeCompanyId = Number(

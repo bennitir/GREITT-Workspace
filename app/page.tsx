@@ -1,3 +1,4 @@
+import Greeting from "@/components/Greeting";
 import { getEffectiveUser } from "@/lib/core/access-control";
 import { cookies } from "next/headers";
 import { prisma } from "@/lib/prisma";
@@ -122,9 +123,7 @@ const pendingDocuments =
     <main className="min-h-screen bg-slate-100">
       <section className="p-10">
         <div className="mx-auto max-w-6xl">
-          <h2 className="text-3xl font-bold text-slate-900">
-  Góðan daginn, {loggedInUserName}
-</h2>
+          <Greeting name={loggedInUserName} />
 
           <p className="mt-2 text-slate-600">
             Velkominn í GREITT Workspace.

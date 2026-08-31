@@ -1,5 +1,6 @@
 "use client";
 
+import IcelandicTimeInput from "@/components/ui/IcelandicTimeInput";
 import IcelandicDateInput from "@/components/ui/IcelandicDateInput";
 import Button from "@/components/ui/Button";
 import { updateWorkLog } from "@/app/actions/workActions";
@@ -90,13 +91,11 @@ export default function EditWorkLogForm({
             Frá
           </label>
 
-          <input
-            type="time"
-            name="startedAt"
-            required
-            defaultValue={timeValue(workLog.startedAt)}
-            className="mt-1 w-full rounded-lg border px-3 py-2"
-          />
+          <IcelandicTimeInput
+  name="startedAt"
+  required
+  defaultValue={timeValue(workLog.startedAt)}
+/>
         </div>
 
         <div>
@@ -104,13 +103,11 @@ export default function EditWorkLogForm({
             Til
           </label>
 
-          <input
-            type="time"
-            name="endedAt"
-            required
-            defaultValue={timeValue(workLog.endedAt)}
-            className="mt-1 w-full rounded-lg border px-3 py-2"
-          />
+          <IcelandicTimeInput
+  name="endedAt"
+  required
+  defaultValue={timeValue(workLog.endedAt)}
+/>
         </div>
       </div>
 
