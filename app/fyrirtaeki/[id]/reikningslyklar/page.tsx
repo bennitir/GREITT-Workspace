@@ -212,18 +212,31 @@ export default async function ReikningslyklarPage({
 const hasGloggtSuggestion =
   matchingDefaultAccount?.vatTreatment != null;
 
+  const canQuickApproveSuggestion =
+  matchingDefaultAccount != null &&
+  matchingDefaultAccount.vatRequiresConfirmation !== true &&
+  (
+    matchingDefaultAccount.vatTreatment === "INPUT" ||
+    matchingDefaultAccount.vatTreatment === "OUTPUT" ||
+    matchingDefaultAccount.vatTreatment === "NONE"
+  );
+
                   const attentionReason =
   !account.vatTreatment &&
   vatMayApply &&
-  hasGloggtSuggestion
-    ? "GLÖGGT tillaga tilbúin"
-    : !account.vatTreatment && vatMayApply
-      ? "VSK-meðferð vantar"
-      : account.vatTreatment === "REVIEW"
-        ? "Ákvörðun bókara"
-        : account.vatRequiresConfirmation
-          ? "Staðfesting bókara"
-          : null;
+  canQuickApproveSuggestion
+    ? "Má samþykkja tillögu beint"
+    : !account.vatTreatment &&
+        vatMayApply &&
+        hasGloggtSuggestion
+      ? "GLÖGGT tillaga tilbúin"
+      : !account.vatTreatment && vatMayApply
+        ? "VSK-meðferð vantar"
+        : account.vatTreatment === "REVIEW"
+          ? "Ákvörðun bókara"
+          : account.vatRequiresConfirmation
+            ? "Staðfesting bókara"
+            : null;
 
               return (
                 <tr
