@@ -377,6 +377,15 @@ export async function initializeCompanyAccounts(
           account
             ? account.vatRequiresConfirmation
             : false,
+
+                      vatCode:
+            account.vatCode ?? null,
+
+          vatTreatment:
+            account.vatTreatment ?? null,
+
+          vatDeductiblePercent:
+            account.vatDeductiblePercent ?? null,
       })
     ),
   });
@@ -454,6 +463,15 @@ export async function addMissingDefaultAccounts(
           vatRequiresConfirmation:
             account.vatRequiresConfirmation ??
             false,
+
+                      vatCode:
+            account.vatCode ?? null,
+
+          vatTreatment:
+            account.vatTreatment ?? null,
+
+          vatDeductiblePercent:
+            account.vatDeductiblePercent ?? null,
         })
       ),
     });
