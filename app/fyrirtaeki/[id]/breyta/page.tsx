@@ -30,10 +30,25 @@ export default async function BreytaFyrirtaekiPage({
   }
 
   const company = await prisma.company.findUnique({
-    where: {
-      id: companyId,
+  where: {
+    id: companyId,
+  },
+  include: {
+    activities: {
+      orderBy: [
+        {
+          isActive: "desc",
+        },
+        {
+          code: "asc",
+        },
+        {
+          name: "asc",
+        },
+      ],
     },
-  });
+  },
+});
 
   if (!company) {
     redirect("/fyrirtaeki");

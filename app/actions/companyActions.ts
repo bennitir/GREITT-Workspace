@@ -110,11 +110,19 @@ vatConfirmedBy?: string | null;
 nextVoucherNumber?: number;
 
     rskRegisteredActivities?: string | null;
-    activeActivities?: string | null;
-    rskCertificatePath?: string | null;
-    rskDataUpdatedAt?: Date | null;
-    activitiesConfirmedAt?: Date | null;
-    activitiesConfirmedBy?: string | null;
+activeActivities?: string | null;
+rskCertificatePath?: string | null;
+rskDataUpdatedAt?: Date | null;
+activitiesConfirmedAt?: Date | null;
+activitiesConfirmedBy?: string | null;
+
+activities?: {
+  id: number | null;
+  code: string;
+  name: string;
+  registeredAtRsk: boolean;
+  isActive: boolean;
+}[];
   }
 ) {
   await requireEffectiveAdmin();
@@ -166,12 +174,95 @@ nextVoucherNumber?: number;
     );
   }
 
-  await prisma.company.update({
+  const {
+  activities,
+  ...companyData
+} = data;
+
+await prisma.$transaction(async (tx) => {
+  await tx.company.update({
     where: {
       id,
     },
-    data,
+    data: companyData,
   });
+
+  if (activities) {
+    const existingActivities =
+      await tx.companyActivity.findMany({
+        where: {
+          companyId: id,
+        },
+        select: {
+          id: true,
+        },
+      });
+
+    const submittedIds = activities
+      .map((activity) => activity.id)
+      .filter((activityId): activityId is number =>
+        Number.isInteger(activityId)
+      );
+
+    const idsToDelete = existingActivities
+      .map((activity) => activity.id)
+      .filter(
+        (activityId) =>
+          !submittedIds.includes(activityId)
+      );
+
+    if (idsToDelete.length > 0) {
+      await tx.companyActivity.deleteMany({
+        where: {
+          companyId: id,
+          id: {
+            in: idsToDelete,
+          },
+        },
+      });
+    }
+
+    for (const activity of activities) {
+      const code =
+        activity.code.trim() || null;
+      const name = activity.name.trim();
+
+      if (!name) {
+        continue;
+      }
+
+      if (activity.id) {
+        await tx.companyActivity.updateMany({
+          where: {
+            id: activity.id,
+            companyId: id,
+          },
+          data: {
+            code,
+            name,
+            registeredAtRsk:
+              activity.registeredAtRsk,
+            isActive: activity.isActive,
+            dataUpdatedAt: new Date(),
+          },
+        });
+      } else {
+        await tx.companyActivity.create({
+          data: {
+            companyId: id,
+            code,
+            name,
+            registeredAtRsk:
+              activity.registeredAtRsk,
+            isActive: activity.isActive,
+            dataSource: "MANUAL",
+            dataUpdatedAt: new Date(),
+          },
+        });
+      }
+    }
+  }
+});
 
   revalidatePath("/");
   revalidatePath("/fyrirtaeki");
@@ -181,6 +272,7 @@ nextVoucherNumber?: number;
   revalidatePath(
     `/fyrirtaeki/${id}/breyta`
   );
+  
 }
 
 export async function uploadRskCertificate(
