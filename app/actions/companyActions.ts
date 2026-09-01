@@ -99,8 +99,15 @@ export async function updateCompany(
     contact: string;
 
     vatNumber?: string | null;
+vatRegistered?: boolean | null;
+vatRegistrationDate?: Date | null;
+vatSettlementType?: string | null;
+vatDataSource?: string | null;
+vatDataUpdatedAt?: Date | null;
+vatConfirmedAt?: Date | null;
+vatConfirmedBy?: string | null;
 
-    nextVoucherNumber?: number;
+nextVoucherNumber?: number;
 
     rskRegisteredActivities?: string | null;
     activeActivities?: string | null;

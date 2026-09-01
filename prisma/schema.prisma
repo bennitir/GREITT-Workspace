@@ -32,12 +32,14 @@ model Company {
   vatConfirmedBy      String?
 
   // RSK / starfsemi
-  rskRegisteredActivities String?
-  activeActivities        String?
-  rskCertificatePath      String?
-  rskDataUpdatedAt        DateTime?
-  activitiesConfirmedAt   DateTime?
-  activitiesConfirmedBy   String?
+rskRegisteredActivities String?
+activeActivities        String?
+rskCertificatePath      String?
+rskDataUpdatedAt        DateTime?
+activitiesConfirmedAt   DateTime?
+activitiesConfirmedBy   String?
+
+activities CompanyActivity[]
 
   // Tengingar
   accounts     Account[]
@@ -553,4 +555,30 @@ metadata   Json?
   @@index([parentEntityType, parentEntityId])
   @@index([userId])
   @@index([action])
+}
+
+model CompanyActivity {
+  id        Int @id @default(autoincrement())
+  companyId Int
+
+  // Starfsemugrein
+  code String?
+  name String
+
+  // Staða starfseminnar
+  registeredAtRsk Boolean @default(false)
+  isActive        Boolean @default(true)
+
+  // Uppruni upplýsinganna
+  dataSource String?
+  dataUpdatedAt DateTime?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  company Company @relation(fields: [companyId], references: [id], onDelete: Cascade)
+
+  @@index([companyId])
+  @@index([companyId, isActive])
+  @@index([companyId, registeredAtRsk])
 }
