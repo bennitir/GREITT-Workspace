@@ -409,8 +409,9 @@ export default function CompanyEditForm({
               </label>
 
               <IcelandicDateInput
-                name="vatRegistrationDate"
-                defaultValue={
+  name="vatRegistrationDate"
+  submitFormat="iso"
+  defaultValue={
                   company.vatRegistrationDate
                     ? new Date(
                         company.vatRegistrationDate
