@@ -99,7 +99,10 @@ export default async function ReikningslykillEditPage({
   }
 
   const defaultAccount = defaultAccounts.find(
-  (item) => item.number === account.number
+  (item) =>
+    item.number === account.number &&
+    item.name.trim().toLowerCase() ===
+      account.name.trim().toLowerCase()
 );
 
   return (
