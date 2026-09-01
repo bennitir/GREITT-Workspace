@@ -200,6 +200,15 @@ export default async function ReikningslyklarPage({
                   account.vatTreatment === "REVIEW" ||
                   account.vatRequiresConfirmation);
 
+                  const attentionReason =
+  !account.vatTreatment && vatMayApply
+    ? "VSK-meðferð vantar"
+    : account.vatTreatment === "REVIEW"
+      ? "Ákvörðun bókara"
+      : account.vatRequiresConfirmation
+        ? "Staðfesting bókara"
+        : null;
+
               return (
                 <tr
                   key={account.id}
@@ -235,9 +244,17 @@ export default async function ReikningslyklarPage({
 
                   <td className="px-4 py-3">
                     {needsAttention ? (
-                      <span className="font-medium text-amber-700">
-                        Yfirfara
-                      </span>
+  <div>
+    <span className="font-medium text-amber-700">
+      Yfirfara
+    </span>
+
+    {attentionReason && (
+      <div className="mt-1 text-xs text-slate-500">
+        {attentionReason}
+      </div>
+    )}
+  </div>
                     ) : vatMayApply ? (
                       <span className="text-green-700">
                         Skilgreint
