@@ -1,3 +1,4 @@
+import { approveDefaultAccountVatSuggestion } from "@/app/actions/companyActions";
 import { defaultAccounts } from "@/app/data/accounts";
 import Link from "next/link";
 import { redirect } from "next/navigation";
@@ -296,13 +297,36 @@ const hasGloggtSuggestion =
                   </td>
 
                   <td className="px-4 py-3">
-                    <Link
-                      href={`/fyrirtaeki/${company.id}/reikningslyklar/${account.id}`}
-                      className="inline-block rounded border border-slate-300 bg-white px-3 py-1.5 text-sm font-medium text-slate-800 hover:bg-slate-50"
-                    >
-                      Breyta
-                    </Link>
-                  </td>
+  <div className="flex flex-wrap gap-2">
+    {canQuickApproveSuggestion &&
+      !account.vatTreatment && (
+        <form
+          action={async () => {
+            "use server";
+
+            await approveDefaultAccountVatSuggestion(
+              company.id,
+              account.id
+            );
+          }}
+        >
+          <button
+            type="submit"
+            className="rounded border border-green-300 bg-green-50 px-3 py-1.5 text-sm font-medium text-green-800 hover:bg-green-100"
+          >
+            Samþykkja tillögu
+          </button>
+        </form>
+      )}
+
+    <Link
+      href={`/fyrirtaeki/${company.id}/reikningslyklar/${account.id}`}
+      className="inline-block rounded border border-slate-300 bg-white px-3 py-1.5 text-sm font-medium text-slate-800 hover:bg-slate-50"
+    >
+      Breyta
+    </Link>
+  </div>
+</td>
                 </tr>
               );
             })}
