@@ -777,6 +777,98 @@ if (
   );
 }
 
+export async function approveDefaultAccountVatSuggestion(
+  companyId: number,
+  accountId: number
+) {
+  if (!Number.isInteger(companyId)) {
+    throw new Error("Ógilt fyrirtæki.");
+  }
+
+  if (!Number.isInteger(accountId)) {
+    throw new Error("Ógildur reikningslykill.");
+  }
+
+  await requireCompanyWriteAccess(companyId);
+
+  const account = await prisma.account.findFirst({
+    where: {
+      id: accountId,
+      companyId,
+    },
+    select: {
+      id: true,
+      number: true,
+      name: true,
+    },
+  });
+
+  if (!account) {
+    throw new Error(
+      "Reikningslykill fannst ekki hjá þessu fyrirtæki."
+    );
+  }
+
+  const suggestion = defaultAccounts.find(
+    (item) =>
+      item.number === account.number &&
+      item.name.trim().toLowerCase() ===
+        account.name.trim().toLowerCase()
+  );
+
+  if (!suggestion) {
+    throw new Error(
+      "Engin örugg GLÖGGT-tillaga fannst fyrir þennan reikningslykil."
+    );
+  }
+
+  if (suggestion.vatRequiresConfirmation === true) {
+    throw new Error(
+      "Þessi VSK-tillaga krefst yfirferðar bókara."
+    );
+  }
+
+  if (
+    suggestion.vatTreatment !== "INPUT" &&
+    suggestion.vatTreatment !== "OUTPUT" &&
+    suggestion.vatTreatment !== "NONE"
+  ) {
+    throw new Error(
+      "Ekki er heimilt að hraðsamþykkja þessa VSK-meðferð."
+    );
+  }
+
+  await updateAccountVatSettings(
+    companyId,
+    accountId,
+    {
+      vatRate:
+        suggestion.vatTreatment === "INPUT" ||
+        suggestion.vatTreatment === "OUTPUT"
+          ? suggestion.vatRate ?? null
+          : null,
+
+      vatAccount:
+        suggestion.vatTreatment === "INPUT"
+          ? "2520"
+          : suggestion.vatTreatment === "OUTPUT"
+            ? "2510"
+            : null,
+
+      vatCode:
+        suggestion.vatCode ?? null,
+
+      vatTreatment:
+        suggestion.vatTreatment,
+
+      vatDeductiblePercent:
+        suggestion.vatDeductiblePercent ?? null,
+
+      vatRequiresConfirmation: false,
+    }
+  );
+}
+
 export async function createCompany(
   data: {
     name: string;
