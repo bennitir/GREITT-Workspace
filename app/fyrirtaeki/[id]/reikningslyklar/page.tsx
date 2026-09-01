@@ -1,3 +1,4 @@
+import { defaultAccounts } from "@/app/data/accounts";
 import Link from "next/link";
 import { redirect } from "next/navigation";
 
@@ -200,14 +201,29 @@ export default async function ReikningslyklarPage({
                   account.vatTreatment === "REVIEW" ||
                   account.vatRequiresConfirmation);
 
+                  const matchingDefaultAccount =
+  defaultAccounts.find(
+    (item) =>
+      item.number === account.number &&
+      item.name.trim().toLowerCase() ===
+        account.name.trim().toLowerCase()
+  );
+
+const hasGloggtSuggestion =
+  matchingDefaultAccount?.vatTreatment != null;
+
                   const attentionReason =
-  !account.vatTreatment && vatMayApply
-    ? "VSK-meðferð vantar"
-    : account.vatTreatment === "REVIEW"
-      ? "Ákvörðun bókara"
-      : account.vatRequiresConfirmation
-        ? "Staðfesting bókara"
-        : null;
+  !account.vatTreatment &&
+  vatMayApply &&
+  hasGloggtSuggestion
+    ? "GLÖGGT tillaga tilbúin"
+    : !account.vatTreatment && vatMayApply
+      ? "VSK-meðferð vantar"
+      : account.vatTreatment === "REVIEW"
+        ? "Ákvörðun bókara"
+        : account.vatRequiresConfirmation
+          ? "Staðfesting bókara"
+          : null;
 
               return (
                 <tr
