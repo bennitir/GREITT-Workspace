@@ -132,6 +132,17 @@ export default async function FyrirtaekiDetailPage({
               : "Ekki settur upp"}
           </p>
 
+          {company.accounts.length > 0 && (
+  <div className="mt-3">
+    <Link
+      href={`/fyrirtaeki/${company.id}/reikningslyklar`}
+      className="inline-block rounded border border-slate-300 bg-white px-4 py-2 font-medium text-slate-800 hover:bg-slate-50"
+    >
+      Opna reikningslykla
+    </Link>
+  </div>
+)}
+
           <div className="mt-4">
             <p className="font-semibold">
               Skráning fylgiskjala

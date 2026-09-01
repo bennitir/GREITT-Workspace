@@ -378,7 +378,7 @@ export async function initializeCompanyAccounts(
             ? account.vatRequiresConfirmation
             : false,
 
-                      vatCode:
+               vatCode:
             account.vatCode ?? null,
 
           vatTreatment:
@@ -464,7 +464,7 @@ export async function addMissingDefaultAccounts(
             account.vatRequiresConfirmation ??
             false,
 
-                      vatCode:
+              vatCode:
             account.vatCode ?? null,
 
           vatTreatment:
@@ -488,6 +488,293 @@ export async function addMissingDefaultAccounts(
   return {
     added: missing.length,
   };
+}
+
+export async function updateAccountVatSettings(
+  companyId: number,
+  accountId: number,
+  data: {
+    vatRate: number | null;
+    vatAccount: string | null;
+    vatCode: string | null;
+    vatTreatment:
+      | "OUTPUT"
+      | "INPUT"
+      | "EXEMPT"
+      | "NONE"
+      | "REVIEW"
+      | "SYSTEM"
+      | null;
+    vatDeductiblePercent: number | null;
+    vatRequiresConfirmation: boolean;
+  }
+) {
+  if (!Number.isInteger(companyId)) {
+    throw new Error("Ógilt fyrirtæki.");
+  }
+
+  if (!Number.isInteger(accountId)) {
+    throw new Error("Ógildur reikningslykill.");
+  }
+
+  await requireCompanyWriteAccess(companyId);
+
+  const user = await getEffectiveUser();
+
+  if (!user) {
+    throw new Error("Innskráning er nauðsynleg.");
+  }
+
+  if (
+    data.vatRate !== null &&
+    (!Number.isInteger(data.vatRate) ||
+      data.vatRate < 0 ||
+      data.vatRate > 100)
+  ) {
+    throw new Error("Ógilt VSK-hlutfall.");
+  }
+
+  if (
+    data.vatDeductiblePercent !== null &&
+    (!Number.isInteger(data.vatDeductiblePercent) ||
+      data.vatDeductiblePercent < 0 ||
+      data.vatDeductiblePercent > 100)
+  ) {
+    throw new Error(
+      "Frádráttur verður að vera á bilinu 0–100%."
+    );
+  }
+
+  const allowedVatTreatments = new Set([
+    "OUTPUT",
+    "INPUT",
+    "EXEMPT",
+    "NONE",
+    "REVIEW",
+    "SYSTEM",
+  ]);
+
+  if (
+    data.vatTreatment !== null &&
+    !allowedVatTreatments.has(data.vatTreatment)
+  ) {
+    throw new Error("Ógild VSK-meðferð.");
+  }
+
+  if (
+    data.vatTreatment === null &&
+    (data.vatRate !== null ||
+      data.vatAccount !== null ||
+      data.vatCode !== null ||
+      data.vatDeductiblePercent !== null ||
+      data.vatRequiresConfirmation)
+  ) {
+    throw new Error(
+      "Velja þarf VSK-meðferð áður en VSK-stillingar eru vistaðar."
+    );
+  }
+
+  if (
+    (data.vatTreatment === "INPUT" ||
+      data.vatTreatment === "OUTPUT") &&
+    (data.vatRate === null || data.vatRate <= 0)
+  ) {
+    throw new Error(
+      "VSK-hlutfall þarf að vera skilgreint fyrir innskatt eða útskatt."
+    );
+  }
+
+  if (
+  (data.vatTreatment === "INPUT" ||
+    data.vatTreatment === "OUTPUT") &&
+  data.vatRate !== 24 &&
+  data.vatRate !== 11
+) {
+  throw new Error(
+    "VSK-hlutfall verður að vera annaðhvort 24% eða 11%."
+  );
+}
+
+if (
+  (data.vatTreatment === "NONE" ||
+    data.vatTreatment === "EXEMPT" ||
+    data.vatTreatment === "SYSTEM") &&
+  data.vatRate !== null
+) {
+  throw new Error(
+    "Þessi VSK-meðferð má ekki hafa VSK-hlutfall."
+  );
+}
+
+if (
+  (data.vatTreatment === "NONE" ||
+    data.vatTreatment === "EXEMPT" ||
+    data.vatTreatment === "SYSTEM") &&
+  data.vatAccount !== null
+) {
+  throw new Error(
+    "Þessi VSK-meðferð má ekki hafa VSK-reikning."
+  );
+}
+
+if (
+  data.vatTreatment === "NONE" &&
+  data.vatCode !== "NO_VAT"
+) {
+  throw new Error(
+    "Engin VSK-meðferð verður að nota VSK-kóðann NO_VAT."
+  );
+}
+
+if (
+  data.vatTreatment === "EXEMPT" &&
+  data.vatCode !== "EXEMPT"
+) {
+  throw new Error(
+    "Undanþegin VSK-meðferð verður að nota VSK-kóðann EXEMPT."
+  );
+}
+
+if (
+  data.vatTreatment === "INPUT" &&
+  data.vatCode !== `INPUT_${data.vatRate}`
+) {
+  throw new Error(
+    "VSK-kóði innskatts passar ekki við valið VSK-hlutfall."
+  );
+}
+
+if (
+  data.vatTreatment === "OUTPUT" &&
+  data.vatCode !== `OUTPUT_${data.vatRate}`
+) {
+  throw new Error(
+    "VSK-kóði útskatts passar ekki við valið VSK-hlutfall."
+  );
+}
+
+  if (
+    data.vatTreatment === "INPUT" &&
+    data.vatAccount !== "2520"
+  ) {
+    throw new Error(
+      "Innskattur verður að nota VSK-reikning 2520."
+    );
+  }
+
+  if (
+    data.vatTreatment === "OUTPUT" &&
+    data.vatAccount !== "2510"
+  ) {
+    throw new Error(
+      "Útskattur verður að nota VSK-reikning 2510."
+    );
+  }
+
+  if (
+    data.vatTreatment === "REVIEW" &&
+    !data.vatRequiresConfirmation
+  ) {
+    throw new Error(
+      "VSK-meðferð sem þarf yfirferð verður að krefjast staðfestingar."
+    );
+  }
+
+  const account = await prisma.account.findFirst({
+    where: {
+      id: accountId,
+      companyId,
+    },
+    select: {
+      id: true,
+      number: true,
+      name: true,
+      vatRate: true,
+      vatAccount: true,
+      vatCode: true,
+      vatTreatment: true,
+      vatDeductiblePercent: true,
+      vatRequiresConfirmation: true,
+    },
+  });
+
+  if (!account) {
+    throw new Error(
+      "Reikningslykill fannst ekki hjá þessu fyrirtæki."
+    );
+  }
+
+  await prisma.$transaction(async (tx) => {
+    const updatedAccount = await tx.account.update({
+      where: {
+        id: account.id,
+      },
+      data: {
+        vatRate: data.vatRate,
+        vatAccount: data.vatAccount,
+        vatCode: data.vatCode,
+        vatTreatment: data.vatTreatment,
+        vatDeductiblePercent:
+          data.vatDeductiblePercent,
+        vatRequiresConfirmation:
+          data.vatRequiresConfirmation,
+      },
+      select: {
+        vatRate: true,
+        vatAccount: true,
+        vatCode: true,
+        vatTreatment: true,
+        vatDeductiblePercent: true,
+        vatRequiresConfirmation: true,
+      },
+    });
+
+    await tx.auditEvent.create({
+      data: {
+        companyId,
+        userId: user.id,
+        entityType: "Account",
+        entityId: account.id,
+        action: "UPDATE_VAT_SETTINGS",
+        source: "USER",
+        description:
+          `VSK-stillingum reikningslykils ${account.number} breytt.`,
+        beforeData: {
+          vatRate: account.vatRate,
+          vatAccount: account.vatAccount,
+          vatCode: account.vatCode,
+          vatTreatment: account.vatTreatment,
+          vatDeductiblePercent:
+            account.vatDeductiblePercent,
+          vatRequiresConfirmation:
+            account.vatRequiresConfirmation,
+        },
+        afterData: {
+          vatRate: updatedAccount.vatRate,
+          vatAccount: updatedAccount.vatAccount,
+          vatCode: updatedAccount.vatCode,
+          vatTreatment:
+            updatedAccount.vatTreatment,
+          vatDeductiblePercent:
+            updatedAccount.vatDeductiblePercent,
+          vatRequiresConfirmation:
+            updatedAccount.vatRequiresConfirmation,
+        },
+        metadata: {
+          accountNumber: account.number,
+          accountName: account.name,
+        },
+      },
+    });
+  });
+
+  revalidatePath(
+    `/fyrirtaeki/${companyId}/reikningslyklar`
+  );
+
+  revalidatePath(
+    `/fyrirtaeki/${companyId}`
+  );
 }
 
 export async function createCompany(
