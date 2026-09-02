@@ -3,6 +3,7 @@ import {
   requireActiveCompanyWriteAccess,
   requireCompanyBookAccess,
   requireCompanyDeleteAccess,
+  getEffectiveUser,
 } from "@/lib/core/access-control";
 import { cookies } from "next/headers";
 import { createReadStream } from "fs";
@@ -1253,38 +1254,78 @@ if (dateWarnings.length > 0) {
 
   export async function reviewDetectedDocument(documentId: number) {
   const document = await prisma.aiDetectedDocument.findFirst({
-  where: {
-    id: documentId,
-    
-  },
-});
+    where: {
+      id: documentId,
+    },
+    include: {
+      receipt: true,
+    },
+  });
 
   if (!document) {
     throw new Error("Greint fylgiskjal fannst ekki.");
-    
+  }
+
+  await requireCompanyBookAccess(document.receipt.companyId);
+
+  const user = await getEffectiveUser();
+
+  if (!user) {
+    throw new Error("Innskráning er nauðsynleg.");
   }
 
   if (document.reviewedAt) {
     throw new Error("Þetta fylgiskjal hefur þegar verið yfirfarið.");
   }
 
-  await prisma.aiDetectedDocument.update({
-    where: {
-      id: documentId,
-    },
-    data: {
-      reviewedAt: new Date(),
-    },
-  });
+  await prisma.$transaction(async (tx) => {
+    const reviewedAt = new Date();
 
-  await prisma.receipt.update({
-  where: {
-    id: document.receiptId,
-  },
-  data: {
-    status: "REVIEWED",
-  },
-});
+    await tx.aiDetectedDocument.update({
+      where: {
+        id: documentId,
+      },
+      data: {
+        reviewedAt,
+      },
+    });
+
+    await tx.receipt.update({
+      where: {
+        id: document.receiptId,
+      },
+      data: {
+        status: "REVIEWED",
+      },
+    });
+
+    await tx.auditEvent.create({
+      data: {
+        companyId: document.receipt.companyId,
+        userId: user.id,
+        entityType: "Receipt",
+        entityId: document.receiptId,
+        action: "REVIEW_RECEIPT",
+        parentEntityType: "AiDetectedDocument",
+        parentEntityId: document.id,
+        source: "USER",
+        description: "Fylgiskjal yfirfarið.",
+        afterData: {
+          status: "REVIEWED",
+          reviewedAt: reviewedAt.toISOString(),
+        },
+        metadata: {
+          reviewMethod: "AI_DOCUMENT",
+          detectedDocumentId: document.id,
+          receiptId: document.receiptId,
+          merchantName: document.merchantName,
+          receiptNumber: document.receiptNumber,
+          documentDate: document.date?.toISOString() ?? null,
+          totalAmount: document.totalAmount,
+        },
+      },
+    });
+  });
 
   revalidatePath(`/fylgiskjol/${document.receiptId}`);
   revalidatePath("/fylgiskjol");
@@ -1339,6 +1380,13 @@ export async function markDetectedDocumentDuplicate(
   }
 
   await requireCompanyBookAccess(document.receipt.companyId);
+
+  const user = await getEffectiveUser();
+
+  if (!user) {
+    throw new Error("Innskráning er nauðsynleg.");
+  }
+
   if (!document.reviewedAt) {
   throw new Error(
     "Ekki er hægt að bóka fylgiskjal fyrr en það hefur verið yfirfarið."
@@ -1443,7 +1491,13 @@ const olderUnbookedDocument =
       approvedAt: null,
       date: {
         not: null,
-        lt: document.date!,
+        lt: new Date(
+          Date.UTC(
+            document.date!.getUTCFullYear(),
+            document.date!.getUTCMonth(),
+            document.date!.getUTCDate(),
+          ),
+        ),
       },
     },
     orderBy: {
@@ -1560,15 +1614,53 @@ if (hasVatActivity && !isVatSettlement) {
   });
 }
 
+    const approvedAt = new Date();
+
     await tx.aiDetectedDocument.update({
       where: {
         id: document.id,
       },
       data: {
-        approvedAt: new Date(),
+        approvedAt,
         voucherNumber,
       },
     });
+
+    await tx.auditEvent.create({
+      data: {
+        companyId: company.id,
+        userId: user.id,
+        entityType: "Receipt",
+        entityId: document.receiptId,
+        action: "BOOK_RECEIPT",
+        parentEntityType: "AiDetectedDocument",
+        parentEntityId: document.id,
+        source: "USER",
+        description: `Fylgiskjal ${voucherNumber} bókað.`,
+        afterData: {
+          status: "APPROVED",
+          approvedAt: approvedAt.toISOString(),
+          voucherNumber,
+        },
+        metadata: {
+          bookingMethod: "AI_DOCUMENT",
+          detectedDocumentId: document.id,
+          receiptId: document.receiptId,
+          voucherNumber,
+          merchantName: document.merchantName,
+          receiptNumber: document.receiptNumber,
+          documentDate: document.date?.toISOString() ?? null,
+          totalAmount: document.totalAmount,
+          bookingEntries: document.bookingEntries.map((entry) => ({
+            account: entry.account,
+            text: entry.text,
+            debit: entry.debit,
+            credit: entry.credit,
+          })),
+        },
+      },
+    });
+
 const remainingUnapproved =
   await tx.aiDetectedDocument.count({
     where: {
@@ -1668,6 +1760,13 @@ export async function approveManualReceipt(
   }[]
 ) {
   await requireActiveCompanyWriteAccess();
+
+  const user = await getEffectiveUser();
+
+  if (!user) {
+    throw new Error("Innskráning er nauðsynleg.");
+  }
+
   const receipt = await prisma.receipt.findUnique({
     where: {
       id: receiptId,
@@ -1778,6 +1877,37 @@ export async function approveManualReceipt(
       },
     });
 
+    await tx.auditEvent.create({
+      data: {
+        companyId: company.id,
+        userId: user.id,
+        entityType: "Receipt",
+        entityId: receiptId,
+        action: "BOOK_RECEIPT",
+        source: "USER",
+        description: `Fylgiskjal ${voucherNumber} bókað.`,
+        afterData: {
+          status: "APPROVED",
+          voucherNumber,
+        },
+        metadata: {
+          bookingMethod: "MANUAL_RECEIPT",
+          receiptId,
+          voucherNumber,
+          merchantName: receipt.merchantName,
+          receiptNumber: receipt.receiptNumber,
+          documentDate: receipt.date?.toISOString() ?? null,
+          totalAmount: receipt.amount,
+          bookingEntries: bookingEntries.map((entry) => ({
+            account: entry.account,
+            text: entry.text,
+            debit: entry.debit,
+            credit: entry.credit,
+          })),
+        },
+      },
+    });
+
     if (
       receipt.voucherNumber != null &&
       voucherNumber >= company.nextVoucherNumber
@@ -1809,30 +1939,37 @@ export async function updateDetectedDocumentEntries(
   documentAmount: string
 ) {
   const companyId = await requireActiveCompanyWriteAccess();
-  const document =
-  await prisma.aiDetectedDocument.findFirst({
+
+  const user = await getEffectiveUser();
+
+  if (!user) {
+    throw new Error("Innskráning er nauðsynleg.");
+  }
+
+  const document = await prisma.aiDetectedDocument.findFirst({
     where: {
       id: documentId,
       receipt: {
         companyId,
       },
     },
-      include: {
-        receipt: {
-          include: {
-            company: {
-              include: {
-                accounts: {
-                  where: {
-                    isActive: true,
-                  },
+    include: {
+      bookingEntries: true,
+      receipt: {
+        include: {
+          company: {
+            include: {
+              accounts: {
+                where: {
+                  isActive: true,
                 },
               },
             },
           },
         },
       },
-    });
+    },
+  });
 
   if (!document) {
     throw new Error("Greint fylgiskjal fannst ekki.");
@@ -1850,7 +1987,17 @@ export async function updateDetectedDocumentEntries(
     )
   );
 
+  const existingEntryIds = new Set(
+    document.bookingEntries.map((entry) => entry.id)
+  );
+
   for (const entry of entries) {
+    if (!existingEntryIds.has(entry.id)) {
+      throw new Error(
+        "Bókunarlína tilheyrir ekki þessu fylgiskjali."
+      );
+    }
+
     if (!allowedAccounts.has(entry.account)) {
       throw new Error(
         `Reikningslykill ${entry.account} er ekki í reikningslykli fyrirtækisins.`
@@ -1886,54 +2033,140 @@ export async function updateDetectedDocumentEntries(
   }
 
   const parsedAmount =
-  documentAmount.trim() === ""
-    ? null
-    : Number(documentAmount);
+    documentAmount.trim() === ""
+      ? null
+      : Number(documentAmount);
 
-if (
-  parsedAmount !== null &&
-  (!Number.isFinite(parsedAmount) || parsedAmount < 0)
-) {
-  throw new Error("Upphæð fylgiskjals er ekki gild.");
-}
+  if (
+    parsedAmount !== null &&
+    (!Number.isFinite(parsedAmount) || parsedAmount < 0)
+  ) {
+    throw new Error("Upphæð fylgiskjals er ekki gild.");
+  }
 
-const parsedDate =
-  documentDate.trim() === ""
-    ? null
-    : new Date(`${documentDate}T12:00:00.000Z`);
+  const normalizedDocumentDate = documentDate.trim();
 
-if (
-  parsedDate !== null &&
-  Number.isNaN(parsedDate.getTime())
-) {
-  throw new Error("Dagsetning fylgiskjals er ekki gild.");
-}
+  const parsedDate =
+    normalizedDocumentDate === ""
+      ? null
+      : new Date(`${normalizedDocumentDate}T12:00:00.000Z`);
 
-await prisma.$transaction([
-  prisma.aiDetectedDocument.update({
-    where: {
-      id: documentId,
-    },
-    data: {
-      date: parsedDate,
-      totalAmount: parsedAmount,
-    },
-  }),
+  if (
+    parsedDate !== null &&
+    Number.isNaN(parsedDate.getTime())
+  ) {
+    throw new Error("Dagsetning fylgiskjals er ekki gild.");
+  }
 
-  ...entries.map((entry) =>
-    prisma.aiDetectedDocumentEntry.update({
+  const previousDate = document.date
+    ? document.date.toISOString().slice(0, 10)
+    : null;
+
+  const nextDate = parsedDate
+    ? parsedDate.toISOString().slice(0, 10)
+    : null;
+
+  const previousEntries = [...document.bookingEntries]
+    .sort((a, b) => a.id - b.id)
+    .map((entry) => ({
+      id: entry.id,
+      account: entry.account,
+      text: entry.text,
+      debit: entry.debit,
+      credit: entry.credit,
+    }));
+
+  const nextEntries = [...entries]
+    .sort((a, b) => a.id - b.id)
+    .map((entry) => ({
+      id: entry.id,
+      account: entry.account,
+      text: entry.text,
+      debit: entry.debit,
+      credit: entry.credit,
+    }));
+
+  const dateChanged = previousDate !== nextDate;
+  const amountChanged = document.totalAmount !== parsedAmount;
+  const entriesChanged =
+    JSON.stringify(previousEntries) !== JSON.stringify(nextEntries);
+
+  const changedFields: string[] = [];
+
+  if (dateChanged) {
+    changedFields.push("date");
+  }
+
+  if (amountChanged) {
+    changedFields.push("totalAmount");
+  }
+
+  if (entriesChanged) {
+    changedFields.push("bookingEntries");
+  }
+
+  if (changedFields.length === 0) {
+    revalidatePath(`/fylgiskjol/${document.receiptId}`);
+    return;
+  }
+
+  await prisma.$transaction(async (tx) => {
+    await tx.aiDetectedDocument.update({
       where: {
-        id: entry.id,
+        id: documentId,
       },
       data: {
-        account: entry.account,
-        text: entry.text,
-        debit: entry.debit,
-        credit: entry.credit,
+        date: parsedDate,
+        totalAmount: parsedAmount,
       },
-    })
-  ),
-]);
+    });
+
+    for (const entry of entries) {
+      await tx.aiDetectedDocumentEntry.update({
+        where: {
+          id: entry.id,
+        },
+        data: {
+          account: entry.account,
+          text: entry.text,
+          debit: entry.debit,
+          credit: entry.credit,
+        },
+      });
+    }
+
+    await tx.auditEvent.create({
+      data: {
+        companyId,
+        userId: user.id,
+        entityType: "Receipt",
+        entityId: document.receiptId,
+        action: "UPDATE_BOOKING_PROPOSAL",
+        parentEntityType: "AiDetectedDocument",
+        parentEntityId: document.id,
+        source: "USER",
+        description: "Bókunartillögu fylgiskjals breytt.",
+        beforeData: {
+          date: previousDate,
+          totalAmount: document.totalAmount,
+          bookingEntries: previousEntries,
+        },
+        afterData: {
+          date: nextDate,
+          totalAmount: parsedAmount,
+          bookingEntries: nextEntries,
+        },
+        metadata: {
+          editMethod: "AI_DOCUMENT",
+          detectedDocumentId: document.id,
+          receiptId: document.receiptId,
+          merchantName: document.merchantName,
+          receiptNumber: document.receiptNumber,
+          changedFields,
+        },
+      },
+    });
+  });
 
   revalidatePath(
     `/fylgiskjol/${document.receiptId}`

@@ -13,6 +13,27 @@ type Props = {
   }>;
 };
 
+const VAT_AUDIT_FIELDS = [
+  "vatTreatment",
+  "vatRate",
+  "vatAccount",
+  "vatCode",
+  "vatDeductiblePercent",
+  "vatRequiresConfirmation",
+] as const;
+
+const VAT_AUDIT_FIELD_LABELS: Record<
+  (typeof VAT_AUDIT_FIELDS)[number],
+  string
+> = {
+  vatTreatment: "VSK-meðferð",
+  vatRate: "VSK %",
+  vatAccount: "VSK-reikningur",
+  vatCode: "VSK-kóði",
+  vatDeductiblePercent: "Frádráttur",
+  vatRequiresConfirmation: "Staðfesting",
+};
+
 function numberOrNull(
   value: FormDataEntryValue | null
 ) {
@@ -39,6 +60,198 @@ function textOrNull(
   const text = String(value ?? "").trim();
 
   return text || null;
+}
+
+function auditObject(
+  value: unknown
+): Record<string, unknown> | null {
+  if (
+    value === null ||
+    typeof value !== "object" ||
+    Array.isArray(value)
+  ) {
+    return null;
+  }
+
+  return value as Record<string, unknown>;
+}
+
+function vatTreatmentLabel(
+  value: unknown
+) {
+  switch (value) {
+    case "INPUT":
+      return "Innskattur";
+    case "OUTPUT":
+      return "Útskattur";
+    case "EXEMPT":
+      return "Undanþegið";
+    case "NONE":
+      return "Engin VSK-meðferð";
+    case "REVIEW":
+      return "Þarf yfirferð";
+    case "SYSTEM":
+      return "VSK kerfisreikningur";
+    case null:
+    case undefined:
+    case "":
+      return "Ekki skilgreint";
+    default:
+      return String(value);
+  }
+}
+
+function formatAuditValue(
+  field: (typeof VAT_AUDIT_FIELDS)[number],
+  value: unknown
+) {
+  if (field === "vatTreatment") {
+    return vatTreatmentLabel(value);
+  }
+
+  if (field === "vatRequiresConfirmation") {
+    if (value === true) {
+      return "Krafist";
+    }
+
+    if (value === false) {
+      return "Ekki krafist";
+    }
+
+    return "Ekki skilgreint";
+  }
+
+  if (field === "vatDeductiblePercent") {
+    if (
+      typeof value === "number" &&
+      Number.isFinite(value)
+    ) {
+      return `${value}%`;
+    }
+
+    return "Ekki skilgreint";
+  }
+
+  if (field === "vatRate") {
+    if (
+      typeof value === "number" &&
+      Number.isFinite(value)
+    ) {
+      return `${value}%`;
+    }
+
+    return "Ekki skilgreint";
+  }
+
+  if (
+    value === null ||
+    value === undefined ||
+    value === ""
+  ) {
+    return "Ekki skilgreint";
+  }
+
+  return String(value);
+}
+
+function getVatAuditChanges(
+  beforeData: unknown,
+  afterData: unknown
+) {
+  const before = auditObject(beforeData);
+  const after = auditObject(afterData);
+
+  if (!before && !after) {
+    return [];
+  }
+
+  return VAT_AUDIT_FIELDS.flatMap(
+    (field) => {
+      const beforeValue = before?.[field];
+      const afterValue = after?.[field];
+
+      if (
+        JSON.stringify(beforeValue) ===
+        JSON.stringify(afterValue)
+      ) {
+        return [];
+      }
+
+      return [
+        {
+          field,
+          label:
+            VAT_AUDIT_FIELD_LABELS[field],
+          before: formatAuditValue(
+            field,
+            beforeValue
+          ),
+          after: formatAuditValue(
+            field,
+            afterValue
+          ),
+        },
+      ];
+    }
+  );
+}
+
+function auditSourceLabel(
+  source: string
+) {
+  switch (source) {
+    case "USER":
+      return "Notandi";
+    case "AI":
+      return "GLÖGGT / AI";
+    case "SYSTEM":
+      return "Kerfi";
+    default:
+      return source;
+  }
+}
+
+function formatAuditDate(
+  date: Date
+) {
+  return date.toLocaleString("is-IS", {
+    timeZone: "Atlantic/Reykjavik",
+    day: "2-digit",
+    month: "2-digit",
+    year: "numeric",
+    hour: "2-digit",
+    minute: "2-digit",
+    hour12: false,
+  });
+}
+
+function auditUserLabel(
+  user: {
+    name: string | null;
+    email: string | null;
+  } | null,
+  userId: number | null
+) {
+  const name = user?.name?.trim();
+  const email = user?.email?.trim();
+
+  if (name && email) {
+    return `${name} · ${email}`;
+  }
+
+  if (name) {
+    return name;
+  }
+
+  if (email) {
+    return email;
+  }
+
+  if (userId !== null) {
+    return `Notandi #${userId}`;
+  }
+
+  return "Kerfi";
 }
 
 export default async function ReikningslykillEditPage({
@@ -123,6 +336,27 @@ export default async function ReikningslykillEditPage({
             .trim()
             .toLowerCase()
     );
+
+  const auditEvents =
+    await prisma.auditEvent.findMany({
+      where: {
+        companyId,
+        entityType: "Account",
+        entityId: account.id,
+      },
+      orderBy: {
+        createdAt: "desc",
+      },
+      take: 20,
+      include: {
+        user: {
+          select: {
+            name: true,
+            email: true,
+          },
+        },
+      },
+    });
 
   return (
     <main className="p-8">
@@ -439,6 +673,137 @@ export default async function ReikningslykillEditPage({
             </div>
           )}
         </form>
+
+        <section className="mt-6 rounded-lg border bg-white p-6 shadow-sm">
+          <div className="flex flex-wrap items-start justify-between gap-3">
+            <div>
+              <h2 className="text-xl font-semibold text-slate-900">
+                Rekjanleiki
+              </h2>
+
+              <p className="mt-1 text-sm text-slate-600">
+                Saga breytinga á þessum
+                reikningslykli.
+              </p>
+            </div>
+
+            <div className="rounded-full bg-slate-100 px-3 py-1 text-sm font-medium text-slate-700">
+              {auditEvents.length}{" "}
+              {auditEvents.length === 1
+                ? "atburður"
+                : "atburðir"}
+            </div>
+          </div>
+
+          {auditEvents.length === 0 ? (
+            <div className="mt-5 rounded-lg border border-dashed border-slate-300 bg-slate-50 p-5 text-sm text-slate-600">
+              Engin breytingasaga hefur verið
+              skráð fyrir þennan reikningslykil.
+            </div>
+          ) : (
+            <div className="mt-5 space-y-4">
+              {auditEvents.map((event) => {
+                const changes =
+                  getVatAuditChanges(
+                    event.beforeData,
+                    event.afterData
+                  );
+
+                return (
+                  <article
+                    key={event.id}
+                    className="rounded-lg border border-slate-200 p-4"
+                  >
+                    <div className="flex flex-wrap items-start justify-between gap-3">
+                      <div>
+                        <p className="font-medium text-slate-900">
+                          {event.description ??
+                            event.action}
+                        </p>
+
+                        <p className="mt-1 text-sm text-slate-600">
+                          {auditUserLabel(
+                            event.user,
+                            event.userId
+                          )}
+                        </p>
+                      </div>
+
+                      <div className="text-right">
+                        <p className="text-sm font-medium text-slate-700">
+                          {formatAuditDate(
+                            event.createdAt
+                          )}
+                        </p>
+
+                        <p className="mt-1 text-xs text-slate-500">
+                          Uppruni:{" "}
+                          {auditSourceLabel(
+                            event.source
+                          )}
+                        </p>
+                      </div>
+                    </div>
+
+                    {changes.length > 0 && (
+                      <div className="mt-4 overflow-hidden rounded-lg border border-slate-200">
+                        {changes.map(
+                          (
+                            change,
+                            index
+                          ) => (
+                            <div
+                              key={
+                                change.field
+                              }
+                              className={`grid gap-2 px-4 py-3 text-sm sm:grid-cols-[150px_1fr] ${
+                                index > 0
+                                  ? "border-t border-slate-200"
+                                  : ""
+                              }`}
+                            >
+                              <div className="font-medium text-slate-700">
+                                {
+                                  change.label
+                                }
+                              </div>
+
+                              <div className="text-slate-700">
+                                <span className="text-slate-500">
+                                  {
+                                    change.before
+                                  }
+                                </span>
+
+                                <span className="mx-2 text-slate-400">
+                                  →
+                                </span>
+
+                                <span className="font-medium text-slate-900">
+                                  {
+                                    change.after
+                                  }
+                                </span>
+                              </div>
+                            </div>
+                          )
+                        )}
+                      </div>
+                    )}
+
+                    {changes.length === 0 && (
+                      <p className="mt-3 text-sm text-slate-500">
+                        Engar sundurliðaðar
+                        breytingar eru skráðar með
+                        þessum atburði.
+                      </p>
+                    )}
+                  </article>
+                );
+              })}
+            </div>
+          )}
+        </section>
       </div>
     </main>
   );

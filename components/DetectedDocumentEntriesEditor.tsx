@@ -56,10 +56,37 @@ export default function DetectedDocumentEntriesEditor({
 }: Props) {
   const router = useRouter();
 
-  const [rows, setRows] = useState(entries);
+  function normalizeAccountValue(value: string) {
+    const trimmed = value.trim();
+
+    if (accounts.some((account) => account.number === trimmed)) {
+      return trimmed;
+    }
+
+    const leadingNumber = trimmed.match(/^(\\d+)/)?.[1];
+
+    if (
+      leadingNumber &&
+      accounts.some((account) => account.number === leadingNumber)
+    ) {
+      return leadingNumber;
+    }
+
+    return trimmed;
+  }
+
+  function normalizeEntries(sourceEntries: Entry[]) {
+    return sourceEntries.map((entry) => ({
+      ...entry,
+      account: normalizeAccountValue(entry.account),
+    }));
+  }
+
+  const [rows, setRows] = useState(() => normalizeEntries(entries));
+
   useEffect(() => {
-  setRows(entries);
-}, [entries]);0
+    setRows(normalizeEntries(entries));
+  }, [entries, accounts]);
 
   const [documentDate, setDocumentDate] = useState(
   date
@@ -238,43 +265,38 @@ disabled={!canEdit}
           className="grid grid-cols-5 gap-2 border-t py-3 text-sm"
         >
           <div className="relative">
-  <input
-    list={`account-options-${entry.id}`}
-    value={entry.account}
-    disabled={!canEdit}
-    onChange={(e) =>
-      updateRow(
-        entry.id,
-        "account",
-        e.target.value
-      )
-    }
-    className="w-full rounded border px-2 py-1"
-    placeholder="Reikningslykill"
-  />
+            <select
+              value={entry.account}
+              disabled={!canEdit}
+              onChange={(e) =>
+                updateRow(
+                  entry.id,
+                  "account",
+                  e.target.value
+                )
+              }
+              className="w-full rounded border px-2 py-1"
+            >
+              {!accounts.some(
+                (account) => account.number === entry.account
+              ) && (
+                <option value={entry.account}>
+                  {entry.account
+                    ? `Ógildur lykill: ${entry.account}`
+                    : "Veldu reikningslykil"}
+                </option>
+              )}
 
-  <select
-  value={entry.account}
-  disabled={!canEdit}
-  onChange={(e) =>
-    updateRow(
-      entry.id,
-      "account",
-      e.target.value
-    )
-  }
-  className="w-full rounded border px-2 py-1"
->
-  {accounts.map((account) => (
-    <option
-      key={account.number}
-      value={account.number}
-    >
-      {account.number} – {account.name}
-    </option>
-  ))}
-</select>
-</div>
+              {accounts.map((account) => (
+                <option
+                  key={account.number}
+                  value={account.number}
+                >
+                  {account.number} – {account.name}
+                </option>
+              ))}
+            </select>
+          </div>
 
           <input
             value={entry.text}
