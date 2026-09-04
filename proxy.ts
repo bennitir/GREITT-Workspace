@@ -10,12 +10,13 @@ export function proxy(request: NextRequest) {
   const requestHeaders = new Headers(request.headers);
   requestHeaders.set("x-gloggt-pathname", pathname);
 
-  // Innskráningarsíðan þarf alltaf að vera aðgengileg.
+  // Opinberar slóðir sem þurfa ekki session-cookie.
   if (
-  pathname === "/innskraning" ||
-  pathname === "/gleymt-lykilord" ||
-  pathname === "/endurstilla-lykilord"
-) {
+    pathname === "/innskraning" ||
+    pathname === "/gleymt-lykilord" ||
+    pathname === "/endurstilla-lykilord" ||
+    pathname === "/api/insight/worker"
+  ) {
     return NextResponse.next({
       request: {
         headers: requestHeaders,
