@@ -114,6 +114,26 @@ const canEdit = companyAccess.canWrite ?? false;
             },
           },
         },
+        insightFacts: {
+          orderBy: {
+            id: "asc",
+          },
+          select: {
+            id: true,
+            factType: true,
+            label: true,
+            textValue: true,
+            numberValue: true,
+            dateValue: true,
+            booleanValue: true,
+            unit: true,
+            currency: true,
+            periodStart: true,
+            periodEnd: true,
+            confidence: true,
+            source: true,
+          },
+        },
         entityLinks: {
           include: {
             entity: {
@@ -588,6 +608,164 @@ const getNextUnresolvedDocument = (currentDocumentId: number) =>
                                 {displayedInsightItem.processingVersion}
                               </p>
                             )}
+                          </div>
+                        );
+                      })()}
+
+                      {(() => {
+                        const completedInsightItem =
+                          document.insightProcessingItems.find(
+                            (item) => item.status === "COMPLETED",
+                          ) ?? null;
+
+                        if (!completedInsightItem) {
+                          return null;
+                        }
+
+                        const source = `AI_INNSYN:${completedInsightItem.processingVersion}`;
+
+                        const facts = document.insightFacts.filter(
+                          (fact) => fact.source === source,
+                        );
+
+                        const entityLinks = document.entityLinks.filter(
+                          (link) => link.source === source,
+                        );
+
+                        const findTextFact = (...labels: string[]) =>
+                          facts.find(
+                            (fact) =>
+                              fact.label !== null && labels.includes(fact.label) &&
+                              fact.textValue,
+                          )?.textValue ?? null;
+
+                        const findDateFact = (...labels: string[]) =>
+                          facts.find(
+                            (fact) =>
+                              fact.label !== null && labels.includes(fact.label) &&
+                              fact.dateValue,
+                          )?.dateValue ?? null;
+
+                        const findNumberFact = (...labels: string[]) =>
+                          facts.find(
+                            (fact) =>
+                              fact.label !== null && labels.includes(fact.label) &&
+                              fact.numberValue !== null,
+                          ) ?? null;
+
+                        const feeName = findTextFact(
+                          "Heiti gjalds",
+                          "Lýsing",
+                          "Þjónusta",
+                        );
+
+                        const period = findTextFact(
+                          "Tímabil",
+                          "Reikningstímabil",
+                        );
+
+                        const serviceIdentifier = findTextFact(
+                          "Gjaldaliður",
+                          "Þjónustunúmer",
+                        );
+
+                        const invoiceNumber =
+                          entityLinks.find(
+                            (link) =>
+                              link.entity.entityType === "INVOICE",
+                          )?.entity.identifierValue ??
+                          findTextFact(
+                            "Reikningsnúmer",
+                            "Númer reiknings",
+                          );
+
+                        const issuer =
+                          entityLinks.find(
+                            (link) => link.role === "ISSUER",
+                          )?.entity ?? null;
+
+                        const dueDate = findDateFact(
+                          "Gjalddagi",
+                          "Greiðsludagur",
+                        );
+
+                        const finalDueDate = findDateFact(
+                          "Eindagi",
+                        );
+
+                        const amountFact =
+                          findNumberFact(
+                            "Fjárhæð gjaldaliðar",
+                            "Samtals til greiðslu",
+                            "Samtals til greiðslu án VSK",
+                            "Heildarfjárhæð",
+                          );
+
+                        const amount =
+                          amountFact?.numberValue !== null &&
+                          amountFact?.numberValue !== undefined
+                            ? Number(amountFact.numberValue)
+                            : document.totalAmount;
+
+                        const detailParts = [
+                          serviceIdentifier
+                            ? `Gjaldaliður ${serviceIdentifier}`
+                            : null,
+                          invoiceNumber
+                            ? `Reikningur ${invoiceNumber}`
+                            : null,
+                        ].filter(Boolean);
+
+                        return (
+                          <div className="mt-3 rounded border border-indigo-200 bg-indigo-50 p-4 text-indigo-950">
+                            <div className="font-semibold">
+                              Innsýn úr skjalinu
+                            </div>
+
+                            {(feeName || period) && (
+                              <p className="mt-2 text-base font-medium">
+                                {[feeName, period]
+                                  .filter(Boolean)
+                                  .join(" · ")}
+                              </p>
+                            )}
+
+                            {issuer && (
+                              <p className="mt-1 text-sm">
+                                {issuer.name}
+                              </p>
+                            )}
+
+                            {detailParts.length > 0 && (
+                              <p className="mt-2 text-sm">
+                                {detailParts.join(" · ")}
+                              </p>
+                            )}
+
+                            {(amount !== null ||
+                              dueDate ||
+                              finalDueDate) && (
+                              <p className="mt-2 text-sm">
+                                {[
+                                  amount !== null
+                                    ? `${formatNumber(amount)} kr.`
+                                    : null,
+                                  dueDate
+                                    ? `Gjalddagi ${formatDate(dueDate)}`
+                                    : null,
+                                  finalDueDate
+                                    ? `Eindagi ${formatDate(finalDueDate)}`
+                                    : null,
+                                ]
+                                  .filter(Boolean)
+                                  .join(" · ")}
+                              </p>
+                            )}
+
+                            <p className="mt-3 text-xs text-indigo-800">
+                              Tengdir aðilar: {entityLinks.length} ·
+                              Staðreyndir: {facts.length}
+                            </p>
                           </div>
                         );
                       })()}
