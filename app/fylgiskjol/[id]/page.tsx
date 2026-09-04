@@ -1,9 +1,14 @@
 import { getCompanyAccess } from "@/lib/core/access-control";
+import { createInsightJobForDocument } from "@/app/actions/insightActions";
 import DeleteDetectedDocumentButton from "@/components/DeleteDetectedDocumentButton";
 import ApproveDocumentButton from "@/components/ApproveDocumentButton";
 import {
   analyzeReceiptWithAI,
   reviewDetectedDocument,
+  markDetectedDocumentOutsideBusiness,
+  retainDetectedDocumentForInsight,
+  resolveDetectedDocumentAsSupporting,
+  confirmInsightEntityAccountLink,
   approveDetectedDocument,
   deleteDetectedDocument,
   deleteReceipt,
@@ -49,6 +54,9 @@ const accounts = await prisma.account.findMany({
   select: {
     number: true,
     name: true,
+    type: true,
+    entryRole: true,
+    vatTreatment: true,
   },
   orderBy: {
     number: "asc",
@@ -88,6 +96,41 @@ const canEdit = companyAccess.canWrite ?? false;
     aiDetectedDocuments: {
       include: {
         bookingEntries: true,
+        insightProcessingItems: {
+          orderBy: {
+            createdAt: "desc",
+          },
+          take: 20,
+          include: {
+            job: {
+              select: {
+                id: true,
+                status: true,
+                processingVersion: true,
+                createdAt: true,
+                startedAt: true,
+                completedAt: true,
+              },
+            },
+          },
+        },
+        entityLinks: {
+          include: {
+            entity: {
+              include: {
+                accountLinks: {
+                  where: {
+                    role: "LIABILITY_PRINCIPAL",
+                    status: "CONFIRMED",
+                  },
+                  include: {
+                    account: true,
+                  },
+                },
+              },
+            },
+          },
+        },
       },
     },
   },
@@ -139,6 +182,17 @@ if (activeUser && activeUser.role !== "ADMIN") {
 const visibleDocuments = selectedDocument
   ? [selectedDocument]
   : receipt.aiDetectedDocuments;
+
+const getNextUnresolvedDocument = (currentDocumentId: number) =>
+  receipt.aiDetectedDocuments
+    .filter(
+      (item) =>
+        item.id !== currentDocumentId &&
+        !item.reviewedAt &&
+        !item.approvedAt &&
+        !item.disposedAt
+    )
+    .sort((a, b) => a.id - b.id)[0] ?? null;
   
     return (
   <main className="w-full max-w-[1400px] mx-auto p-4">
@@ -175,7 +229,9 @@ const visibleDocuments = selectedDocument
       Opna frumskjal
     </Link>
 {!receipt.aiDetectedDocuments.some(
-  (document) => document.reviewedAt !== null
+  (document) =>
+    document.voucherNumber !== null ||
+    document.disposedAt !== null
 ) && (
     <form
       action={async () => {
@@ -189,12 +245,14 @@ const visibleDocuments = selectedDocument
         type="submit"
         className="rounded bg-blue-600 px-4 py-2 text-white"
       >
-        Lesa fylgiskjal með AI
+        {receipt.aiDetectedDocuments.length > 0
+          ? "Lesa fylgiskjal aftur með AI"
+          : "Lesa fylgiskjal með AI"}
       </button>
     </form>
     )}
     {!receipt.aiDetectedDocuments.some(
-  (document) => document.reviewedAt !== null
+  (document) => document.reviewedAt !== null || document.disposedAt !== null
 ) && (
   <form
   action={async () => {
@@ -246,7 +304,11 @@ const visibleDocuments = selectedDocument
 
           <p>
             <strong>Staða:</strong>{" "}
-            {receipt.ocrStatus ?? "Ekki lesið"}
+            {receipt.company.vatRegistered === false && receipt.ocrStatus
+              ? receipt.ocrStatus
+                  .replace(/\s*Athuga VSK-tímabil\.?/gi, "")
+                  .trim()
+              : receipt.ocrStatus ?? "Ekki lesið"}
           </p>
 
           <p className="mt-1">
@@ -282,10 +344,10 @@ const visibleDocuments = selectedDocument
         </div>
          <div className="border rounded-lg p-4">
         <h2 className="text-xl font-semibold mb-3">
-          Bókun
+          {visibleDocuments.some((document) => document.documentRole === "BOOKABLE") ? "Bókun" : "Afgreiðsla"}
         </h2>
 
-{visibleDocuments.some((document) => !document.reviewedAt) && (
+{visibleDocuments.some((document) => document.documentRole === "BOOKABLE" && !document.reviewedAt && !document.disposedAt) && (
   <div className="mb-4 rounded border border-red-300 bg-red-50 p-3 font-semibold text-red-700">
     🔒 Ekki hægt að bóka fyrr en fylgiskjalið hefur verið merkt yfirfarið.
   </div>
@@ -294,14 +356,14 @@ const visibleDocuments = selectedDocument
         {visibleDocuments.length > 0 && (
   <div className="mb-4">
     {visibleDocuments.every(
-      (document) => document.approvedAt
+      (document) => document.approvedAt || document.disposedAt
     ) ? (
               <div className="rounded border border-green-300 bg-green-50 p-3 text-green-700">
-                ✓ Öll greind fylgiskjöl samþykkt
+                ✓ Öll greind fylgiskjöl afgreidd
               </div>
             ) : (
               <div className="rounded border border-yellow-300 bg-yellow-50 p-3 text-yellow-700">
-                Bíður eftir samþykkt allra
+                Bíður eftir afgreiðslu allra
                 fylgiskjala
               </div>
             )}
@@ -402,28 +464,308 @@ const visibleDocuments = selectedDocument
                         {document.summary}
                       </p>
 
-                      <DetectedDocumentEntriesEditor
-  documentId={document.id}
-  entries={document.bookingEntries}
-  accounts={accounts}
-  date={document.date}
-  totalAmount={document.totalAmount}
-  reviewedAt={document.reviewedAt}
-  approvedAt={document.approvedAt}
-  voucherNumber={document.voucherNumber}
-  duplicateOfDocumentId={document.duplicateOfDocumentId}
-  duplicateVoucherNumber={document.duplicateVoucherNumber}
-  duplicateMarkedAt={document.duplicateMarkedAt}
-  canBook={canBook}
-  canEdit={canEdit}
-/>
+                      {(() => {
+                        const latestInsightItem =
+                          document.insightProcessingItems[0] ?? null;
+
+                        const latestCompletedInsightItem =
+                          document.insightProcessingItems.find(
+                            (item) => item.status === "COMPLETED",
+                          ) ?? null;
+
+                        const hasValidCompletedInsight =
+                          latestCompletedInsightItem !== null;
+
+                        const latestAttemptFailed =
+                          latestInsightItem?.status === "FAILED" ||
+                          latestInsightItem?.job.status ===
+                            "COMPLETED_WITH_ERRORS";
+
+                        const latestAttemptProcessing =
+                          latestInsightItem?.status === "PROCESSING";
+
+                        const latestAttemptPending =
+                          latestInsightItem?.status === "PENDING";
+
+                        const statusText = hasValidCompletedInsight
+                          ? "Innsýn lokið"
+                          : latestAttemptProcessing
+                            ? "Innsýn er að vinna skjalið…"
+                            : latestAttemptPending
+                              ? "Bíður eftir Innsýn-vinnslu"
+                              : latestAttemptFailed
+                                ? "Innsýn-vinnsla mistókst"
+                                : "Ekki unnið með Innsýn";
+
+                        const statusClass = hasValidCompletedInsight
+                          ? "border-green-300 bg-green-50 text-green-800"
+                          : latestAttemptProcessing
+                            ? "border-blue-300 bg-blue-50 text-blue-800"
+                            : latestAttemptPending
+                              ? "border-amber-300 bg-amber-50 text-amber-900"
+                              : latestAttemptFailed
+                                ? "border-red-300 bg-red-50 text-red-800"
+                                : "border-slate-300 bg-slate-50 text-slate-700";
+
+                        const displayedInsightItem =
+                          latestCompletedInsightItem ?? latestInsightItem;
+
+                        return (
+                          <div
+                            className={`mt-4 rounded border p-4 ${statusClass}`}
+                          >
+                            <div className="flex flex-wrap items-center justify-between gap-3">
+                              <div>
+                                <div className="font-semibold">
+                                  Innsýn
+                                </div>
+
+                                <p className="mt-1 text-sm">
+                                  {statusText}
+                                </p>
+
+                                {hasValidCompletedInsight &&
+                                  latestAttemptFailed &&
+                                  latestInsightItem &&
+                                  latestCompletedInsightItem &&
+                                  latestInsightItem.id !==
+                                    latestCompletedInsightItem.id && (
+                                    <div className="mt-3 rounded border border-amber-300 bg-amber-50 p-3 text-sm text-amber-900">
+                                      <strong>Athugið:</strong>{" "}
+                                      Síðari endurvinnslutilraun mistókst,
+                                      en fyrri gild Innsýn-niðurstaða er
+                                      áfram varðveitt.
+                                      {latestInsightItem.errorMessage && (
+                                        <span className="block mt-1">
+                                          Villa:{" "}
+                                          {latestInsightItem.errorMessage}
+                                        </span>
+                                      )}
+                                    </div>
+                                  )}
+
+                                {!hasValidCompletedInsight &&
+                                  latestInsightItem?.errorMessage && (
+                                    <p className="mt-2 text-sm">
+                                      <strong>Villa:</strong>{" "}
+                                      {latestInsightItem.errorMessage}
+                                    </p>
+                                  )}
+                              </div>
+
+                              {canEdit &&
+                                (!latestInsightItem ||
+                                  latestAttemptFailed) && (
+                                  <form
+                                    action={async () => {
+                                      "use server";
+
+                                      await createInsightJobForDocument(
+                                        document.id,
+                                      );
+
+                                      redirect(
+                                        `/fylgiskjol/${receipt.id}?document=${document.id}`,
+                                      );
+                                    }}
+                                  >
+                                    <button
+                                      type="submit"
+                                      className="rounded bg-indigo-700 px-4 py-2 font-semibold text-white hover:bg-indigo-800"
+                                    >
+                                      {latestAttemptFailed
+                                        ? "Reyna Innsýn aftur"
+                                        : "Keyra Innsýn"}
+                                    </button>
+                                  </form>
+                                )}
+                            </div>
+
+                            {displayedInsightItem && (
+                              <p className="mt-3 text-xs opacity-80">
+                                Gild vinnsla: vinnsluverk #
+                                {displayedInsightItem.job.id} ·{" "}
+                                {displayedInsightItem.processingVersion}
+                              </p>
+                            )}
+                          </div>
+                        );
+                      })()}
+
+                      {document.entityLinks
+                        .filter(
+                          (link) =>
+                            link.role === "LOAN" &&
+                            link.entity.entityType === "LOAN"
+                        )
+                        .map((link) => {
+                          const confirmedAccount =
+                            link.entity.accountLinks[0]?.account ?? null;
+
+                          return (
+                            <div
+                              key={`loan-account-${link.entity.id}`}
+                              className="mt-4 rounded border border-blue-200 bg-blue-50 p-4"
+                            >
+                              <div className="font-semibold text-blue-900">
+                                Lánatenging
+                              </div>
+
+                              <p className="mt-1 text-sm text-blue-900">
+                                <strong>Lán:</strong>{" "}
+                                {link.entity.identifierValue ?? link.entity.name}
+                              </p>
+
+                              {confirmedAccount ? (
+                                <div className="mt-3 rounded border border-green-300 bg-green-50 p-3 text-sm text-green-800">
+                                  ✓ Staðfestur skuldareikningur:{" "}
+                                  <strong>
+                                    {confirmedAccount.number} – {confirmedAccount.name}
+                                  </strong>
+                                </div>
+                              ) : canBook ? (
+                                <form
+                                  action={async (formData) => {
+                                    "use server";
+                                    const accountNumber = String(
+                                      formData.get("loanAccountNumber") ?? ""
+                                    );
+                                    await confirmInsightEntityAccountLink(
+                                      document.id,
+                                      link.entity.id,
+                                      accountNumber
+                                    );
+                                    redirect(
+                                      `/fylgiskjol/${receipt.id}?document=${document.id}`
+                                    );
+                                  }}
+                                  className="mt-3"
+                                >
+                                  <label
+                                    htmlFor={`loan-account-${document.id}-${link.entity.id}`}
+                                    className="block text-sm font-semibold text-blue-900"
+                                  >
+                                    Veldu skuldareikning fyrir þetta lán
+                                  </label>
+
+                                  <select
+                                    id={`loan-account-${document.id}-${link.entity.id}`}
+                                    name="loanAccountNumber"
+                                    required
+                                    defaultValue=""
+                                    className="mt-2 w-full rounded border border-blue-300 bg-white px-3 py-2"
+                                  >
+                                    <option value="" disabled>
+                                      Veldu reikning…
+                                    </option>
+                                    {accounts
+                                      .filter(
+                                        (account) =>
+                                          account.type === "SHORT_TERM_LIABILITY" ||
+                                          account.type === "LONG_TERM_LIABILITY"
+                                      )
+                                      .map((account) => (
+                                        <option key={account.number} value={account.number}>
+                                          {account.number} – {account.name}
+                                        </option>
+                                      ))}
+                                  </select>
+
+                                  <button
+                                    type="submit"
+                                    className="mt-2 rounded bg-blue-700 px-4 py-2 font-semibold text-white hover:bg-blue-800"
+                                  >
+                                    Staðfesta skuldareikning láns
+                                  </button>
+
+                                  <p className="mt-2 text-xs text-blue-800">
+                                    GLÖGGT mun nota þessa tengingu fyrir sama lán
+                                    framvegis. Lestu skjalið aftur eftir staðfestingu
+                                    til að búa til öruggar bókunarlínur.
+                                  </p>
+                                </form>
+                              ) : (
+                                <p className="mt-2 text-sm text-blue-900">
+                                  Skuldareikningur lánsins hefur ekki verið staðfestur.
+                                </p>
+                              )}
+                            </div>
+                          );
+                        })}
+
+                      {document.disposedAt ? (
+  <div className="mt-4 rounded border border-slate-300 bg-slate-50 p-4">
+    <div className="font-semibold text-slate-800">
+      {document.disposition === "INSIGHT_ONLY"
+        ? "Varðveitt fyrir Innsýn – ekki bókfært"
+        : document.disposition === "SUPPORTING_RESOLVED"
+          ? "Afgreitt sem stuðningsskjal – ekki bókfært"
+          : "Ekki bókfært – utan rekstrar"}
+    </div>
+    {document.dispositionReason && (
+      <p className="mt-2 text-sm text-slate-700">
+        <strong>Ástæða:</strong> {document.dispositionReason}
+      </p>
+    )}
+    <p className="mt-1 text-sm text-slate-600">
+      <strong>Afgreitt:</strong> {formatDate(document.disposedAt)}
+    </p>
+  </div>
+) : document.documentRole === "BOOKABLE" ? (
+  <DetectedDocumentEntriesEditor
+    documentId={document.id}
+    entries={document.bookingEntries}
+    accounts={accounts}
+    vatRegistered={receipt.company.vatRegistered}
+    date={document.date}
+    totalAmount={document.totalAmount}
+    reviewedAt={document.reviewedAt}
+    approvedAt={document.approvedAt}
+    voucherNumber={document.voucherNumber}
+    duplicateOfDocumentId={document.duplicateOfDocumentId}
+    duplicateVoucherNumber={document.duplicateVoucherNumber}
+    duplicateMarkedAt={document.duplicateMarkedAt}
+    canBook={canBook}
+    canEdit={canEdit}
+  />
+) : null}
                               
 
-                    {document.reviewedAt ? (
+                    {document.disposedAt ? (
+  <>
+    <div className="mt-3 rounded border border-slate-300 bg-slate-50 p-3 text-slate-700">
+      Skjalið hefur verið afgreitt án bókunar og er varðveitt með rekjanleika.
+    </div>
+    {(() => {
+      const nextDocument = getNextUnresolvedDocument(document.id);
+      return nextDocument ? (
+        <Link
+          href={`/fylgiskjol/${receipt.id}?document=${nextDocument.id}`}
+          className="mt-3 flex w-full items-center justify-between rounded-lg border border-blue-200 bg-blue-50 px-4 py-3 font-semibold text-blue-800 transition hover:border-blue-300 hover:bg-blue-100"
+        >
+          <span>Næsta skjal</span>
+          <span aria-hidden="true">→</span>
+        </Link>
+      ) : null;
+    })()}
+  </>
+) : document.reviewedAt ? (
   <>
     <div className="mt-3 rounded border border-green-300 bg-green-50 p-3 text-green-700">
       ✓ Fylgiskjal yfirfarið
     </div>
+    {(() => {
+      const nextDocument = getNextUnresolvedDocument(document.id);
+      return nextDocument ? (
+        <Link
+          href={`/fylgiskjol/${receipt.id}?document=${nextDocument.id}`}
+          className="mt-3 flex w-full items-center justify-between rounded-lg border border-blue-200 bg-blue-50 px-4 py-3 font-semibold text-blue-800 transition hover:border-blue-300 hover:bg-blue-100"
+        >
+          <span>Næsta skjal</span>
+          <span aria-hidden="true">→</span>
+        </Link>
+      ) : null;
+    })()}
     {!document.approvedAt && !document.voucherNumber && (
   <DeleteDetectedDocumentButton
   canDelete={canDelete}
@@ -459,29 +801,47 @@ const visibleDocuments = selectedDocument
 ) : (
  
      <>               
+                        {document.documentRole === "BOOKABLE" && (
                         <form
                           action={async () => {
                             "use server";
-                            await reviewDetectedDocument(
-                              document.id
-                            );
 
-                            const nextDocument = receipt.aiDetectedDocuments
-  .filter(
-    (item) =>
-      item.id !== document.id &&
-      !item.reviewedAt &&
-      !item.approvedAt
-  )
-  .sort((a, b) => a.id - b.id)[0];
+                            await reviewDetectedDocument(document.id);
 
-if (nextDocument) {
-  redirect(
-    `/fylgiskjol/${receipt.id}?document=${nextDocument.id}`
-  );
-}
+                            const nextDocument =
+                              await prisma.aiDetectedDocument.findFirst({
+                                where: {
+                                  id: {
+                                    not: document.id,
+                                  },
+                                  reviewedAt: null,
+                                  approvedAt: null,
+                                  disposedAt: null,
+                                  receipt: {
+                                    companyId: receipt.companyId,
+                                  },
+                                },
+                                orderBy: [
+                                  {
+                                    date: "asc",
+                                  },
+                                  {
+                                    id: "asc",
+                                  },
+                                ],
+                                select: {
+                                  id: true,
+                                  receiptId: true,
+                                },
+                              });
 
-redirect("/fylgiskjol");
+                            if (nextDocument) {
+                              redirect(
+                                `/fylgiskjol/${nextDocument.receiptId}?document=${nextDocument.id}`
+                              );
+                            }
+
+                            redirect("/fylgiskjol");
                           }}
                           className="mt-3"
                         >
@@ -493,7 +853,176 @@ redirect("/fylgiskjol");
   Merkja yfirfarið
 </button>
                         </form>
+                        )}
 
+                        {canBook && document.documentRole === "INSIGHT_SOURCE" && (
+                          <form
+                            action={async () => {
+                              "use server";
+
+                              await retainDetectedDocumentForInsight(
+                                document.id,
+                                "Varðveitt sem Innsýn-gagn án bókunar."
+                              );
+
+                              const nextDocument =
+                                await prisma.aiDetectedDocument.findFirst({
+                                  where: {
+                                    id: { not: document.id },
+                                    reviewedAt: null,
+                                    approvedAt: null,
+                                    disposedAt: null,
+                                    receipt: { companyId: receipt.companyId },
+                                  },
+                                  orderBy: [{ date: "asc" }, { id: "asc" }],
+                                  select: { id: true, receiptId: true },
+                                });
+
+                              if (nextDocument) {
+                                redirect(
+                                  `/fylgiskjol/${nextDocument.receiptId}?document=${nextDocument.id}`
+                                );
+                              }
+
+                              redirect("/fylgiskjol");
+                            }}
+                            className="mt-3 rounded border border-indigo-200 bg-indigo-50 p-3"
+                          >
+                            <p className="text-sm text-indigo-900">
+                              Skjalið verður varðveitt fyrir Innsýn en engin bókun eða fylgiskjalsnúmer verður stofnað.
+                            </p>
+                            <button
+                              type="submit"
+                              className="mt-2 rounded bg-indigo-700 px-4 py-2 font-semibold text-white hover:bg-indigo-800"
+                            >
+                              Varðveita fyrir Innsýn – ekki bóka
+                            </button>
+                          </form>
+                        )}
+
+                        {canBook && document.documentRole === "SUPPORTING" && (
+                          <form
+                            action={async () => {
+                              "use server";
+
+                              await resolveDetectedDocumentAsSupporting(
+                                document.id,
+                                "Afgreitt sem stuðningsskjal án sjálfstæðrar bókunar."
+                              );
+
+                              const nextDocument =
+                                await prisma.aiDetectedDocument.findFirst({
+                                  where: {
+                                    id: { not: document.id },
+                                    reviewedAt: null,
+                                    approvedAt: null,
+                                    disposedAt: null,
+                                    receipt: { companyId: receipt.companyId },
+                                  },
+                                  orderBy: [{ date: "asc" }, { id: "asc" }],
+                                  select: { id: true, receiptId: true },
+                                });
+
+                              if (nextDocument) {
+                                redirect(
+                                  `/fylgiskjol/${nextDocument.receiptId}?document=${nextDocument.id}`
+                                );
+                              }
+
+                              redirect("/fylgiskjol");
+                            }}
+                            className="mt-3 rounded border border-blue-200 bg-blue-50 p-3"
+                          >
+                            <p className="text-sm text-blue-900">
+                              Skjalið styður annan fjárhagsatburð og verður varðveitt án sjálfstæðrar bókunar.
+                            </p>
+                            <button
+                              type="submit"
+                              className="mt-2 rounded bg-blue-700 px-4 py-2 font-semibold text-white hover:bg-blue-800"
+                            >
+                              Afgreiða sem stuðningsskjal
+                            </button>
+                          </form>
+                        )}
+
+                        {canBook && document.documentRole !== "INSIGHT_SOURCE" && document.documentRole !== "SUPPORTING" && (
+                          <form
+                            action={async (formData) => {
+                              "use server";
+
+                              const reason = String(
+                                formData.get("outsideBusinessReason") ?? ""
+                              ).trim();
+
+                              await markDetectedDocumentOutsideBusiness(
+                                document.id,
+                                reason
+                              );
+
+                              const nextDocument =
+                                await prisma.aiDetectedDocument.findFirst({
+                                  where: {
+                                    id: {
+                                      not: document.id,
+                                    },
+                                    reviewedAt: null,
+                                    approvedAt: null,
+                                    disposedAt: null,
+                                    receipt: {
+                                      companyId: receipt.companyId,
+                                    },
+                                  },
+                                  orderBy: [
+                                    {
+                                      date: "asc",
+                                    },
+                                    {
+                                      id: "asc",
+                                    },
+                                  ],
+                                  select: {
+                                    id: true,
+                                    receiptId: true,
+                                  },
+                                });
+
+                              if (nextDocument) {
+                                redirect(
+                                  `/fylgiskjol/${nextDocument.receiptId}?document=${nextDocument.id}`
+                                );
+                              }
+
+                              redirect("/fylgiskjol");
+                            }}
+                            className="mt-3 rounded border border-slate-300 bg-slate-50 p-3"
+                          >
+                            <label
+                              htmlFor={`outside-business-reason-${document.id}`}
+                              className="block text-sm font-semibold text-slate-800"
+                            >
+                              Ástæða fyrir því að skjalið á ekki að tilheyra þessu umhverfi
+                            </label>
+
+                            <textarea
+                              id={`outside-business-reason-${document.id}`}
+                              name="outsideBusinessReason"
+                              required
+                              rows={2}
+                              placeholder="T.d. persónuleg trygging sem tengist ekki rekstri."
+                              className="mt-2 w-full rounded border border-slate-300 bg-white px-3 py-2 text-sm"
+                            />
+
+                            <button
+                              type="submit"
+                              className="mt-2 rounded bg-slate-700 px-4 py-2 font-semibold text-white hover:bg-slate-800"
+                            >
+                              Afgreiða utan þessa umhverfis
+                            </button>
+                          </form>
+                        )}
+
+                        {document.documentRole !== "INSIGHT_SOURCE" &&
+                          document.documentRole !== "SUPPORTING" && (
                         <form
   action={async () => {
     "use server";
@@ -508,6 +1037,7 @@ redirect("/fylgiskjol");
     Þarf skoðun
   </button>
 </form>
+                        )}
 </>
                       )}
                     </div>
