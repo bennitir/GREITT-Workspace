@@ -13,9 +13,10 @@ export function proxy(request: NextRequest) {
   // Opinberar slóðir sem þurfa ekki session-cookie.
   if (
     pathname === "/innskraning" ||
-    pathname === "/gleymt-lykilord" ||
-    pathname === "/endurstilla-lykilord" ||
-    pathname === "/api/insight/worker"
+pathname === "/gleymt-lykilord" ||
+pathname === "/endurstilla-lykilord" ||
+pathname === "/api/insight/worker" ||
+pathname === "/api/insight/scheduler"
   ) {
     return NextResponse.next({
       request: {
