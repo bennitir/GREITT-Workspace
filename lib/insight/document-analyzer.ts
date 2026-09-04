@@ -1,7 +1,9 @@
 import OpenAI from "openai";
-import { createReadStream } from "fs";
-import { readFile } from "fs/promises";
+import { createReadStream, existsSync } from "fs";
+import { mkdir, readFile, writeFile } from "fs/promises";
+import os from "os";
 import path from "path";
+import { supabaseAdmin } from "@/lib/supabase";
 
 export type InsightDocumentType =
   | "ACCOUNTING_DOCUMENT"
@@ -43,6 +45,7 @@ export type InsightExistingDocumentContext = {
 
 export type AnalyzeInsightDocumentInput = {
   filePath: string;
+  storagePath?: string | null;
   company: InsightCompanyContext;
   existingDocument?: InsightExistingDocumentContext | null;
   processingVersion: string;
@@ -147,6 +150,54 @@ function resolvePublicFilePath(filePath: string) {
     "public",
     relativePath,
   );
+}
+
+type PreparedInsightSource = {
+  fullPath: string;
+  source: "LOCAL" | "SUPABASE";
+};
+
+async function prepareInsightSource(
+  filePath: string,
+  storagePath?: string | null,
+): Promise<PreparedInsightSource> {
+  const localPath = resolvePublicFilePath(filePath);
+
+  if (existsSync(localPath)) {
+    return { fullPath: localPath, source: "LOCAL" };
+  }
+
+  const persistentStoragePath = storagePath?.trim();
+
+  if (!persistentStoragePath) {
+    throw new Error(
+      "Frumskjal fannst ekki á local diski og storagePath vantar fyrir Supabase Storage.",
+    );
+  }
+
+  const { data, error } = await supabaseAdmin.storage
+    .from("fylgiskjol")
+    .download(persistentStoragePath);
+
+  if (error || !data) {
+    throw new Error(
+      `Ekki tókst að sækja frumskjal úr Supabase Storage: ${error?.message ?? "Óþekkt villa"}`,
+    );
+  }
+
+  const tempDir = path.join(os.tmpdir(), "gloggt-insight");
+  await mkdir(tempDir, { recursive: true });
+
+  const rawName = path.basename(persistentStoragePath) || path.basename(filePath) || "insight-source.bin";
+  const safeName = rawName.replace(/[^A-Za-z0-9._-]/g, "_");
+  const tempPath = path.join(
+    tempDir,
+    `${Date.now()}-${Math.random().toString(36).slice(2)}-${safeName}`,
+  );
+
+  await writeFile(tempPath, Buffer.from(await data.arrayBuffer()));
+
+  return { fullPath: tempPath, source: "SUPABASE" };
 }
 
 function formatExistingDate(
@@ -594,10 +645,13 @@ export async function analyzeDocumentForInsight(
     );
   }
 
-  const fullPath =
-    resolvePublicFilePath(
+  const preparedSource =
+    await prepareInsightSource(
       input.filePath,
+      input.storagePath,
     );
+
+  const fullPath = preparedSource.fullPath;
 
   const extension = path
     .extname(fullPath)

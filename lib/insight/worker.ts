@@ -483,7 +483,10 @@ export async function processNextInsightItem(
   }
 
   try {
-    if (!item.receipt.filePath) {
+    if (
+      !item.receipt.filePath &&
+      !item.receipt.storagePath
+    ) {
       throw new Error(
         `Fylgiskjal ${item.receiptId} er ekki með tengt frumskjal.`,
       );
@@ -538,7 +541,10 @@ export async function processNextInsightItem(
     const analysis =
       await analyzeDocumentForInsight({
         filePath:
-          item.receipt.filePath,
+          item.receipt.filePath ?? "",
+
+        storagePath:
+          item.receipt.storagePath,
 
         processingVersion:
           item.processingVersion,
