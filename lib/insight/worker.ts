@@ -9,6 +9,7 @@ import {
   claimNextInsightProcessingItem,
   completeInsightProcessingItem,
   failInsightProcessingItem,
+  recoverStaleInsightProcessingItems,
 } from "@/lib/insight/processing-service";
 
 type ProcessNextInsightItemOptions = {
@@ -876,6 +877,17 @@ export async function runInsightWorker(
     );
   }
 
+  /*
+   * Endurheimtum fyrst PROCESSING atriði sem hafa
+   * setið föst lengur en stale-mörkin.
+   *
+   * Þetta gerist áður en worker claim-ar næsta item.
+   */
+  const recovery =
+    await recoverStaleInsightProcessingItems({
+      jobId: options.jobId,
+    });
+
   const results: Awaited<
     ReturnType<
       typeof processNextInsightItem
@@ -907,6 +919,8 @@ export async function runInsightWorker(
   }
 
   return {
+    recovery,
+
     processedItems:
       results.filter(
         (result) =>

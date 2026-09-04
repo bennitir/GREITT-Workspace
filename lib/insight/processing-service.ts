@@ -62,6 +62,13 @@ export type FailInsightProcessingItemInput = {
   resultMetadata?: JsonObject | null;
 };
 
+export type RecoverStaleInsightProcessingItemsInput = {
+  staleAfterMinutes?: number;
+  jobId?: number;
+};
+
+export const DEFAULT_INSIGHT_STALE_AFTER_MINUTES = 10;
+
 function buildItemKey(target: InsightProcessingTarget) {
   if (target.documentId != null) {
     return `DOCUMENT:${target.documentId}`;
@@ -892,6 +899,255 @@ export async function failInsightProcessingItem(
       };
     },
   );
+}
+
+
+export async function recoverStaleInsightProcessingItems(
+  input: RecoverStaleInsightProcessingItemsInput = {},
+) {
+  const staleAfterMinutes =
+    input.staleAfterMinutes ??
+    DEFAULT_INSIGHT_STALE_AFTER_MINUTES;
+
+  if (
+    !Number.isInteger(staleAfterMinutes) ||
+    staleAfterMinutes <= 0
+  ) {
+    throw new Error(
+      "staleAfterMinutes verður að vera jákvæð heiltala.",
+    );
+  }
+
+  if (
+    input.jobId != null &&
+    (!Number.isInteger(input.jobId) ||
+      input.jobId <= 0)
+  ) {
+    throw new Error(
+      "Ógilt Innsýn-vinnsluverk.",
+    );
+  }
+
+  const staleBefore = new Date(
+    Date.now() -
+      staleAfterMinutes * 60 * 1000,
+  );
+
+  /*
+   * PROCESSING item er talið fast ef síðasta
+   * tilraun hófst fyrir staleBefore.
+   *
+   * Við notum lastAttemptAt fyrst og startedAt
+   * sem varaleið fyrir eldri gögn.
+   *
+   * Recovery setur atriðið aftur í PENDING.
+   * attemptCount er EKKI núllstillt; þannig
+   * varðveitum við rekjanleika um fyrri tilraun.
+   */
+  const staleItems =
+    await prisma.insightProcessingItem.findMany({
+      where: {
+        status:
+          INSIGHT_ITEM_STATUS.PROCESSING,
+
+        ...(input.jobId != null
+          ? {
+              jobId: input.jobId,
+            }
+          : {}),
+
+        job: {
+          status: {
+            in: [
+              INSIGHT_JOB_STATUS.PENDING,
+              INSIGHT_JOB_STATUS.PROCESSING,
+            ],
+          },
+        },
+
+        OR: [
+          {
+            lastAttemptAt: {
+              lt: staleBefore,
+            },
+          },
+          {
+            lastAttemptAt: null,
+            startedAt: {
+              lt: staleBefore,
+            },
+          },
+        ],
+      },
+
+      orderBy: [
+        {
+          lastAttemptAt: "asc",
+        },
+        {
+          startedAt: "asc",
+        },
+        {
+          id: "asc",
+        },
+      ],
+
+      select: {
+        id: true,
+        jobId: true,
+      },
+    });
+
+  if (staleItems.length === 0) {
+    return {
+      staleAfterMinutes,
+      staleBefore,
+      recoveredItems: 0,
+      recoveredItemIds: [] as number[],
+      affectedJobIds: [] as number[],
+    };
+  }
+
+  const recoveredItemIds: number[] = [];
+  const affectedJobIds = new Set<number>();
+
+  for (const staleItem of staleItems) {
+    await prisma.$transaction(
+      async (tx) => {
+        /*
+         * Compare-and-set kemur í veg fyrir að recovery
+         * taki item sem annar worker náði að klára á
+         * milli findMany og updateMany.
+         */
+        const recovered =
+          await tx.insightProcessingItem.updateMany({
+            where: {
+              id: staleItem.id,
+              jobId: staleItem.jobId,
+              status:
+                INSIGHT_ITEM_STATUS.PROCESSING,
+
+              OR: [
+                {
+                  lastAttemptAt: {
+                    lt: staleBefore,
+                  },
+                },
+                {
+                  lastAttemptAt: null,
+                  startedAt: {
+                    lt: staleBefore,
+                  },
+                },
+              ],
+            },
+
+            data: {
+              status:
+                INSIGHT_ITEM_STATUS.PENDING,
+              startedAt: null,
+              completedAt: null,
+              errorMessage: null,
+            },
+          });
+
+        if (recovered.count !== 1) {
+          return;
+        }
+
+        const job =
+          await tx.insightProcessingJob.findUnique({
+            where: {
+              id: staleItem.jobId,
+            },
+            select: {
+              id: true,
+              companyId: true,
+              requestedById: true,
+              source: true,
+            },
+          });
+
+        if (!job) {
+          throw new Error(
+            `Innsýn-vinnsluverk ${staleItem.jobId} fannst ekki við recovery.`,
+          );
+        }
+
+        await recomputeJobState(
+          tx,
+          staleItem.jobId,
+        );
+
+        await tx.auditEvent.create({
+          data: {
+            companyId:
+              job.companyId,
+
+            userId:
+              job.requestedById,
+
+            entityType:
+              "InsightProcessingItem",
+
+            entityId:
+              staleItem.id,
+
+            action:
+              "RECOVER_STALE_INSIGHT_PROCESSING_ITEM",
+
+            parentEntityType:
+              "InsightProcessingJob",
+
+            parentEntityId:
+              staleItem.jobId,
+
+            source:
+              job.source,
+
+            description:
+              "Fast Innsýn-vinnsluatriði sett aftur í bið til endurvinnslu.",
+
+            beforeData: {
+              status:
+                INSIGHT_ITEM_STATUS.PROCESSING,
+              staleBefore:
+                staleBefore.toISOString(),
+            },
+
+            afterData: {
+              status:
+                INSIGHT_ITEM_STATUS.PENDING,
+            },
+
+            metadata: {
+              staleAfterMinutes,
+              recoveryReason:
+                "PROCESSING_TIMEOUT",
+            },
+          },
+        });
+
+        recoveredItemIds.push(
+          staleItem.id,
+        );
+
+        affectedJobIds.add(
+          staleItem.jobId,
+        );
+      },
+    );
+  }
+
+  return {
+    staleAfterMinutes,
+    staleBefore,
+    recoveredItems:
+      recoveredItemIds.length,
+    recoveredItemIds,
+    affectedJobIds:
+      Array.from(affectedJobIds),
+  };
 }
 
 export async function retryInsightProcessingItem(
