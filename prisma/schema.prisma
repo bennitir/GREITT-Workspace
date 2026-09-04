@@ -54,6 +54,15 @@ activities CompanyActivity[]
   workOrders   WorkOrder[]
   bankAccounts BankAccount[]
   vatPeriods   VatPeriod[]
+
+  // Innsýn – sameiginlegt gagnalag
+  insightEntities       InsightEntity[]
+  financialEvents       FinancialEvent[]
+  insightFacts          InsightFact[]
+  insightProcessingJobs InsightProcessingJob[]
+
+  // Bókaraminni – lærð og staðfest bókunarmynstur
+  accountingPatterns AccountingPattern[]
 }
 
 model Customer {
@@ -97,6 +106,11 @@ model Receipt {
   aiDetectedDocuments AiDetectedDocument[]
   company             Company              @relation(fields: [companyId], references: [id])
   entries             ReceiptEntry[]
+  financialEventLinks DocumentFinancialEvent[]
+  entityLinks         DocumentEntityLink[]
+  insightFacts        InsightFact[]
+  insightProcessingItems InsightProcessingItem[]
+  accountingPatternEvidence AccountingPatternEvidence[]
 
   @@index([companyId])
   @@index([companyId, status])
@@ -144,8 +158,27 @@ model AiDetectedDocument {
   duplicateVoucherNumber Int?
   merchantKennitala      String?
 
-  receipt        Receipt                   @relation(fields: [receiptId], references: [id], onDelete: Cascade)
-  bookingEntries AiDetectedDocumentEntry[]
+  disposition       String?
+  dispositionReason String?
+  disposedAt        DateTime?
+  disposedById      Int?
+
+  // Skjalaflokkun áður en bókun er ákveðin.
+  // Dæmi: INVOICE, CREDIT_NOTE, PAYMENT_NOTICE, STATEMENT, OFFER, CONTRACT, INFORMATION.
+  documentType             String?
+  // Hlutverk gagnvart fjárhagsatburði. Dæmi: PRIMARY, PAYMENT, SETTLEMENT, SUPPORTING, INSIGHT_ONLY.
+  documentRole             String?
+  classificationConfidence Float?
+  classificationSource     String?
+  classifiedAt             DateTime?
+
+  receipt             Receipt                   @relation(fields: [receiptId], references: [id], onDelete: Cascade)
+  bookingEntries      AiDetectedDocumentEntry[]
+  financialEventLinks DocumentFinancialEvent[]
+  entityLinks          DocumentEntityLink[]
+  insightFacts         InsightFact[]
+  insightProcessingItems InsightProcessingItem[]
+  accountingPatternEvidence AccountingPatternEvidence[]
 
   @@index([receiptId])
   @@index([voucherNumber])
@@ -183,7 +216,9 @@ model Account {
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
-  company Company @relation(fields: [companyId], references: [id], onDelete: Cascade)
+  company            Company                    @relation(fields: [companyId], references: [id], onDelete: Cascade)
+  insightEntityLinks InsightEntityAccountLink[]
+  accountingPatterns AccountingPattern[]
 
   @@unique([companyId, number])
   @@index([companyId, isActive])
@@ -207,6 +242,9 @@ model User {
   vatSubmissions      VatSubmission[]
   passwordResetTokens PasswordResetToken[]
   auditEvents         AuditEvent[]
+  accountingPatternConfirmations AccountingPattern[] @relation("AccountingPatternLastConfirmedBy")
+  accountingPatternEvidence      AccountingPatternEvidence[]
+  insightProcessingJobs          InsightProcessingJob[] @relation("InsightProcessingRequestedBy")
 }
 
 model PasswordResetToken {
@@ -510,6 +548,309 @@ model VatSubmission {
   @@index([submittedAt])
 }
 
+// ============================================================
+// INNSÝN – SAMEIGINLEGT GAGNALAG
+//
+// Markmið:
+// - Skjal er ekki það sama og fjárhagsatburður.
+// - Fleiri en eitt skjal geta lýst sama atburði.
+// - Sama eign/ađili/lán/samningur getur komið fyrir í mörgum skjölum.
+// - Staðreyndir sem eru óþarfar fyrir bókun mega samt varðveitast fyrir Innsýn.
+// ============================================================
+
+model InsightEntity {
+  id        Int      @id @default(autoincrement())
+  companyId Int
+
+  // Almennt entity-líkan: VEHICLE, PROPERTY, PERSON, ORGANIZATION, LOAN, CONTRACT, METER o.fl.
+  entityType String
+  name       String
+  status     String   @default("ACTIVE")
+
+  // Sterkt auðkenni þegar það er til, t.d. skráningarnúmer, fasteignanúmer eða lánsnúmer.
+  identifierType  String?
+  identifierValue String?
+
+  // Tengsl við fyrirtækið/notandann eru staðfest sérstaklega; AI á ekki að gera ráð fyrir þeim.
+  relationshipStatus String?
+  relationshipType   String?
+  relationshipNote   String?
+  relationshipConfirmedAt DateTime?
+  relationshipConfirmedBy Int?
+
+  metadata  Json?
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  company       Company                    @relation(fields: [companyId], references: [id], onDelete: Cascade)
+  documentLinks DocumentEntityLink[]
+  eventLinks    FinancialEventEntity[]
+  facts         InsightFact[]
+  accountLinks  InsightEntityAccountLink[]
+
+  @@index([companyId, entityType])
+  @@index([companyId, identifierType, identifierValue])
+  @@index([companyId, status])
+}
+
+
+model InsightEntityAccountLink {
+  id        Int @id @default(autoincrement())
+  entityId  Int
+  accountId Int
+
+  // Hlutverk reiknings gagnvart entity.
+  // Dæmi: LIABILITY_PRINCIPAL, ASSET, EXPENSE, REVENUE, BANK.
+  role String
+
+  // PROPOSED = tillaga sem má koma frá AI/SYSTEM.
+  // CONFIRMED = notandi/bókari hefur staðfest tenginguna.
+  // REJECTED = tillögu hefur verið hafnað.
+  status String @default("PROPOSED")
+
+  source     String @default("SYSTEM")
+  confidence Float?
+  note       String?
+
+  confirmedAt DateTime?
+  confirmedBy Int?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  entity  InsightEntity @relation(fields: [entityId], references: [id], onDelete: Cascade)
+  account Account       @relation(fields: [accountId], references: [id], onDelete: Cascade)
+
+  @@unique([entityId, accountId, role])
+  @@index([entityId, status])
+  @@index([accountId, status])
+  @@index([role, status])
+}
+
+model FinancialEvent {
+  id        Int      @id @default(autoincrement())
+  companyId Int
+
+  // Dæmi: CHARGE, CREDIT, PAYMENT, SETTLEMENT, LOAN_INSTALLMENT, ANNUAL_ASSESSMENT.
+  eventType String
+  status    String   @default("OPEN")
+  title     String?
+  eventDate DateTime?
+
+  // Atburðardagsetning, þjónustutímabil og leiðréttingartímabil geta verið ólík.
+  periodStart DateTime?
+  periodEnd   DateTime?
+
+  amount   Decimal?
+  currency String   @default("ISK")
+
+  externalReference String?
+  metadata          Json?
+  createdAt         DateTime @default(now())
+  updatedAt         DateTime @updatedAt
+
+  company       Company                  @relation(fields: [companyId], references: [id], onDelete: Cascade)
+  documentLinks DocumentFinancialEvent[]
+  entityLinks   FinancialEventEntity[]
+  facts         InsightFact[]
+
+  @@index([companyId, eventType])
+  @@index([companyId, eventDate])
+  @@index([companyId, status])
+  @@index([companyId, externalReference])
+}
+
+model DocumentFinancialEvent {
+  id          Int @id @default(autoincrement())
+  receiptId   Int
+  documentId  Int?
+  eventId     Int
+
+  // PRIMARY, PAYMENT, SETTLEMENT, SUPPORTING, CORRECTION o.fl.
+  role       String
+  confidence Float?
+  source     String @default("SYSTEM")
+  createdAt  DateTime @default(now())
+
+  receipt  Receipt             @relation(fields: [receiptId], references: [id], onDelete: Cascade)
+  document AiDetectedDocument? @relation(fields: [documentId], references: [id], onDelete: Cascade)
+  event    FinancialEvent      @relation(fields: [eventId], references: [id], onDelete: Cascade)
+
+  @@unique([documentId, eventId])
+  @@index([receiptId])
+  @@index([eventId])
+}
+
+model DocumentEntityLink {
+  id         Int @id @default(autoincrement())
+  receiptId  Int
+  documentId Int?
+  entityId   Int
+
+  // Dæmi: SUBJECT, ASSET, BORROWER, LENDER, POLICY_HOLDER, BENEFICIARY, PAYER.
+  role       String
+  confidence Float?
+  source     String @default("SYSTEM")
+  confirmedAt DateTime?
+  confirmedBy Int?
+  createdAt  DateTime @default(now())
+
+  receipt  Receipt             @relation(fields: [receiptId], references: [id], onDelete: Cascade)
+  document AiDetectedDocument? @relation(fields: [documentId], references: [id], onDelete: Cascade)
+  entity   InsightEntity       @relation(fields: [entityId], references: [id], onDelete: Cascade)
+
+  @@unique([documentId, entityId, role])
+  @@index([receiptId])
+  @@index([entityId])
+}
+
+model FinancialEventEntity {
+  id       Int @id @default(autoincrement())
+  eventId  Int
+  entityId Int
+  role     String
+  createdAt DateTime @default(now())
+
+  event  FinancialEvent @relation(fields: [eventId], references: [id], onDelete: Cascade)
+  entity InsightEntity  @relation(fields: [entityId], references: [id], onDelete: Cascade)
+
+  @@unique([eventId, entityId, role])
+  @@index([entityId])
+}
+
+model InsightFact {
+  id        Int @id @default(autoincrement())
+  companyId Int
+  receiptId Int?
+  documentId Int?
+  entityId  Int?
+  eventId   Int?
+
+  // Sveigjanlegar staðreyndir, t.d. DISTANCE_KM, UNIT_PRICE, USAGE_KWH, PREMIUM, DEDUCTIBLE.
+  factType String
+  label    String?
+
+  numberValue Decimal?
+  textValue   String?
+  dateValue   DateTime?
+  booleanValue Boolean?
+  unit         String?
+  currency     String?
+
+  periodStart DateTime?
+  periodEnd   DateTime?
+  confidence  Float?
+  source      String @default("AI")
+  metadata    Json?
+  createdAt   DateTime @default(now())
+
+  company  Company             @relation(fields: [companyId], references: [id], onDelete: Cascade)
+  receipt  Receipt?            @relation(fields: [receiptId], references: [id], onDelete: Cascade)
+  document AiDetectedDocument? @relation(fields: [documentId], references: [id], onDelete: Cascade)
+  entity   InsightEntity?      @relation(fields: [entityId], references: [id], onDelete: Cascade)
+  event    FinancialEvent?     @relation(fields: [eventId], references: [id], onDelete: Cascade)
+
+  @@index([companyId, factType])
+  @@index([receiptId])
+  @@index([documentId])
+  @@index([entityId, factType])
+  @@index([eventId, factType])
+}
+
+// ============================================================
+// INNSÝN – VINNSLULAG / BAKGRUNNSVINNSLA
+//
+// Markmið:
+// - AI-vinnsla má ekki stjórna bókunar- eða afgreiðslustöðu skjals.
+// - Vinnsla er server-bundin og má halda áfram þótt notandi fari af síðunni.
+// - Sama skjal má lesa aftur með nýrri vinnsluútgáfu.
+// - Batch/job heldur utan um heildarframvindu; hvert skjal er sjálfstætt.
+// - Villa í einu skjali má ekki stöðva önnur skjöl.
+// ============================================================
+
+model InsightProcessingJob {
+  id        Int @id @default(autoincrement())
+  companyId Int
+
+  // Dæmi: SINGLE_DOCUMENT, HISTORICAL_REREAD, UPLOAD_BATCH.
+  jobType String
+
+  // PENDING, PROCESSING, COMPLETED, COMPLETED_WITH_ERRORS, FAILED, CANCELLED.
+  status String @default("PENDING")
+
+  // Útgáfa vinnsluflæðisins sem á að keyra, t.d. "insight-v1".
+  processingVersion String
+
+  // Hver/hvað stofnaði vinnsluna: USER, SYSTEM, UPLOAD o.fl.
+  source String @default("SYSTEM")
+
+  requestedById Int?
+
+  totalItems     Int @default(0)
+  pendingItems   Int @default(0)
+  processingItems Int @default(0)
+  completedItems Int @default(0)
+  failedItems    Int @default(0)
+
+  startedAt   DateTime?
+  completedAt DateTime?
+  errorMessage String?
+
+  metadata  Json?
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  company     Company @relation(fields: [companyId], references: [id], onDelete: Cascade)
+  requestedBy User?   @relation("InsightProcessingRequestedBy", fields: [requestedById], references: [id], onDelete: SetNull)
+  items       InsightProcessingItem[]
+
+  @@index([companyId, status])
+  @@index([companyId, createdAt])
+}
+
+model InsightProcessingItem {
+  id    Int @id @default(autoincrement())
+  jobId Int
+
+  receiptId  Int
+  documentId Int?
+
+  // Stöðugur lykill innan jobs, t.d. DOCUMENT:123 eða RECEIPT:456.
+  // Þetta tryggir idempotency líka þegar documentId er null.
+  itemKey String
+
+  // PENDING, PROCESSING, COMPLETED, FAILED, NEEDS_REPROCESS.
+  status String @default("PENDING")
+
+  // Útgáfan sem þessi tiltekna vinnsla notar.
+  processingVersion String
+
+  // Fjöldi tilrauna styður örugga endurkeyrslu síðar.
+  attemptCount Int @default(0)
+
+  startedAt     DateTime?
+  completedAt   DateTime?
+  lastAttemptAt DateTime?
+  errorMessage  String?
+
+  // Samantekt um niðurstöðu vinnslunnar; staðreyndir/entities/events
+  // sjálf eru áfram geymd í sínum sérhæfðu Innsýn-líkönum.
+  resultMetadata Json?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  job      InsightProcessingJob @relation(fields: [jobId], references: [id], onDelete: Cascade)
+  receipt  Receipt              @relation(fields: [receiptId], references: [id], onDelete: Cascade)
+  document AiDetectedDocument?  @relation(fields: [documentId], references: [id], onDelete: Cascade)
+
+  @@unique([jobId, itemKey])
+  @@index([jobId, status])
+  @@index([receiptId, status])
+  @@index([documentId, status])
+  @@index([receiptId, documentId, processingVersion])
+}
+
 // Sameiginlegur rekjanleiki GLÖGGT.
 //
 // Markmiðið er að varðveita atburðasögu án þess að þurfa
@@ -582,3 +923,102 @@ model CompanyActivity {
   @@index([companyId, isActive])
   @@index([companyId, registeredAtRsk])
 }
+
+// ============================================================
+// BÓKARAMINNI GLÖGGT
+// ============================================================
+//
+// GLÖGGT lærir eingöngu af staðfestum ákvörðunum bókara/notanda.
+// AI-tillaga ein og sér má aldrei styrkja mynstur.
+//
+// Mynstur er fyrirtækjabundið. Bókarinn sem kennir mynstrið er
+// varðveittur í rekjanleika, en mynstur eins fyrirtækis mengar
+// ekki önnur fyrirtæki.
+//
+// automationLevel:
+// SUGGEST_ONLY = aðeins tillaga.
+// AUTO_IF_SAFE = má síðar nota sjálfkrafa þegar öryggisskilyrði leyfa.
+model AccountingPattern {
+  id        Int @id @default(autoincrement())
+  companyId Int
+
+  // Fyrsta útgáfa notar ACCOUNT_SELECTION.
+  patternType String
+
+  // Dæmi: SETTLEMENT_ACCOUNT, EXPENSE_ACCOUNT, INTEREST_ACCOUNT, FEE_ACCOUNT.
+  decisionRole String
+
+  // Stöðugur lykill sem þjónustulag GLÖGGT býr til úr þeim
+  // einkennum sem skilgreina sambærileg skjöl.
+  matchKey String
+
+  // Sveigjanleg gögn sem útskýra af hverju mynstrið passar.
+  matchData Json?
+
+  // Niðurstaða reikningsvals.
+  targetAccountId Int?
+
+  // Fyrir önnur lærð gildi síðar, t.d. texta eða VSK-meðferð.
+  valueData Json?
+
+  status          String @default("ACTIVE")
+  automationLevel String @default("SUGGEST_ONLY")
+
+  // Traust byggist aðeins á staðfestum ákvörðunum bókara.
+  confidence Float @default(0)
+
+  confirmationCount Int @default(0)
+  correctionCount   Int @default(0)
+
+  lastConfirmedAt   DateTime?
+  lastConfirmedById Int?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  company         Company  @relation(fields: [companyId], references: [id], onDelete: Cascade)
+  targetAccount   Account? @relation(fields: [targetAccountId], references: [id], onDelete: SetNull)
+  lastConfirmedBy User?    @relation("AccountingPatternLastConfirmedBy", fields: [lastConfirmedById], references: [id], onDelete: SetNull)
+
+  evidence AccountingPatternEvidence[]
+
+  @@unique([companyId, patternType, decisionRole, matchKey])
+  @@index([companyId, status])
+  @@index([companyId, patternType, decisionRole])
+  @@index([companyId, matchKey])
+  @@index([targetAccountId])
+  @@index([lastConfirmedById])
+}
+
+// Einstök kennsluatvik fyrir bókaraminnið.
+// AuditEvent er áfram almenni rekjanleikinn; þetta líkan geymir
+// sérstaklega sönnunargögn þess sem GLÖGGT hefur lært.
+model AccountingPatternEvidence {
+  id         Int @id @default(autoincrement())
+  patternId  Int
+  receiptId  Int?
+  documentId Int?
+  userId     Int?
+
+  // CONFIRMED, CORRECTED, REJECTED.
+  action String
+
+  // AI-tillaga eða fyrri niðurstaða.
+  beforeData Json?
+
+  // Staðfest niðurstaða bókarans.
+  afterData Json?
+
+  createdAt DateTime @default(now())
+
+  pattern  AccountingPattern   @relation(fields: [patternId], references: [id], onDelete: Cascade)
+  receipt  Receipt?            @relation(fields: [receiptId], references: [id], onDelete: SetNull)
+  document AiDetectedDocument? @relation(fields: [documentId], references: [id], onDelete: SetNull)
+  user     User?               @relation(fields: [userId], references: [id], onDelete: SetNull)
+
+  @@index([patternId, createdAt])
+  @@index([receiptId])
+  @@index([documentId])
+  @@index([userId])
+}
+
