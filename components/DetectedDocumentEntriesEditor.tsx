@@ -27,6 +27,8 @@ type Props = {
     name: string;
   }[];
 
+  vatRegistered: boolean | null;
+
   date: Date | string | null;
   totalAmount: number | null;
   reviewedAt: Date | string | null;
