@@ -1132,7 +1132,7 @@ export default async function InnsynPage() {
                   null && (
                   <div className="flex items-start justify-between gap-4 border-b pb-3">
                     <span className="text-sm text-slate-600">
-                      Ársiðgjöld ef skilyrt endurgreiðsla fæst
+                      Mögulegur kostnaður ef endurgreiðsla fæst
                     </span>
 
                     <span className="text-sm font-semibold text-slate-900">
