@@ -110,7 +110,7 @@ async function backfillMissingReceiptHashes() {
 }
 
 
-  
+
 async function archiveReceiptFile(
   receiptId: number
 ) {
@@ -244,10 +244,10 @@ export async function createReceipt(formData: FormData) {
     .update(Buffer.from(bytes))
     .digest("hex");
 
-      
+
     await backfillMissingReceiptHashes();
 
-  
+
 const receiptNumber =
   String(formData.get("receiptNumber") || "").trim();
 const cookieStore = await cookies();
@@ -335,7 +335,7 @@ export async function createManualReceipt(formData: FormData) {
   await requireActiveCompanyWriteAccess();
   const file = formData.get("file");
 
-  
+
   const cookieStore = await cookies();
   const activeCompanyId =
     cookieStore.get("activeCompanyId")?.value;
@@ -475,7 +475,7 @@ export async function addReceiptEntries(receiptId: number) {
   revalidatePath(`/fylgiskjol/${receiptId}`);
 }
 export async function saveOcrResult(
-    
+
   receiptId: number,
   data: {
     merchantName?: string;
@@ -499,6 +499,62 @@ export async function saveOcrResult(
 
   revalidatePath(`/fylgiskjol/${receiptId}`);
 }
+function isVatPostingAccount(account: {
+  number?: string | null;
+  entryRole?: string | null;
+  vatTreatment?: string | null;
+}) {
+  return (
+    account.entryRole === "VAT_INPUT" ||
+    account.entryRole === "VAT_OUTPUT" ||
+    account.vatTreatment === "INPUT" ||
+    account.vatTreatment === "OUTPUT" ||
+    account.number === "2510" ||
+    account.number === "2520"
+  );
+}
+
+async function assertCompanyVatPostingAllowed(
+  tx: any,
+  company: { id: number; vatRegistered: boolean | null },
+  entries: { account: string }[]
+) {
+  if (company.vatRegistered === true || entries.length === 0) {
+    return;
+  }
+
+  const accountNumbers = [...new Set(entries.map((entry) => entry.account))];
+  const accounts = await tx.account.findMany({
+    where: {
+      companyId: company.id,
+      number: { in: accountNumbers },
+    },
+    select: {
+      number: true,
+      entryRole: true,
+      vatTreatment: true,
+    },
+  });
+
+  const vatAccounts = accounts
+    .filter(isVatPostingAccount)
+    .map((account: { number: string }) => account.number);
+
+  if (vatAccounts.length === 0) {
+    return;
+  }
+
+  if (company.vatRegistered === false) {
+    throw new Error(
+      `Ekki er hægt að bóka VSK á reikning ${vatAccounts.join(", ")} vegna þess að fyrirtækið er merkt „Nei, ekki VSK-skráð“. Bókaðu heildarupphæð án innskatts/útskatts.`
+    );
+  }
+
+  throw new Error(
+    `Ekki er hægt að bóka VSK á reikning ${vatAccounts.join(", ")} fyrr en VSK-skráningarstaða fyrirtækisins hefur verið staðfest.`
+  );
+}
+
 export async function analyzeReceiptWithAI(receiptId: number) {
   const openai = new OpenAI({
   apiKey: process.env.OPENAI_API_KEY,
@@ -528,6 +584,23 @@ export async function analyzeReceiptWithAI(receiptId: number) {
 
   if (!receipt) {
     throw new Error("Fylgiskjal fannst ekki.");
+  }
+
+  const finalizedDetectedDocument = await prisma.aiDetectedDocument.findFirst({
+    where: {
+      receiptId,
+      OR: [
+        { voucherNumber: { not: null } },
+        { disposedAt: { not: null } },
+      ],
+    },
+    select: { id: true },
+  });
+
+  if (finalizedDetectedDocument) {
+    throw new Error(
+      "Ekki er hægt að endurlesa fylgiskjal sem hefur þegar verið bókað eða endanlega afgreitt."
+    );
   }
 
   if (receipt.company.accounts.length === 0) {
@@ -617,11 +690,53 @@ export async function analyzeReceiptWithAI(receiptId: number) {
           {
             type: "input_text",
             text: `
-Lestu þetta íslenska bókhaldsfylgiskjal vandlega.
+Lestu þetta íslenska skjal vandlega.
+
+MIKILVÆGT – FLOKKAÐU SKJALIÐ ÁÐUR EN ÞÚ HUGSAR UM BÓKUN:
+
+Fyrir hvert sjálfstætt skjal skaltu ákveða documentType og documentRole.
+
+documentType má aðeins vera eitt af:
+- ACCOUNTING_DOCUMENT: reikningur, sölukvittun eða annað sjálfstætt bókhaldsfylgiskjal
+- CREDIT_NOTE: kreditreikningur eða fjárhagsleg leiðrétting
+- PAYMENT_NOTICE: greiðsluseðill, innheimtutilkynning, afborgunartilkynning eða krafa. Slíkt skjal getur annaðhvort verið bókanlegt sjálft eða tengst öðrum fjárhagsatburði; það ræðst af innihaldi og hlutverki skjalsins
+- PAYMENT_CONFIRMATION: kvittun eða staðfesting á greiðslu sem getur verið stuðningsskjal við annað skjal
+- STATEMENT: yfirlit, uppgjör eða samantekt sem getur vísað í önnur skjöl/atburði
+- OFFER: tilboð sem er ekki sjálft bókunaratburður
+- CONTRACT: samningur eða skilmálaskjal
+- INFORMATION: upplýsingaskjal án sjálfstæðs bókunaratburðar
+- UNKNOWN: ekki hægt að flokka með nægri vissu
+
+documentRole má aðeins vera eitt af:
+- BOOKABLE: skjalið sjálft er líklegur sjálfstæður bókunaratburður
+- SUPPORTING: skjalið styður eða staðfestir líklega annan atburð/skjal og á ekki að bókast sjálfstætt án tengingar
+- INSIGHT_SOURCE: skjalið er fyrst og fremst verðmætt sem grunn-/Innsýn-gagn, ekki sem sjálfstæð bókun
+- REVIEW: flokkun eða tengsl eru of óviss og notandi þarf að skoða
+
+Skilaðu einnig classificationConfidence frá 0 til 1.
+
+Mjög mikilvægt:
+- Skjal getur verið verðmætt þótt það eigi ekki að bókast.
+- Ekki búa til bookingEntries fyrir SUPPORTING, INSIGHT_SOURCE eða REVIEW.
+- Sama fjárhæð, dagsetning og útgefandi sanna ekki að tvö skjöl séu tvítekin. Sterk auðkenni eins og reikningsnúmer, skráningarnúmer ökutækis, fasteignanúmer, lánsnúmer eða tilvísun skipta meira máli.
+- PAYMENT_NOTICE skal EKKI sjálfkrafa vera hvorki BOOKABLE né SUPPORTING. Meta þarf hvaða fjárhagsatburð skjalið sannar og hvort skjalið innihaldi sjálft nægar upplýsingar til bókunar.
+- PAYMENT_NOTICE MÁ vera BOOKABLE þegar það er sjálft fullnægjandi bókunarheimild fyrir raunverulegri skuldbindingu eða greiðslu og inniheldur nauðsynlega sundurliðun. Dæmi: afborgunartilkynning láns með skýru lánsnúmeri og sundurliðun í höfuðstól, vexti og kostnað getur verið BOOKABLE, ef ekki þarf annað frumskjal til að ákvarða bókunina.
+- Ef PAYMENT_NOTICE vísar fyrst og fremst í aðra álagningu, reikning, uppgjör, fyrri kröfu eða sama fjárhagsatburð og annað frumskjal skal velja SUPPORTING. Ef ekki er hægt að ákvarða þetta með nægri vissu skal velja REVIEW.
+- Orðalag eins og „bráðabirgðagreiðsla“, „innheimtukrafa“ eða „krafa send innheimtumanni“ er sterk vísbending um SUPPORTING/REVIEW þegar undirliggjandi álagning eða annar fjárhagsatburður er til staðar. Orðið „greiðsluseðill“ eða „greiðslutilkynning“ eitt og sér ræður þó ekki flokkun.
+- Greiðsluseðill, yfirlit eða greiðslustaðfesting getur varðað sama fjárhagsatburð og reikningur/álagning. Þá skal ekki meðhöndla skjalið sjálfkrafa sem nýjan kostnað.
+- PAYMENT_CONFIRMATION sem aðeins staðfestir að greiðsla hafi farið fram, en inniheldur ekki sjálfstæða reiknings-/sölusundurliðun sem stofnar nýjan bókunaratburð, skal vera SUPPORTING en ekki REVIEW. Þetta á sérstaklega við þegar skjalið sýnir greiðanda/móttakanda, dagsetningu, upphæð eða tilvísun en vísar í undirliggjandi reikning, kröfu, iðgjald, álagningu eða aðra skuldbindingu. Slík greiðslustaðfesting má ekki búa til nýjan kostnað eða tekjuatburð.
+- PAYMENT_CONFIRMATION má aðeins vera BOOKABLE ef skjalið sjálft er jafnframt fullnægjandi frumheimild um sjálfstæð viðskipti, ekki bara staðfesting á greiðslu annars atburðar. Ef slíkt er raunin skaltu íhuga hvort documentType eigi fremur að vera ACCOUNTING_DOCUMENT.
+- Fyrir lán skal greina sérstaklega lánveitanda, lánsnúmer, höfuðstól/afborgun, vexti, verðbætur og annan kostnað þegar þessar upplýsingar sjást. Ekki stofna nýjan skuldareikning sjálfkrafa; ef viðeigandi sérstakur skuldareikningur vantar skal halda bókun óstaðfestri og útskýra hvaða lykil þarf að staðfesta eða stofna.
+- Fyrir lán skal einnig fylla út loanInfo. loanInfo skal vera null ef skjalið varðar ekki lán. Ef skjalið varðar lán skal skila lenderName, loanNumber og principalAmount eftir því sem sést á skjalinu; óþekkt gildi skulu vera null.
+- MIKILVÆGT: Lánsnúmer eitt og sér heimilar EKKI AI að velja skuldareikning fyrir höfuðstól. GLÖGGT staðfestir tengingu lánsnúmers við skuldareikning á server-hlið. Merktu bókunarlínu fyrir höfuðstól láns með entryRole = LOAN_PRINCIPAL. Aðrar línur skulu hafa entryRole = GENERAL.
+- Ef skjalið inniheldur höfuðstól láns má AI leggja til bókun, en tillagan verður ekki varðveitt sem bókanleg fyrr en GLÖGGT finnur staðfesta tengingu milli lánseiningarinnar og skuldareikningsins.
+- Árleg álagning, tilboð, samningur eða sambærilegt grunnskjal getur verið INSIGHT_SOURCE þó síðari greiðslur tengist því.
+- Ef skjalið inniheldur sundurliðun, magn, km, kWh, einingarverð, eignarauðkenni, lánsnúmer, tryggingavernd eða tímabil skal varðveita það í summary eins nákvæmlega og skynsamlegt er, jafnvel þótt það sé ekki nauðsynlegt fyrir bókun.
 
 Fyrirtækið sem bókar fylgiskjalið er:
 Nafn: ${receipt.company.name}
 VSK-númer: ${receipt.company.vatNumber ?? "Ekki skráð"}
+VSK-skráningarstaða: ${receipt.company.vatRegistered === true ? "Já, VSK-skráð" : receipt.company.vatRegistered === false ? "Nei, ekki VSK-skráð" : "Ekki staðfest"}
 RSK-skráð starfsemi: ${receipt.company.rskRegisteredActivities ?? "Ekki skráð"}
 Virk starfsemi: ${receipt.company.activeActivities ?? "Ekki staðfest"}
 
@@ -740,7 +855,7 @@ Reglur um reikningslykla:
    - ekki velja óskyldan almennan lykil bara til að klára bókun,
    - ekki finna upp reikningsnúmer,
    - skila frekar tillögu um að stofna nýjan reikningslykil,
-   - merkja slíka tillögu sérstaklega þannig að notandi þurfi að staðfesta hana áður en bókun er samþykkt.   
+   - merkja slíka tillögu sérstaklega þannig að notandi þurfi að staðfesta hana áður en bókun er samþykkt.
 
 5. Notaðu type innan hornklofa til að skilja bókhaldslega
    merkingu reikningsins.
@@ -766,6 +881,10 @@ Reglur um reikningslykla:
    - útskýrðu í summary hvaða reikningstegund vantar.
 
 Mikilvæg VSK-regla:
+
+- Ef VSK-skráningarstaða fyrirtækisins er "Nei, ekki VSK-skráð" má ALDREI nota VAT_INPUT eða VAT_OUTPUT. Bóka skal heildarupphæð án innskattsfrádráttar og án útskattsfærslu.
+- Ef VSK-skráningarstaða er "Ekki staðfest" má ekki gera sjálfvirka VSK-færslu. Ekki nota VAT_INPUT eða VAT_OUTPUT fyrr en staðan hefur verið staðfest.
+- Ef fyrirtækið er "Já, VSK-skráð" má VSK-meðferð aðeins beita þegar önnur gögn og reglur styðja hana. VSK-skráning ein og sér sannar ekki innskattsrétt einstakra útgjalda.
 
 Ekki færa virðisaukaskatt af fæðiskaupum, veitingum,
 kaffistofu eða mötuneyti sem innskatt nema fyrir liggi
@@ -844,6 +963,51 @@ Ef dagsetning eða ártal er ólæsilegt eða óvíst skal skila date sem null.
                     type: "string",
                   },
 
+                  documentType: {
+                    type: "string",
+                    enum: [
+                      "ACCOUNTING_DOCUMENT",
+                      "CREDIT_NOTE",
+                      "PAYMENT_NOTICE",
+                      "PAYMENT_CONFIRMATION",
+                      "STATEMENT",
+                      "OFFER",
+                      "CONTRACT",
+                      "INFORMATION",
+                      "UNKNOWN",
+                    ],
+                  },
+
+                  documentRole: {
+                    type: "string",
+                    enum: ["BOOKABLE", "SUPPORTING", "INSIGHT_SOURCE", "REVIEW"],
+                  },
+
+                  classificationConfidence: {
+                    type: "number",
+                  },
+
+                  loanInfo: {
+                    type: ["object", "null"],
+                    properties: {
+                      lenderName: {
+                        type: ["string", "null"],
+                      },
+                      loanNumber: {
+                        type: ["string", "null"],
+                      },
+                      principalAmount: {
+                        type: ["number", "null"],
+                      },
+                    },
+                    required: [
+                      "lenderName",
+                      "loanNumber",
+                      "principalAmount",
+                    ],
+                    additionalProperties: false,
+                  },
+
                   bookingEntries: {
                     type: "array",
 
@@ -866,6 +1030,11 @@ Ef dagsetning eða ártal er ólæsilegt eða óvíst skal skila date sem null.
                         credit: {
                           type: "number",
                         },
+
+                        entryRole: {
+                          type: "string",
+                          enum: ["GENERAL", "LOAN_PRINCIPAL"],
+                        },
                       },
 
                       required: [
@@ -873,6 +1042,7 @@ Ef dagsetning eða ártal er ólæsilegt eða óvíst skal skila date sem null.
                         "text",
                         "debit",
                         "credit",
+                        "entryRole",
                       ],
 
                       additionalProperties: false,
@@ -886,6 +1056,10 @@ Ef dagsetning eða ártal er ólæsilegt eða óvíst skal skila date sem null.
                   "receiptNumber",
                   "totalAmount",
                   "summary",
+                  "documentType",
+                  "documentRole",
+                  "classificationConfidence",
+                  "loanInfo",
                   "bookingEntries",
                   "pageNumber",
                 ],
@@ -1072,7 +1246,7 @@ await prisma.aiUsage.create({
 
         suggestedBookingText:
           result.suggestedBookingText,
-          
+
       },
     });
 
@@ -1088,7 +1262,14 @@ await prisma.aiUsage.create({
   result.bookingEntries.length > 0
 ) {
       await tx.aiBookingEntry.createMany({
-        data: result.bookingEntries.map(
+        data: result.bookingEntries
+          .filter(
+            (entry: {
+              debit: number;
+              credit: number;
+            }) => entry.debit !== 0 || entry.credit !== 0
+          )
+          .map(
           (entry: {
             account: string;
             text: string;
@@ -1145,7 +1326,9 @@ const isOldDate =
 
 if (isOldDate) {
   dateWarnings.push(
-    `Dagsetning ${document.date} er eldri en 4 mánuðir. Athuga VSK-tímabil.`
+    receipt.company.vatRegistered === false
+      ? `Dagsetning ${document.date} er eldri en 4 mánuðir.`
+      : `Dagsetning ${document.date} er eldri en 4 mánuðir. Athuga VSK-tímabil.`
   );
 }
 
@@ -1179,42 +1362,192 @@ if (hasInvalidDate) {
               summary:
                 document.summary,
 
+              documentType:
+                document.documentType,
+
+              documentRole:
+                document.documentRole,
+
+              classificationConfidence:
+                document.classificationConfidence,
+
+              classificationSource: "AI",
+
+              classifiedAt: new Date(),
+
               receiptId,
             },
           });
 
+        const loanInfo =
+          document.loanInfo &&
+          typeof document.loanInfo === "object"
+            ? document.loanInfo
+            : null;
+
+        const loanNumber =
+          typeof loanInfo?.loanNumber === "string"
+            ? loanInfo.loanNumber.trim()
+            : "";
+
+        const lenderName =
+          typeof loanInfo?.lenderName === "string"
+            ? loanInfo.lenderName.trim()
+            : "";
+
+        const hasLoanPrincipalEntry =
+          Array.isArray(document.bookingEntries) &&
+          document.bookingEntries.some(
+            (entry: { entryRole?: string }) =>
+              entry.entryRole === "LOAN_PRINCIPAL"
+          );
+
+        let confirmedLoanPrincipalAccountNumber: string | null = null;
+
+        if (loanNumber) {
+          let loanEntity = await tx.insightEntity.findFirst({
+            where: {
+              companyId: receipt.companyId,
+              entityType: "LOAN",
+              identifierType: "LOAN_NUMBER",
+              identifierValue: loanNumber,
+              status: "ACTIVE",
+            },
+            include: {
+              accountLinks: {
+                where: {
+                  role: "LIABILITY_PRINCIPAL",
+                  status: "CONFIRMED",
+                },
+                include: {
+                  account: true,
+                },
+              },
+            },
+          });
+
+          if (!loanEntity) {
+            loanEntity = await tx.insightEntity.create({
+              data: {
+                companyId: receipt.companyId,
+                entityType: "LOAN",
+                name: lenderName
+                  ? `${lenderName} – lán ${loanNumber}`
+                  : `Lán ${loanNumber}`,
+                identifierType: "LOAN_NUMBER",
+                identifierValue: loanNumber,
+                relationshipStatus: "UNCONFIRMED",
+                metadata: {
+                  lenderName: lenderName || null,
+                  firstSeenReceiptId: receiptId,
+                  source: "AI",
+                },
+              },
+              include: {
+                accountLinks: {
+                  where: {
+                    role: "LIABILITY_PRINCIPAL",
+                    status: "CONFIRMED",
+                  },
+                  include: {
+                    account: true,
+                  },
+                },
+              },
+            });
+          }
+
+          await tx.documentEntityLink.upsert({
+            where: {
+              documentId_entityId_role: {
+                documentId: createdDocument.id,
+                entityId: loanEntity.id,
+                role: "LOAN",
+              },
+            },
+            update: {
+              confidence: document.classificationConfidence ?? null,
+              source: "AI",
+            },
+            create: {
+              receiptId,
+              documentId: createdDocument.id,
+              entityId: loanEntity.id,
+              role: "LOAN",
+              confidence: document.classificationConfidence ?? null,
+              source: "AI",
+            },
+          });
+
+          const confirmedLink = loanEntity.accountLinks.find(
+            (link) =>
+              link.account.companyId === receipt.companyId &&
+              link.account.isActive
+          );
+
+          confirmedLoanPrincipalAccountNumber =
+            confirmedLink?.account.number ?? null;
+        }
+
+        const loanMappingMissing =
+          hasLoanPrincipalEntry &&
+          (!loanNumber || !confirmedLoanPrincipalAccountNumber);
+
+        if (loanMappingMissing) {
+          const mappingReason = !loanNumber
+            ? "Lánshöfuðstóll fannst en lánsnúmer vantar eða er óvíst."
+            : `Lán ${loanNumber} hefur ekki staðfesta tengingu við skuldareikning.`;
+
+          await tx.aiDetectedDocument.update({
+            where: { id: createdDocument.id },
+            data: {
+              documentRole: "REVIEW",
+              summary:
+                `${document.summary}\n\nGLÖGGT: ${mappingReason} ` +
+                "Staðfestu skuldareikning lánsins áður en bókun er heimiluð.",
+            },
+          });
+
+          continue;
+        }
+
         if (
-          Array.isArray(
-            document.bookingEntries
-          ) &&
+          document.documentRole === "BOOKABLE" &&
+          Array.isArray(document.bookingEntries) &&
           document.bookingEntries.length > 0
         ) {
-          await tx.aiDetectedDocumentEntry.createMany({
-            data:
-              document.bookingEntries.map(
-                (entry: {
-                  account: string;
-                  text: string;
-                  debit: number;
-                  credit: number;
-                }) => ({
-                  account:
-                    entry.account,
+          const safeBookingEntries = document.bookingEntries
+            .filter(
+              (entry: {
+                debit: number;
+                credit: number;
+              }) => entry.debit !== 0 || entry.credit !== 0
+            )
+            .map(
+              (entry: {
+                account: string;
+                text: string;
+                debit: number;
+                credit: number;
+                entryRole?: string;
+              }) => ({
+                account:
+                  entry.entryRole === "LOAN_PRINCIPAL" &&
+                  confirmedLoanPrincipalAccountNumber
+                    ? confirmedLoanPrincipalAccountNumber
+                    : entry.account,
+                text: entry.text,
+                debit: entry.debit,
+                credit: entry.credit,
+                documentId: createdDocument.id,
+              })
+            );
 
-                  text:
-                    entry.text,
-
-                  debit:
-                    entry.debit,
-
-                  credit:
-                    entry.credit,
-
-                  documentId:
-                    createdDocument.id,
-                })
-              ),
-          });
+          if (safeBookingEntries.length > 0) {
+            await tx.aiDetectedDocumentEntry.createMany({
+              data: safeBookingEntries,
+            });
+          }
         }
       }
 
@@ -1229,7 +1562,7 @@ if (dateWarnings.length > 0) {
     },
   });
 }
-      
+
     } else {
   await tx.receipt.update({
     where: {
@@ -1243,7 +1576,7 @@ if (dateWarnings.length > 0) {
 }
   });
 
-  
+
 
   revalidatePath(
     `/fylgiskjol/${receiptId}`
@@ -1410,79 +1743,43 @@ export async function confirmInsightEntityAccountLink(
 }
 
   export async function reviewDetectedDocument(documentId: number) {
-  const document = await prisma.aiDetectedDocument.findFirst({
-    where: {
-      id: documentId,
-    },
-    include: {
-      receipt: true,
-    },
+  const document = await prisma.aiDetectedDocument.findUnique({
+    where: { id: documentId },
+    include: { receipt: true },
   });
 
   if (!document) {
     throw new Error("Greint fylgiskjal fannst ekki.");
+
   }
 
   await requireCompanyBookAccess(document.receipt.companyId);
 
-  const user = await getEffectiveUser();
-
-  if (!user) {
-    throw new Error("Innskráning er nauðsynleg.");
+  if (document.disposedAt || document.disposition) {
+    throw new Error("Þetta fylgiskjal hefur þegar verið afgreitt án bókunar.");
   }
 
   if (document.reviewedAt) {
     throw new Error("Þetta fylgiskjal hefur þegar verið yfirfarið.");
   }
 
-  await prisma.$transaction(async (tx) => {
-    const reviewedAt = new Date();
-
-    await tx.aiDetectedDocument.update({
-      where: {
-        id: documentId,
-      },
-      data: {
-        reviewedAt,
-      },
-    });
-
-    await tx.receipt.update({
-      where: {
-        id: document.receiptId,
-      },
-      data: {
-        status: "REVIEWED",
-      },
-    });
-
-    await tx.auditEvent.create({
-      data: {
-        companyId: document.receipt.companyId,
-        userId: user.id,
-        entityType: "Receipt",
-        entityId: document.receiptId,
-        action: "REVIEW_RECEIPT",
-        parentEntityType: "AiDetectedDocument",
-        parentEntityId: document.id,
-        source: "USER",
-        description: "Fylgiskjal yfirfarið.",
-        afterData: {
-          status: "REVIEWED",
-          reviewedAt: reviewedAt.toISOString(),
-        },
-        metadata: {
-          reviewMethod: "AI_DOCUMENT",
-          detectedDocumentId: document.id,
-          receiptId: document.receiptId,
-          merchantName: document.merchantName,
-          receiptNumber: document.receiptNumber,
-          documentDate: document.date?.toISOString() ?? null,
-          totalAmount: document.totalAmount,
-        },
-      },
-    });
+  await prisma.aiDetectedDocument.update({
+    where: {
+      id: documentId,
+    },
+    data: {
+      reviewedAt: new Date(),
+    },
   });
+
+  await prisma.receipt.update({
+  where: {
+    id: document.receiptId,
+  },
+  data: {
+    status: "REVIEWED",
+  },
+});
 
   revalidatePath(`/fylgiskjol/${document.receiptId}`);
   revalidatePath("/fylgiskjol");
@@ -1656,7 +1953,7 @@ export async function markDetectedDocumentDuplicate(
   if (!document) {
     throw new Error("Greint fylgiskjal fannst ekki.");
   }
-  
+
 
   await prisma.aiDetectedDocument.update({
     where: { id: documentId },
@@ -1669,6 +1966,266 @@ export async function markDetectedDocumentDuplicate(
 
   revalidatePath(`/fylgiskjol/${document.receiptId}`);
   revalidatePath("/fylgiskjol");
+}
+
+
+function normalizeAccountingPatternPart(value: string | null | undefined) {
+  return (value ?? "")
+    .trim()
+    .toLowerCase()
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .replace(/[^a-z0-9]+/g, " ")
+    .trim()
+    .replace(/\s+/g, "_");
+}
+
+function buildCompanyDocumentPatternKey(document: {
+  merchantName?: string | null;
+  documentType?: string | null;
+}) {
+  const merchant = normalizeAccountingPatternPart(document.merchantName);
+  const documentType = normalizeAccountingPatternPart(document.documentType);
+
+  if (!merchant) {
+    return null;
+  }
+
+  if (!documentType) {
+    return `merchant:${merchant}`;
+  }
+
+  return `merchant:${merchant}|documentType:${documentType}`;
+}
+
+async function learnConfirmedAccountSelectionPatterns(
+  tx: any,
+  params: {
+    companyId: number;
+    userId: number;
+    receiptId: number;
+    document: {
+      id: number;
+      merchantName?: string | null;
+      documentType?: string | null;
+    };
+    bookingEntries: {
+      account: string;
+      text: string;
+      debit: number;
+      credit: number;
+    }[];
+  }
+) {
+  const { companyId, userId, receiptId, document, bookingEntries } = params;
+
+  const matchKey = buildCompanyDocumentPatternKey(document);
+  if (!matchKey || bookingEntries.length === 0) {
+    return;
+  }
+
+  const accountNumbers = [
+    ...new Set(
+      bookingEntries
+        .map((entry) => entry.account.trim())
+        .filter(Boolean)
+    ),
+  ];
+
+  if (accountNumbers.length === 0) {
+    return;
+  }
+
+  const accounts = await tx.account.findMany({
+    where: {
+      companyId,
+      number: { in: accountNumbers },
+      isActive: true,
+    },
+    select: {
+      id: true,
+      number: true,
+      name: true,
+      type: true,
+      entryRole: true,
+    },
+  });
+
+  const accountByNumber = new Map(
+    accounts.map((account: any) => [account.number, account])
+  );
+
+  const candidates: {
+    decisionRole: string;
+    targetAccount: any;
+    bookingEntry: {
+      account: string;
+      text: string;
+      debit: number;
+      credit: number;
+    };
+  }[] = [];
+
+  for (const entry of bookingEntries) {
+    const account = accountByNumber.get(entry.account) as any;
+    if (!account) continue;
+
+    let decisionRole: string | null = null;
+
+    if (
+      account.type === "BANK" ||
+      account.entryRole === "BANK" ||
+      account.type === "CASH"
+    ) {
+      decisionRole = "SETTLEMENT_ACCOUNT";
+    } else if (
+      account.type === "FINANCE_EXPENSE" ||
+      account.entryRole === "FINANCE_EXPENSE"
+    ) {
+      decisionRole = "FINANCE_EXPENSE_ACCOUNT";
+    } else if (
+      account.type === "EXPENSE" ||
+      account.entryRole === "EXPENSE"
+    ) {
+      decisionRole = "EXPENSE_ACCOUNT";
+    } else if (
+      account.type === "REVENUE" ||
+      account.entryRole === "REVENUE"
+    ) {
+      decisionRole = "REVENUE_ACCOUNT";
+    }
+
+    if (!decisionRole) continue;
+
+    candidates.push({
+      decisionRole,
+      targetAccount: account,
+      bookingEntry: entry,
+    });
+  }
+
+  for (const candidate of candidates) {
+    const existingPattern = await tx.accountingPattern.findUnique({
+      where: {
+        companyId_patternType_decisionRole_matchKey: {
+          companyId,
+          patternType: "ACCOUNT_SELECTION",
+          decisionRole: candidate.decisionRole,
+          matchKey,
+        },
+      },
+    });
+
+    const sameDecision =
+      existingPattern?.targetAccountId === candidate.targetAccount.id;
+
+    const nextConfirmationCount =
+      (existingPattern?.confirmationCount ?? 0) + 1;
+
+    const nextCorrectionCount =
+      (existingPattern?.correctionCount ?? 0) +
+      (existingPattern && !sameDecision ? 1 : 0);
+
+    const confidence = Math.min(
+      0.95,
+      0.55 +
+        Math.min(nextConfirmationCount, 8) * 0.05 -
+        Math.min(nextCorrectionCount, 5) * 0.08
+    );
+
+    const beforeData = existingPattern
+      ? {
+          targetAccountId: existingPattern.targetAccountId,
+          confidence: existingPattern.confidence,
+          confirmationCount: existingPattern.confirmationCount,
+          correctionCount: existingPattern.correctionCount,
+        }
+      : undefined;
+
+    const pattern = await tx.accountingPattern.upsert({
+      where: {
+        companyId_patternType_decisionRole_matchKey: {
+          companyId,
+          patternType: "ACCOUNT_SELECTION",
+          decisionRole: candidate.decisionRole,
+          matchKey,
+        },
+      },
+      update: {
+        targetAccountId: candidate.targetAccount.id,
+        matchData: {
+          merchantName: document.merchantName ?? null,
+          documentType: document.documentType ?? null,
+        },
+        status: "ACTIVE",
+        automationLevel: "SUGGEST_ONLY",
+        confidence,
+        confirmationCount: nextConfirmationCount,
+        correctionCount: nextCorrectionCount,
+        lastConfirmedAt: new Date(),
+        lastConfirmedById: userId,
+        valueData: {
+          accountNumber: candidate.targetAccount.number,
+          accountName: candidate.targetAccount.name,
+          accountType: candidate.targetAccount.type,
+          accountEntryRole: candidate.targetAccount.entryRole,
+        },
+      },
+      create: {
+        companyId,
+        patternType: "ACCOUNT_SELECTION",
+        decisionRole: candidate.decisionRole,
+        matchKey,
+        matchData: {
+          merchantName: document.merchantName ?? null,
+          documentType: document.documentType ?? null,
+        },
+        targetAccountId: candidate.targetAccount.id,
+        valueData: {
+          accountNumber: candidate.targetAccount.number,
+          accountName: candidate.targetAccount.name,
+          accountType: candidate.targetAccount.type,
+          accountEntryRole: candidate.targetAccount.entryRole,
+        },
+        status: "ACTIVE",
+        automationLevel: "SUGGEST_ONLY",
+        confidence,
+        confirmationCount: nextConfirmationCount,
+        correctionCount: nextCorrectionCount,
+        lastConfirmedAt: new Date(),
+        lastConfirmedById: userId,
+      },
+    });
+
+    await tx.accountingPatternEvidence.create({
+      data: {
+        patternId: pattern.id,
+        receiptId,
+        documentId: document.id,
+        userId,
+        action:
+          existingPattern && !sameDecision
+            ? "CORRECTED"
+            : "CONFIRMED",
+        beforeData,
+        afterData: {
+          targetAccountId: candidate.targetAccount.id,
+          accountNumber: candidate.targetAccount.number,
+          accountName: candidate.targetAccount.name,
+          decisionRole: candidate.decisionRole,
+          matchKey,
+          bookingEntry: {
+            text: candidate.bookingEntry.text,
+            debit: candidate.bookingEntry.debit,
+            credit: candidate.bookingEntry.credit,
+          },
+          confidence,
+          confirmationCount: nextConfirmationCount,
+          correctionCount: nextCorrectionCount,
+        },
+      },
+    });
+  }
 }
 
  export async function approveDetectedDocument(
@@ -1696,6 +2253,10 @@ export async function markDetectedDocumentDuplicate(
 
   if (!user) {
     throw new Error("Innskráning er nauðsynleg.");
+  }
+
+  if (document.disposedAt || document.disposition) {
+    throw new Error("Ekki er hægt að bóka fylgiskjal sem hefur verið afgreitt án bókunar.");
   }
 
   if (!document.reviewedAt) {
@@ -1735,6 +2296,12 @@ if (!document.date) {
     if (!company) {
       throw new Error("Fyrirtæki fannst ekki.");
     }
+
+    await assertCompanyVatPostingAllowed(
+      tx,
+      company,
+      document.bookingEntries
+    );
 // Öryggisvörn gegn tvíbókun sama fylgiskjals
 if (document.receiptNumber) {
   if (
@@ -1800,15 +2367,10 @@ const olderUnbookedDocument =
         companyId: company.id,
       },
       approvedAt: null,
+      disposedAt: null,
       date: {
         not: null,
-        lt: new Date(
-          Date.UTC(
-            document.date!.getUTCFullYear(),
-            document.date!.getUTCMonth(),
-            document.date!.getUTCDate(),
-          ),
-        ),
+        lt: document.date!,
       },
     },
     orderBy: {
@@ -1972,11 +2534,29 @@ if (hasVatActivity && !isVatSettlement) {
       },
     });
 
+await learnConfirmedAccountSelectionPatterns(tx, {
+  companyId: company.id,
+  userId: user.id,
+  receiptId: document.receiptId,
+  document: {
+    id: document.id,
+    merchantName: document.merchantName,
+    documentType: document.documentType,
+  },
+  bookingEntries: document.bookingEntries.map((entry) => ({
+    account: entry.account,
+    text: entry.text,
+    debit: entry.debit,
+    credit: entry.credit,
+  })),
+});
+
 const remainingUnapproved =
   await tx.aiDetectedDocument.count({
     where: {
       receiptId: document.receiptId,
       approvedAt: null,
+      disposedAt: null,
       id: {
         not: document.id,
       },
@@ -1997,7 +2577,7 @@ if (remainingUnapproved === 0) {
 }
   });
 
-  
+
 
   revalidatePath(
     `/fylgiskjol/${document.receiptId}`
@@ -2010,6 +2590,9 @@ if (remainingUnapproved === 0) {
     where: {
       id: receiptId,
     },
+    include: {
+      company: true,
+    },
   });
 
   if (!receipt) {
@@ -2019,6 +2602,9 @@ if (remainingUnapproved === 0) {
   if (!receipt.aiDate || receipt.aiAmount == null) {
     throw new Error("Engin full AI-tillaga er til að samþykkja.");
   }
+
+  const approvedAiDate = receipt.aiDate;
+  const approvedAiAmount = receipt.aiAmount;
 
   const aiEntries = await prisma.aiBookingEntry.findMany({
     where: {
@@ -2040,25 +2626,33 @@ if (remainingUnapproved === 0) {
     throw new Error("Þetta fylgiskjal hefur þegar verið bókað.");
   }
 
-  await prisma.receipt.update({
+  await prisma.$transaction(async (tx) => {
+    await assertCompanyVatPostingAllowed(
+      tx,
+      receipt.company,
+      aiEntries
+    );
+
+    await tx.receipt.update({
     where: {
       id: receiptId,
     },
     data: {
-      date: receipt.aiDate,
-      amount: receipt.aiAmount,
+      date: approvedAiDate,
+      amount: approvedAiAmount,
       aiApprovedAt: new Date(),
     },
   });
 
-  await prisma.receiptEntry.createMany({
-    data: aiEntries.map((entry) => ({
-      account: entry.account,
-      text: entry.text,
-      debit: entry.debit,
-      credit: entry.credit,
-      receiptId,
-    })),
+    await tx.receiptEntry.createMany({
+      data: aiEntries.map((entry) => ({
+        account: entry.account,
+        text: entry.text,
+        debit: entry.debit,
+        credit: entry.credit,
+        receiptId,
+      })),
+    });
   });
   }
 export async function approveManualReceipt(
@@ -2106,6 +2700,12 @@ export async function approveManualReceipt(
     if (!company) {
       throw new Error("Fyrirtæki fannst ekki.");
     }
+
+    await assertCompanyVatPostingAllowed(
+      tx,
+      company,
+      bookingEntries
+    );
 
     let voucherNumber: number;
 
@@ -2235,7 +2835,7 @@ export async function approveManualReceipt(
   revalidatePath("/fylgiskjol");
   revalidatePath("/");
 }
- 
+
 
 export async function updateDetectedDocumentEntries(
   documentId: number,
@@ -2250,37 +2850,30 @@ export async function updateDetectedDocumentEntries(
   documentAmount: string
 ) {
   const companyId = await requireActiveCompanyWriteAccess();
-
-  const user = await getEffectiveUser();
-
-  if (!user) {
-    throw new Error("Innskráning er nauðsynleg.");
-  }
-
-  const document = await prisma.aiDetectedDocument.findFirst({
+  const document =
+  await prisma.aiDetectedDocument.findFirst({
     where: {
       id: documentId,
       receipt: {
         companyId,
       },
     },
-    include: {
-      bookingEntries: true,
-      receipt: {
-        include: {
-          company: {
-            include: {
-              accounts: {
-                where: {
-                  isActive: true,
+      include: {
+        receipt: {
+          include: {
+            company: {
+              include: {
+                accounts: {
+                  where: {
+                    isActive: true,
+                  },
                 },
               },
             },
           },
         },
       },
-    },
-  });
+    });
 
   if (!document) {
     throw new Error("Greint fylgiskjal fannst ekki.");
@@ -2292,23 +2885,37 @@ export async function updateDetectedDocumentEntries(
     );
   }
 
+  if (document.disposedAt || document.disposition) {
+    throw new Error("Ekki er hægt að breyta fylgiskjali sem hefur verið afgreitt án bókunar.");
+  }
+
   const allowedAccounts = new Set(
     document.receipt.company.accounts.map(
       (account) => account.number
     )
   );
 
-  const existingEntryIds = new Set(
-    document.bookingEntries.map((entry) => entry.id)
-  );
+  if (document.receipt.company.vatRegistered !== true) {
+    const vatAccountNumbers = new Set(
+      document.receipt.company.accounts
+        .filter(isVatPostingAccount)
+        .map((account) => account.number)
+    );
 
-  for (const entry of entries) {
-    if (!existingEntryIds.has(entry.id)) {
+    const selectedVatAccount = entries.find((entry) =>
+      vatAccountNumbers.has(entry.account)
+    )?.account;
+
+    if (selectedVatAccount) {
       throw new Error(
-        "Bókunarlína tilheyrir ekki þessu fylgiskjali."
+        document.receipt.company.vatRegistered === false
+          ? `Ekki er hægt að velja VSK-reikning ${selectedVatAccount} vegna þess að fyrirtækið er merkt „Nei, ekki VSK-skráð“.`
+          : `Ekki er hægt að velja VSK-reikning ${selectedVatAccount} fyrr en VSK-skráningarstaða fyrirtækisins hefur verið staðfest.`
       );
     }
+  }
 
+  for (const entry of entries) {
     if (!allowedAccounts.has(entry.account)) {
       throw new Error(
         `Reikningslykill ${entry.account} er ekki í reikningslykli fyrirtækisins.`
@@ -2344,140 +2951,81 @@ export async function updateDetectedDocumentEntries(
   }
 
   const parsedAmount =
-    documentAmount.trim() === ""
-      ? null
-      : Number(documentAmount);
+  documentAmount.trim() === ""
+    ? null
+    : Number(documentAmount);
 
-  if (
-    parsedAmount !== null &&
-    (!Number.isFinite(parsedAmount) || parsedAmount < 0)
-  ) {
-    throw new Error("Upphæð fylgiskjals er ekki gild.");
-  }
+if (
+  parsedAmount !== null &&
+  (!Number.isFinite(parsedAmount) || parsedAmount < 0)
+) {
+  throw new Error("Upphæð fylgiskjals er ekki gild.");
+}
 
-  const normalizedDocumentDate = documentDate.trim();
+const parsedDate =
+  documentDate.trim() === ""
+    ? null
+    : new Date(`${documentDate}T12:00:00.000Z`);
 
-  const parsedDate =
-    normalizedDocumentDate === ""
-      ? null
-      : new Date(`${normalizedDocumentDate}T12:00:00.000Z`);
+if (
+  parsedDate !== null &&
+  Number.isNaN(parsedDate.getTime())
+) {
+  throw new Error("Dagsetning fylgiskjals er ekki gild.");
+}
 
-  if (
-    parsedDate !== null &&
-    Number.isNaN(parsedDate.getTime())
-  ) {
-    throw new Error("Dagsetning fylgiskjals er ekki gild.");
-  }
+const submittedIds = new Set(entries.map((entry) => entry.id));
 
-  const previousDate = document.date
-    ? document.date.toISOString().slice(0, 10)
-    : null;
+const existingEntries = await prisma.aiDetectedDocumentEntry.findMany({
+  where: {
+    documentId,
+  },
+  select: {
+    id: true,
+  },
+});
 
-  const nextDate = parsedDate
-    ? parsedDate.toISOString().slice(0, 10)
-    : null;
+const entryIdsToDelete = existingEntries
+  .map((entry) => entry.id)
+  .filter((id) => !submittedIds.has(id));
 
-  const previousEntries = [...document.bookingEntries]
-    .sort((a, b) => a.id - b.id)
-    .map((entry) => ({
-      id: entry.id,
-      account: entry.account,
-      text: entry.text,
-      debit: entry.debit,
-      credit: entry.credit,
-    }));
-
-  const nextEntries = [...entries]
-    .sort((a, b) => a.id - b.id)
-    .map((entry) => ({
-      id: entry.id,
-      account: entry.account,
-      text: entry.text,
-      debit: entry.debit,
-      credit: entry.credit,
-    }));
-
-  const dateChanged = previousDate !== nextDate;
-  const amountChanged = document.totalAmount !== parsedAmount;
-  const entriesChanged =
-    JSON.stringify(previousEntries) !== JSON.stringify(nextEntries);
-
-  const changedFields: string[] = [];
-
-  if (dateChanged) {
-    changedFields.push("date");
-  }
-
-  if (amountChanged) {
-    changedFields.push("totalAmount");
-  }
-
-  if (entriesChanged) {
-    changedFields.push("bookingEntries");
-  }
-
-  if (changedFields.length === 0) {
-    revalidatePath(`/fylgiskjol/${document.receiptId}`);
-    return;
-  }
-
-  await prisma.$transaction(async (tx) => {
-    await tx.aiDetectedDocument.update({
+await prisma.$transaction(async (tx) => {
+  if (entryIdsToDelete.length > 0) {
+    await tx.aiDetectedDocumentEntry.deleteMany({
       where: {
-        id: documentId,
-      },
-      data: {
-        date: parsedDate,
-        totalAmount: parsedAmount,
-      },
-    });
-
-    for (const entry of entries) {
-      await tx.aiDetectedDocumentEntry.update({
-        where: {
-          id: entry.id,
-        },
-        data: {
-          account: entry.account,
-          text: entry.text,
-          debit: entry.debit,
-          credit: entry.credit,
-        },
-      });
-    }
-
-    await tx.auditEvent.create({
-      data: {
-        companyId,
-        userId: user.id,
-        entityType: "Receipt",
-        entityId: document.receiptId,
-        action: "UPDATE_BOOKING_PROPOSAL",
-        parentEntityType: "AiDetectedDocument",
-        parentEntityId: document.id,
-        source: "USER",
-        description: "Bókunartillögu fylgiskjals breytt.",
-        beforeData: {
-          date: previousDate,
-          totalAmount: document.totalAmount,
-          bookingEntries: previousEntries,
-        },
-        afterData: {
-          date: nextDate,
-          totalAmount: parsedAmount,
-          bookingEntries: nextEntries,
-        },
-        metadata: {
-          editMethod: "AI_DOCUMENT",
-          detectedDocumentId: document.id,
-          receiptId: document.receiptId,
-          merchantName: document.merchantName,
-          receiptNumber: document.receiptNumber,
-          changedFields,
+        documentId,
+        id: {
+          in: entryIdsToDelete,
         },
       },
     });
+  }
+
+  await tx.aiDetectedDocument.update({
+    where: {
+      id: documentId,
+    },
+    data: {
+      date: parsedDate,
+      totalAmount: parsedAmount,
+    },
   });
+
+  for (const entry of entries) {
+    await tx.aiDetectedDocumentEntry.updateMany({
+      where: {
+        id: entry.id,
+        documentId,
+      },
+      data: {
+        account: entry.account,
+        text: entry.text,
+        debit: entry.debit,
+        credit: entry.credit,
+      },
+    });
+  }
+});
 
   revalidatePath(
     `/fylgiskjol/${document.receiptId}`
@@ -2492,6 +3040,8 @@ export async function updateDetectedDocumentEntries(
       id: true,
       receiptId: true,
       approvedAt: true,
+      disposedAt: true,
+      disposition: true,
     },
   });
 
@@ -2501,6 +3051,10 @@ export async function updateDetectedDocumentEntries(
 
   if (document.approvedAt) {
     throw new Error("Ekki er hægt að breyta fylgiskjali eftir bókun.");
+  }
+
+  if (document.disposedAt || document.disposition) {
+    throw new Error("Ekki er hægt að breyta fylgiskjali sem hefur verið afgreitt án bókunar.");
   }
 
   await prisma.aiDetectedDocumentEntry.create({
@@ -2526,6 +3080,8 @@ export async function deleteDetectedDocumentEntry(entryId: number) {
         select: {
           receiptId: true,
           approvedAt: true,
+          disposedAt: true,
+          disposition: true,
         },
       },
     },
@@ -2537,6 +3093,10 @@ export async function deleteDetectedDocumentEntry(entryId: number) {
 
   if (entry.document.approvedAt) {
     throw new Error("Ekki er hægt að breyta fylgiskjali eftir bókun.");
+  }
+
+  if (entry.document.disposedAt || entry.document.disposition) {
+    throw new Error("Ekki er hægt að breyta fylgiskjali sem hefur verið afgreitt án bókunar.");
   }
 
   await prisma.aiDetectedDocumentEntry.delete({

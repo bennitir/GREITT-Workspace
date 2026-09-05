@@ -1,5 +1,7 @@
 "use server";
 
+import OpenAI from "openai";
+
 import { redirect } from "next/navigation";
 import { cookies } from "next/headers";
 import fs from "fs/promises";
@@ -12,6 +14,555 @@ import {
   getEffectiveUser,
   requireCompanyWriteAccess,
 } from "@/lib/core/access-control";
+
+type SkatturinnActivityCode = {
+  Type?: string | null;
+  CodeSystem?: string | null;
+  Id?: string | null;
+  Name?: string | null;
+};
+
+type SkatturinnVat = {
+  VatNumber?: string | null;
+  Registered?: string | null;
+  DeRegistered?: string | null;
+  ActivityCode?: SkatturinnActivityCode | null;
+};
+
+type SkatturinnLegalEntity = {
+  NationalId?: string | null;
+  Name?: string | null;
+  PurposeOfEntity?: string | null;
+  Status?: string | null;
+  ActivityCode?: SkatturinnActivityCode[] | null;
+  Vat?: SkatturinnVat[] | null;
+};
+
+function normalizeNationalId(value: string) {
+  return value.replace(/\D/g, "");
+}
+
+
+export type CompanyAccountSuggestion = {
+  number: string;
+  name: string;
+  type: string;
+  entryRole: string | null;
+  reason: string;
+  vatRecommendation: string;
+  confidence: "HIGH" | "MEDIUM" | "LOW";
+};
+
+export type CompanyAccountSuggestionState = {
+  status: "IDLE" | "SUCCESS" | "ERROR";
+  message: string;
+  summary: string;
+  activeActivities: string[];
+  suggestions: CompanyAccountSuggestion[];
+};
+
+export async function suggestCompanyAccountsWithAI(
+  previousState: CompanyAccountSuggestionState,
+  formData: FormData
+): Promise<CompanyAccountSuggestionState> {
+  void previousState;
+
+  const activeUser = await requireEffectiveAdmin();
+
+  const companyId = Number(formData.get("companyId"));
+
+  if (!Number.isInteger(companyId)) {
+    return {
+      status: "ERROR",
+      message: "Ógilt fyrirtæki.",
+      summary: "",
+      activeActivities: [],
+      suggestions: [],
+    };
+  }
+
+  const company = await prisma.company.findUnique({
+    where: {
+      id: companyId,
+    },
+    include: {
+      accounts: {
+        where: {
+          isActive: true,
+        },
+        orderBy: {
+          number: "asc",
+        },
+      },
+      activities: {
+        orderBy: [
+          {
+            code: "asc",
+          },
+          {
+            id: "asc",
+          },
+        ],
+      },
+    },
+  });
+
+  if (!company) {
+    return {
+      status: "ERROR",
+      message: "Fyrirtækið fannst ekki.",
+      summary: "",
+      activeActivities: [],
+      suggestions: [],
+    };
+  }
+
+  if (!company.isActive) {
+    return {
+      status: "ERROR",
+      message: "Ekki er hægt að gera tillögu fyrir lokað fyrirtæki.",
+      summary: "",
+      activeActivities: [],
+      suggestions: [],
+    };
+  }
+
+  const activeActivities = company.activities.filter(
+    (activity) => activity.isActive
+  );
+
+  // RSK-kóðinn 99.99.9 merkir óþekkta/óflokkaða starfsemi og er
+  // ekki nægileg bókhaldsleg forsenda fyrir AI-tillögu. Við varðveitum
+  // hann sem RSK-upplýsingu en látum hann ekki stýra reikningslyklum.
+  const aiEligibleActiveActivities = activeActivities.filter(
+    (activity) => activity.code?.trim() !== "99.99.9"
+  );
+
+  if (aiEligibleActiveActivities.length === 0) {
+    return {
+      status: "ERROR",
+      message:
+        activeActivities.length > 0
+          ? "Virk starfsemi er aðeins skráð sem 99.99.9 – Óþekkt starfsemi. Skráðu eða staðfestu raunverulega virka starfsemi áður en AI leggur til reikningslykla."
+          : "Engin virk starfsemi hefur verið staðfest. Staðfestu virka starfsemi fyrst.",
+      summary: "",
+      activeActivities: [],
+      suggestions: [],
+    };
+  }
+
+  const apiKey = process.env.OPENAI_API_KEY;
+
+  if (!apiKey) {
+    return {
+      status: "ERROR",
+      message: "OPENAI_API_KEY vantar á server.",
+      summary: "",
+      activeActivities: [],
+      suggestions: [],
+    };
+  }
+
+  const openai = new OpenAI({
+    apiKey,
+    timeout: 60 * 1000,
+    maxRetries: 0,
+  });
+
+  const activeActivityLabels = aiEligibleActiveActivities.map((activity) =>
+    activity.code
+      ? `${activity.code} – ${activity.name}`
+      : activity.name
+  );
+
+  const inactiveRskActivityLabels = company.activities
+    .filter(
+      (activity) =>
+        activity.registeredAtRsk &&
+        (!activity.isActive ||
+          activity.code?.trim() === "99.99.9")
+    )
+    .map((activity) =>
+      activity.code
+        ? `${activity.code} – ${activity.name}`
+        : activity.name
+    );
+
+  const existingAccountNumbers = new Set(
+    company.accounts.map((account) => account.number)
+  );
+
+  const existingAccountsText =
+    company.accounts.length > 0
+      ? company.accounts
+          .map((account) =>
+            [
+              account.number,
+              account.name,
+              `type=${account.type}`,
+              account.entryRole
+                ? `entryRole=${account.entryRole}`
+                : null,
+              account.vatTreatment
+                ? `vatTreatment=${account.vatTreatment}`
+                : null,
+              account.vatRate != null
+                ? `vatRate=${account.vatRate}`
+                : null,
+              account.vatAccount
+                ? `vatAccount=${account.vatAccount}`
+                : null,
+              account.vatRequiresConfirmation
+                ? "vatRequiresConfirmation=true"
+                : null,
+            ]
+              .filter(Boolean)
+              .join(" | ")
+          )
+          .join("\n")
+      : "Engir reikningslyklar skráðir.";
+
+  const prompt = `
+Þú ert aðstoðarkerfi fyrir íslenskt bókhald í GLÖGGT.
+
+VERKEFNI:
+Berðu saman staðfesta virka starfsemi fyrirtækisins við núverandi reikningslykil og leggðu aðeins til reikningslykla sem líklega vantar.
+
+MIKILVÆGAR REGLUR:
+- Þetta er aðeins tillaga. Ekki stofna, breyta eða eyða neinu.
+- Virk starfsemi er eina starfsemisforsendan.
+- ÍSAT 99.99.9 – Óþekkt starfsemi er aldrei gild forsenda fyrir AI-tillögu og má ekki nota til að álykta um eðli rekstrar.
+- RSK-skráð en óvirk starfsemi má EKKI hafa áhrif á tillöguna.
+- number er aðeins flokkunarvísbending frá AI, ekki endanlegt reikningsnúmer.
+- Notaðu fjögurra stafa number sem sýnir hvaða reikningsröð/flokk tillagan tilheyrir.
+- GLÖGGT mun sjálft úthluta endanlegu lausu reikningsnúmeri og má því breyta number eftir að svarið kemur frá AI.
+- Vertu mjög íhaldssamur og leggðu aðeins til lykla sem leiða beint af staðfestri virkri starfsemi.
+- Hver tillaga verður að vera rökstudd með tiltekinni virkri starfsemisgrein: hvaða starfsemi kallar á lykilinn og hvers vegna.
+- Ekki nota þetta verkefni til að fylla almenn göt í reikningslyklinum.
+- Ekki leggja til almenna rekstrarlykla eins og laun, húsaleigu, bankakostnað, skrifstofukostnað, tryggingar eða almennan kostnað eingöngu vegna þess að slíkir lyklar eru algengir hjá fyrirtækjum.
+- Almennur lykill má aðeins koma sem tillaga ef sérstakt eðli virku starfseminnar gerir hann greinilega nauðsynlegan og ástæðan er skýr.
+- Ekki leggja til sérlykil ef almennur núverandi lykill dugar vel.
+- Tillagan á fyrst og fremst að finna starfsemissértæka tekju-, kostnaðar-, birgða-, tækja- eða aðra lykla sem núverandi reikningslykill nær ekki nægilega vel utan um.
+- Ef þú getur ekki tengt tillögu beint við eina eða fleiri virkar starfsemisgreinar skaltu sleppa henni.
+- VSK-frádráttur má aldrei vera sjálfgefinn aðeins vegna þess að fyrirtæki sé VSK-skráð.
+- Þú mátt ekki ákveða eða festa VSK-prósentu, frádráttarrétt eða VSK-reikning sem bókhaldsreglu í þessari tillögu.
+- vatRecommendation er aðeins varúðartexti til yfirferðar. Ef VSK gæti átt við skal segja að VSK-meðferð þurfi staðfestingu áður en lykill er stofnaður eða notaður með sjálfvirkri VSK-meðferð.
+- Ekki fullyrða að tiltekin starfsemi beri ákveðið VSK-hlutfall nema það sé beinlínis staðfest í þeim gögnum sem þú færð. Í þessu verkefni eru slík gögn ekki gefin.
+- Ef óvissa er um VSK skal velja varfærna framsetningu: "VSK-meðferð þarfnast staðfestingar."
+- Tillögur eiga að vera íslenskar, stuttar og faglegar.
+- "type" og "entryRole" eiga að samræmast eðli lykilsins eins og best verður á kosið út frá núverandi reikningslykli.
+- Í reason verður að nefna þá virku starfsemisgrein sem tillagan byggir á og hvers vegna núverandi lyklar duga ekki.
+- Það er betra að skila engri tillögu en veikri eða almennri tillögu.
+- Ef enginn starfsemissértækur lykill vantar skaltu skila tómu suggestions fylki.
+
+FYRIRTÆKI:
+Nafn: ${company.name}
+VSK-skráð: ${
+    company.vatRegistered === true
+      ? "Já"
+      : company.vatRegistered === false
+        ? "Nei"
+        : "Ekki staðfest"
+  }
+VSK-númer: ${company.vatNumber || "Ekki skráð"}
+
+VIRK STARFSEMI:
+${activeActivityLabels.map((item) => `- ${item}`).join("\n")}
+
+RSK-SKRÁÐ EN ÓVIRK STARFSEMI — MÁ EKKI NOTA SEM FORSENDU:
+${
+  inactiveRskActivityLabels.length > 0
+    ? inactiveRskActivityLabels
+        .map((item) => `- ${item}`)
+        .join("\n")
+    : "- Engin"
+}
+
+NÚVERANDI REIKNINGSLYKLAR:
+${existingAccountsText}
+`.trim();
+
+  try {
+    const response = await openai.responses.create({
+      model: "gpt-5.6",
+      input: [
+        {
+          role: "user",
+          content: [
+            {
+              type: "input_text",
+              text: prompt,
+            },
+          ],
+        },
+      ],
+      text: {
+        format: {
+          type: "json_schema",
+          name: "company_account_suggestions",
+          strict: true,
+          schema: {
+            type: "object",
+            additionalProperties: false,
+            required: [
+              "summary",
+              "suggestions",
+            ],
+            properties: {
+              summary: {
+                type: "string",
+              },
+              suggestions: {
+                type: "array",
+                maxItems: 12,
+                items: {
+                  type: "object",
+                  additionalProperties: false,
+                  required: [
+                    "number",
+                    "name",
+                    "type",
+                    "entryRole",
+                    "reason",
+                    "vatRecommendation",
+                    "confidence",
+                  ],
+                  properties: {
+                    number: {
+                      type: "string",
+                      pattern: "^[0-9]{4}$",
+                    },
+                    name: {
+                      type: "string",
+                    },
+                    type: {
+                      type: "string",
+                    },
+                    entryRole: {
+                      anyOf: [
+                        {
+                          type: "string",
+                        },
+                        {
+                          type: "null",
+                        },
+                      ],
+                    },
+                    reason: {
+                      type: "string",
+                    },
+                    vatRecommendation: {
+                      type: "string",
+                    },
+                    confidence: {
+                      type: "string",
+                      enum: [
+                        "HIGH",
+                        "MEDIUM",
+                        "LOW",
+                      ],
+                    },
+                  },
+                },
+              },
+            },
+          },
+        },
+      },
+    });
+
+    const parsed = JSON.parse(
+      response.output_text
+    ) as {
+      summary: string;
+      suggestions: CompanyAccountSuggestion[];
+    };
+
+    const reservedNumbers = new Set(
+      existingAccountNumbers
+    );
+
+    function assignAccountNumber(
+      suggestedNumber: string
+    ) {
+      if (!/^\d{4}$/.test(suggestedNumber)) {
+        return null;
+      }
+
+      const numericSuggestion = Number(
+        suggestedNumber
+      );
+
+      const groupStart =
+        Math.floor(numericSuggestion / 100) * 100;
+      const groupEnd = groupStart + 99;
+
+      const preferredOffset =
+        numericSuggestion % 10 === 0 ? 10 : 1;
+
+      const candidates: number[] = [];
+
+      for (
+        let candidate = numericSuggestion;
+        candidate <= groupEnd;
+        candidate += preferredOffset
+      ) {
+        candidates.push(candidate);
+      }
+
+      for (
+        let candidate = groupStart;
+        candidate < numericSuggestion;
+        candidate += preferredOffset
+      ) {
+        candidates.push(candidate);
+      }
+
+      for (const candidate of candidates) {
+        const number = String(candidate).padStart(
+          4,
+          "0"
+        );
+
+        if (!reservedNumbers.has(number)) {
+          reservedNumbers.add(number);
+          return number;
+        }
+      }
+
+      return null;
+    }
+
+    const suggestions = parsed.suggestions
+      .map((suggestion) => {
+        const assignedNumber =
+          assignAccountNumber(
+            suggestion.number
+          );
+
+        if (!assignedNumber) {
+          return null;
+        }
+
+        return {
+          ...suggestion,
+          number: assignedNumber,
+        };
+      })
+      .filter(
+        (
+          suggestion
+        ): suggestion is CompanyAccountSuggestion =>
+          suggestion !== null
+      );
+
+    await prisma.auditEvent.create({
+      data: {
+        companyId: company.id,
+        userId: activeUser.id,
+        entityType: "Company",
+        entityId: company.id,
+        action:
+          "GENERATE_ACCOUNT_SUGGESTION",
+        source: "AI",
+        description:
+          "AI-tillaga að reikningslyklum búin til út frá staðfestri virkri starfsemi.",
+        afterData: {
+          summary: parsed.summary,
+          suggestions,
+        },
+        metadata: {
+          activeActivities:
+            activeActivityLabels,
+          inactiveRskActivities:
+            inactiveRskActivityLabels,
+          existingAccountCount:
+            company.accounts.length,
+          suggestionCount:
+            suggestions.length,
+          accountNumbersAssignedBy:
+            "GLOGGT",
+          noAccountsChanged: true,
+          vatTreatmentConfirmed: false,
+          vatRequiresConfirmation: true,
+        },
+      },
+    });
+
+    return {
+      status: "SUCCESS",
+      message:
+        suggestions.length > 0
+          ? `AI lagði til ${suggestions.length} mögulega reikningslykla.`
+          : "AI fann enga augljósa viðbót sem vantar.",
+      summary: parsed.summary,
+      activeActivities:
+        activeActivityLabels,
+      suggestions,
+    };
+  } catch (error) {
+    console.error(
+      "Villa við AI-tillögu að reikningslyklum:",
+      error
+    );
+
+    return {
+      status: "ERROR",
+      message:
+        "Ekki tókst að búa til AI-tillögu að reikningslyklum.",
+      summary: "",
+      activeActivities:
+        activeActivityLabels,
+      suggestions: [],
+    };
+  }
+}
+
+async function fetchCompanyRegistryData(
+  nationalId: string
+): Promise<SkatturinnLegalEntity> {
+  const apiKey = process.env.SKATTURINN_API_KEY;
+
+  if (!apiKey) {
+    throw new Error(
+      "SKATTURINN_API_KEY vantar í umhverfisstillingar GLÖGGT."
+    );
+  }
+
+  const normalizedNationalId = normalizeNationalId(nationalId);
+
+  if (normalizedNationalId.length !== 10) {
+    throw new Error("Kennitala fyrirtækis er ekki á gildu 10 stafa formi.");
+  }
+
+  const response = await fetch(
+    `https://api.skattur.cloud/legalentities/v2.1/${normalizedNationalId}`,
+    {
+      method: "GET",
+      headers: {
+        Accept: "application/json",
+        "Ocp-Apim-Subscription-Key": apiKey,
+      },
+      cache: "no-store",
+    }
+  );
+
+  if (response.status === 404) {
+    throw new Error("Fyrirtækið fannst ekki í fyrirtækjaskrá Skattsins.");
+  }
+
+  if (response.status === 401 || response.status === 403) {
+    throw new Error("Skatturinn hafnaði API-aðganginum. Athuga þarf API-lykil GLÖGGT.");
+  }
+
+  if (!response.ok) {
+    throw new Error(
+      `Ekki tókst að sækja fyrirtækjagögn frá Skattinum (${response.status}).`
+    );
+  }
+
+  return (await response.json()) as SkatturinnLegalEntity;
+}
 
 async function requireEffectiveAdmin() {
   const user = await getEffectiveUser();
@@ -195,8 +746,20 @@ await prisma.$transaction(async (tx) => {
         },
         select: {
           id: true,
+          code: true,
+          name: true,
+          registeredAtRsk: true,
+          isActive: true,
+          dataSource: true,
         },
       });
+
+    const existingById = new Map(
+      existingActivities.map((activity) => [
+        activity.id,
+        activity,
+      ])
+    );
 
     const submittedIds = activities
       .map((activity) => activity.id)
@@ -205,11 +768,12 @@ await prisma.$transaction(async (tx) => {
       );
 
     const idsToDelete = existingActivities
-      .map((activity) => activity.id)
       .filter(
-        (activityId) =>
-          !submittedIds.includes(activityId)
-      );
+        (activity) =>
+          activity.dataSource !== "RSK" &&
+          !submittedIds.includes(activity.id)
+      )
+      .map((activity) => activity.id);
 
     if (idsToDelete.length > 0) {
       await tx.companyActivity.deleteMany({
@@ -217,6 +781,9 @@ await prisma.$transaction(async (tx) => {
           companyId: id,
           id: {
             in: idsToDelete,
+          },
+          NOT: {
+            dataSource: "RSK",
           },
         },
       });
@@ -232,16 +799,41 @@ await prisma.$transaction(async (tx) => {
       }
 
       if (activity.id) {
+        const existing =
+          existingById.get(activity.id);
+
+        if (!existing) {
+          continue;
+        }
+
+        if (existing.dataSource === "RSK") {
+          await tx.companyActivity.updateMany({
+            where: {
+              id: activity.id,
+              companyId: id,
+              dataSource: "RSK",
+            },
+            data: {
+              isActive: activity.isActive,
+              dataUpdatedAt: new Date(),
+            },
+          });
+
+          continue;
+        }
+
         await tx.companyActivity.updateMany({
           where: {
             id: activity.id,
             companyId: id,
+            NOT: {
+              dataSource: "RSK",
+            },
           },
           data: {
             code,
             name,
-            registeredAtRsk:
-              activity.registeredAtRsk,
+            registeredAtRsk: false,
             isActive: activity.isActive,
             dataUpdatedAt: new Date(),
           },
@@ -252,8 +844,7 @@ await prisma.$transaction(async (tx) => {
             companyId: id,
             code,
             name,
-            registeredAtRsk:
-              activity.registeredAtRsk,
+            registeredAtRsk: false,
             isActive: activity.isActive,
             dataSource: "MANUAL",
             dataUpdatedAt: new Date(),
@@ -273,6 +864,210 @@ await prisma.$transaction(async (tx) => {
     `/fyrirtaeki/${id}/breyta`
   );
   
+}
+
+export async function syncCompanyRegistryFromSkatturinn(
+  companyId: number
+) {
+  const user = await requireEffectiveAdmin();
+
+  if (!Number.isInteger(companyId)) {
+    throw new Error("Ógilt fyrirtæki.");
+  }
+
+  const company = await prisma.company.findUnique({
+    where: { id: companyId },
+    select: {
+      id: true,
+      kennitala: true,
+      activities: {
+        orderBy: [{ code: "asc" }, { id: "asc" }],
+      },
+    },
+  });
+
+  if (!company) {
+    throw new Error("Fyrirtæki fannst ekki.");
+  }
+
+  const rskData = await fetchCompanyRegistryData(company.kennitala);
+  const responseNationalId = normalizeNationalId(rskData.NationalId ?? "");
+  const companyNationalId = normalizeNationalId(company.kennitala);
+
+  if (responseNationalId && responseNationalId !== companyNationalId) {
+    throw new Error(
+      "Kennitala í svari Skattsins passar ekki við fyrirtækið í GLÖGGT."
+    );
+  }
+
+  const now = new Date();
+
+  const registryActivities = (rskData.ActivityCode ?? [])
+    .map((activity) => ({
+      code: activity.Id?.trim() ?? "",
+      name: activity.Name?.trim() ?? "",
+      type: activity.Type?.trim() ?? null,
+      codeSystem: activity.CodeSystem?.trim() ?? null,
+      sourceKind: "LEGAL_ENTITY_ACTIVITY" as const,
+    }))
+    .filter((activity) => activity.code.length > 0 && activity.name.length > 0);
+
+  const vatActivities = (rskData.Vat ?? [])
+    .map((vat) => vat.ActivityCode)
+    .filter(
+      (activity): activity is SkatturinnActivityCode =>
+        Boolean(activity)
+    )
+    .map((activity) => ({
+      code: activity.Id?.trim() ?? "",
+      name: activity.Name?.trim() ?? "",
+      type: activity.Type?.trim() ?? null,
+      codeSystem: activity.CodeSystem?.trim() ?? null,
+      sourceKind: "VAT_ACTIVITY" as const,
+    }))
+    .filter((activity) => activity.code.length > 0 && activity.name.length > 0);
+
+  const activityByCode = new Map<
+    string,
+    (typeof registryActivities)[number] | (typeof vatActivities)[number]
+  >();
+
+  // Almenn starfsemisskrá hefur forgang ef sami ÍSAT-kóði kemur einnig
+  // fram sem VSK-starfsemi. VSK-starfsemi er notuð sem örugg viðbót/
+  // fallback, sérstaklega fyrir einstaklinga í atvinnurekstri þar sem
+  // ActivityCode getur verið tómt en VSK-skráning inniheldur ÍSAT-kóða.
+  for (const activity of vatActivities) {
+    activityByCode.set(activity.code, activity);
+  }
+
+  for (const activity of registryActivities) {
+    activityByCode.set(activity.code, activity);
+  }
+
+  const rskActivities = Array.from(activityByCode.values());
+
+  const rskCodes = new Set(rskActivities.map((activity) => activity.code));
+  const existingByCode = new Map(
+    company.activities
+      .filter((activity) => activity.code)
+      .map((activity) => [activity.code!.trim(), activity])
+  );
+
+  const beforeActivities = company.activities.map((activity) => ({
+    id: activity.id,
+    code: activity.code,
+    name: activity.name,
+    registeredAtRsk: activity.registeredAtRsk,
+    isActive: activity.isActive,
+    dataSource: activity.dataSource,
+    dataUpdatedAt: activity.dataUpdatedAt,
+  }));
+
+  await prisma.$transaction(async (tx) => {
+    for (const activity of rskActivities) {
+      const existing = existingByCode.get(activity.code);
+
+      if (existing) {
+        await tx.companyActivity.update({
+          where: { id: existing.id },
+          data: {
+            name: activity.name,
+            registeredAtRsk: true,
+            dataSource: "RSK",
+            dataUpdatedAt: now,
+          },
+        });
+      } else {
+        await tx.companyActivity.create({
+          data: {
+            companyId,
+            code: activity.code,
+            name: activity.name,
+            registeredAtRsk: true,
+            isActive: false,
+            dataSource: "RSK",
+            dataUpdatedAt: now,
+          },
+        });
+      }
+    }
+
+    const previouslyRskActivities = company.activities.filter(
+      (activity) =>
+        activity.registeredAtRsk &&
+        activity.code &&
+        !rskCodes.has(activity.code.trim())
+    );
+
+    for (const activity of previouslyRskActivities) {
+      await tx.companyActivity.update({
+        where: { id: activity.id },
+        data: {
+          registeredAtRsk: false,
+          dataUpdatedAt: now,
+        },
+      });
+    }
+
+    await tx.company.update({
+      where: { id: companyId },
+      data: { rskDataUpdatedAt: now },
+    });
+
+    const afterActivities = await tx.companyActivity.findMany({
+      where: { companyId },
+      orderBy: [{ code: "asc" }, { id: "asc" }],
+      select: {
+        id: true,
+        code: true,
+        name: true,
+        registeredAtRsk: true,
+        isActive: true,
+        dataSource: true,
+        dataUpdatedAt: true,
+      },
+    });
+
+    await tx.auditEvent.create({
+      data: {
+        companyId,
+        userId: user.id,
+        entityType: "Company",
+        entityId: companyId,
+        action: "SYNC_RSK_COMPANY_REGISTRY",
+        source: "RSK",
+        description:
+          "Starfsemisgreinar fyrirtækis samstilltar við fyrirtækjaskrá Skattsins.",
+        beforeData: { activities: beforeActivities },
+        afterData: { activities: afterActivities },
+        metadata: {
+          nationalId: companyNationalId,
+          rskName: rskData.Name ?? null,
+          rskStatus: rskData.Status ?? null,
+          purposeOfEntity: rskData.PurposeOfEntity ?? null,
+          activityCount: rskActivities.length,
+          registryActivityCount: registryActivities.length,
+          vatActivityCount: vatActivities.length,
+          activities: rskActivities,
+          vat: rskData.Vat ?? [],
+        },
+      },
+    });
+  });
+
+  revalidatePath("/");
+  revalidatePath("/fyrirtaeki");
+  revalidatePath(`/fyrirtaeki/${companyId}`);
+  revalidatePath(`/fyrirtaeki/${companyId}/breyta`);
+
+  return {
+    nationalId: companyNationalId,
+    name: rskData.Name ?? null,
+    status: rskData.Status ?? null,
+    purposeOfEntity: rskData.PurposeOfEntity ?? null,
+    activities: rskActivities,
+    vat: rskData.Vat ?? [],
+  };
 }
 
 export async function uploadRskCertificate(

@@ -229,6 +229,72 @@ function isTotalPremiumFact(fact: {
   return saysPremium && saysTotal && saysAnnual;
 }
 
+function isQuotedPremiumFact(fact: {
+  factType: string;
+  label: string | null;
+  numberValue: unknown;
+}) {
+  if (fact.numberValue === null) {
+    return false;
+  }
+
+  const type = fact.factType
+    .trim()
+    .toUpperCase()
+    .replace(/[\\s-]+/g, "_");
+
+  const label = normalizeText(fact.label);
+
+  const explicitTypes = new Set([
+    "QUOTED_PREMIUM",
+    "OFFER_PREMIUM",
+    "GROSS_PREMIUM",
+    "PREMIUM_BEFORE_REFUND",
+  ]);
+
+  if (explicitTypes.has(type)) {
+    return true;
+  }
+
+  const saysPremium =
+    label.includes("idgjald") ||
+    label.includes("idgjold");
+
+  const saysTotal =
+    label.includes("samtals") ||
+    label.includes("heild");
+
+  const saysConditional =
+    label.includes("tjonlaus") ||
+    label.includes("endurgreidsla") ||
+    label.includes("stofnendurgreidsla");
+
+  return saysPremium && saysTotal && !saysConditional;
+}
+
+function isPossibleRefundFact(fact: {
+  factType: string;
+  label: string | null;
+  numberValue: unknown;
+}) {
+  if (fact.numberValue === null) {
+    return false;
+  }
+
+  const type = fact.factType
+    .trim()
+    .toUpperCase()
+    .replace(/[\\s-]+/g, "_");
+
+  const label = normalizeText(fact.label);
+
+  return (
+    type.includes("REFUND") ||
+    label.includes("endurgreidsla") ||
+    label.includes("stofnendurgreidsla")
+  );
+}
+
 export default async function InnsynPage() {
   const cookieStore = await cookies();
   const activeUser = await getEffectiveUser();
@@ -716,24 +782,62 @@ export default async function InnsynPage() {
       }
     );
 
-  let totalAnnualPremium:
+  let quotedAnnualPremium:
+    | number
+    | null = null;
+
+  let conditionalAnnualPremium:
+    | number
+    | null = null;
+
+  let possibleRefund:
     | number
     | null = null;
 
   if (latestInsurance) {
-    const explicitTotal =
+    const quotedPremiumFact =
+      latestInsurance.facts.find(
+        isQuotedPremiumFact
+      );
+
+    const conditionalPremiumFact =
       latestInsurance.facts.find(
         isTotalPremiumFact
       );
 
+    const refundFact =
+      latestInsurance.facts.find(
+        isPossibleRefundFact
+      );
+
     if (
-      explicitTotal?.numberValue !==
-      null &&
-      explicitTotal?.numberValue !==
+      quotedPremiumFact?.numberValue !==
+        null &&
+      quotedPremiumFact?.numberValue !==
         undefined
     ) {
-      totalAnnualPremium = Number(
-        explicitTotal.numberValue
+      quotedAnnualPremium = Number(
+        quotedPremiumFact.numberValue
+      );
+    }
+
+    if (
+      conditionalPremiumFact?.numberValue !==
+        null &&
+      conditionalPremiumFact?.numberValue !==
+        undefined
+    ) {
+      conditionalAnnualPremium = Number(
+        conditionalPremiumFact.numberValue
+      );
+    }
+
+    if (
+      refundFact?.numberValue !== null &&
+      refundFact?.numberValue !== undefined
+    ) {
+      possibleRefund = Math.abs(
+        Number(refundFact.numberValue)
       );
     }
   }
@@ -887,13 +991,13 @@ export default async function InnsynPage() {
           <div className="grid gap-4 border-b p-5 sm:grid-cols-2 xl:grid-cols-4">
             <div className="rounded-xl bg-slate-50 p-4">
               <p className="text-sm text-slate-500">
-                Iðgjöld á ári
+                Ársiðgjöld samkvæmt tilboði
               </p>
 
               <p className="mt-1 text-xl font-bold text-slate-900">
-                {totalAnnualPremium !== null
+                {quotedAnnualPremium !== null
                   ? formatKr(
-                      totalAnnualPremium
+                      quotedAnnualPremium
                     )
                   : "Ekki greint"}
               </p>
@@ -1012,6 +1116,33 @@ export default async function InnsynPage() {
               </h3>
 
               <div className="mt-3 space-y-3">
+                {possibleRefund !== null && (
+                  <div className="flex items-start justify-between gap-4 border-b pb-3">
+                    <span className="text-sm text-slate-600">
+                      Möguleg endurgreiðsla
+                    </span>
+
+                    <span className="text-sm font-semibold text-slate-900">
+                      {formatKr(possibleRefund)}
+                    </span>
+                  </div>
+                )}
+
+                {conditionalAnnualPremium !==
+                  null && (
+                  <div className="flex items-start justify-between gap-4 border-b pb-3">
+                    <span className="text-sm text-slate-600">
+                      Ársiðgjöld ef skilyrt endurgreiðsla fæst
+                    </span>
+
+                    <span className="text-sm font-semibold text-slate-900">
+                      {formatKr(
+                        conditionalAnnualPremium
+                      )}
+                    </span>
+                  </div>
+                )}
+
                 {lowestDeductible !==
                   null && (
                   <div className="flex items-start justify-between gap-4 border-b pb-3">

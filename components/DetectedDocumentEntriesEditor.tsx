@@ -25,6 +25,8 @@ type Props = {
   accounts: {
     number: string;
     name: string;
+    entryRole: string;
+    vatTreatment: string | null;
   }[];
 
   vatRegistered: boolean | null;
@@ -45,6 +47,7 @@ export default function DetectedDocumentEntriesEditor({
   documentId,
   entries,
   accounts,
+  vatRegistered,
   date,
   totalAmount,
   reviewedAt,
@@ -57,6 +60,26 @@ export default function DetectedDocumentEntriesEditor({
   canEdit,
 }: Props) {
   const router = useRouter();
+
+  function isVatPostingAccount(account: {
+    number: string;
+    entryRole: string;
+    vatTreatment: string | null;
+  }) {
+    return (
+      account.entryRole === "VAT_INPUT" ||
+      account.entryRole === "VAT_OUTPUT" ||
+      account.vatTreatment === "INPUT" ||
+      account.vatTreatment === "OUTPUT" ||
+      account.number === "2510" ||
+      account.number === "2520"
+    );
+  }
+
+  const availableAccounts =
+    vatRegistered === true
+      ? accounts
+      : accounts.filter((account) => !isVatPostingAccount(account));
 
   function normalizeAccountValue(value: string) {
     const trimmed = value.trim();
@@ -115,6 +138,22 @@ const [documentAmount, setDocumentAmount] = useState(
     field: keyof Entry,
     value: string
   ) {
+    if (field === "account" && vatRegistered !== true) {
+      const selectedAccount = accounts.find(
+        (account) => account.number === value
+      );
+
+      if (selectedAccount && isVatPostingAccount(selectedAccount)) {
+        setError(
+          vatRegistered === false
+            ? "Ekki er hægt að velja VSK-reikning vegna þess að fyrirtækið er ekki VSK-skráð."
+            : "Ekki er hægt að velja VSK-reikning fyrr en VSK-skráningarstaða fyrirtækisins hefur verið staðfest."
+        );
+        setMessage("");
+        return;
+      }
+    }
+
     setHasUnsavedChanges(true);
     setRows((current) =>
       current.map((row) =>
@@ -156,12 +195,20 @@ const [documentAmount, setDocumentAmount] = useState(
       setMessage("");
       setError("");
 
-     await updateDetectedDocumentEntries(
-  documentId,
-  rows,
-  documentDate,
-  documentAmount
-);
+     const rowsToSave = rows.filter(
+        (row) => Math.abs(row.debit) > 0 || Math.abs(row.credit) > 0
+      );
+
+      if (rowsToSave.length === 0) {
+        throw new Error("Engar bókunarlínur með upphæð eru skráðar.");
+      }
+
+      await updateDetectedDocumentEntries(
+        documentId,
+        rowsToSave,
+        documentDate,
+        documentAmount
+      );
 
       setMessage("Breytingar vistaðar.");
       setHasUnsavedChanges(false);
@@ -254,6 +301,13 @@ disabled={!canEdit}
     />
   </label>
 </div>
+{vatRegistered !== true && (
+  <div className="rounded border border-amber-300 bg-amber-50 px-3 py-2 text-sm text-amber-800">
+    {vatRegistered === false
+      ? "Fyrirtækið er ekki VSK-skráð. Innskattur og útskattur eru ekki bókaðir."
+      : "VSK-skráningarstaða fyrirtækisins er ekki staðfest. VSK-bókun er óvirk þar til staðan hefur verið staðfest."}
+  </div>
+)}
 <div className="grid grid-cols-4 gap-2 text-xs font-semibold text-slate-500">
         <span>Reikningslykill</span>
         <span>Texti</span>
@@ -279,7 +333,7 @@ disabled={!canEdit}
               }
               className="w-full rounded border px-2 py-1"
             >
-              {!accounts.some(
+              {!availableAccounts.some(
                 (account) => account.number === entry.account
               ) && (
                 <option value={entry.account}>
@@ -289,7 +343,7 @@ disabled={!canEdit}
                 </option>
               )}
 
-              {accounts.map((account) => (
+              {availableAccounts.map((account) => (
                 <option
                   key={account.number}
                   value={account.number}

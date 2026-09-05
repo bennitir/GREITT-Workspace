@@ -57,6 +57,7 @@ type ActivityFormRow = {
   name: string;
   registeredAtRsk: boolean;
   isActive: boolean;
+  dataSource: string | null;
 };
 
 type Props = {
@@ -78,6 +79,7 @@ export default function CompanyEditForm({
       name: activity.name,
       registeredAtRsk: activity.registeredAtRsk,
       isActive: activity.isActive,
+      dataSource: activity.dataSource,
     }))
   );
 
@@ -100,6 +102,7 @@ export default function CompanyEditForm({
         name: "",
         registeredAtRsk: false,
         isActive: true,
+        dataSource: "MANUAL",
       },
     ]);
   }
@@ -168,9 +171,11 @@ export default function CompanyEditForm({
 
   const cleanedActivities = activities
     .map((activity) => ({
-      ...activity,
+      id: activity.id,
       code: activity.code.trim(),
       name: activity.name.trim(),
+      registeredAtRsk: activity.registeredAtRsk,
+      isActive: activity.isActive,
     }))
     .filter(
       (activity) =>
@@ -190,6 +195,9 @@ export default function CompanyEditForm({
 
   const hasVatRegistration =
     vatRegistered === true;
+
+  const vatStatusUnconfirmed =
+    vatRegistered === null;
 
   setSaving(true);
 
@@ -215,45 +223,57 @@ export default function CompanyEditForm({
       vatNumber: hasVatRegistration
         ? String(formData.get("vatNumber") || "") ||
           null
-        : null,
+        : vatStatusUnconfirmed
+          ? company.vatNumber
+          : null,
 
       vatRegistered,
 
-      vatRegistrationDate:
-        hasVatRegistration &&
-        formData.get("vatRegistrationDate")
+      vatRegistrationDate: hasVatRegistration
+        ? formData.get("vatRegistrationDate")
           ? new Date(
               String(
                 formData.get("vatRegistrationDate")
               )
             )
+          : null
+        : vatStatusUnconfirmed
+          ? company.vatRegistrationDate
           : null,
 
       vatSettlementType: hasVatRegistration
         ? String(
             formData.get("vatSettlementType") || ""
           ) || null
-        : null,
+        : vatStatusUnconfirmed
+          ? company.vatSettlementType
+          : null,
 
       vatDataSource: hasVatRegistration
         ? String(
             formData.get("vatDataSource") || ""
           ) || null
-        : null,
+        : vatStatusUnconfirmed
+          ? company.vatDataSource
+          : null,
 
-      vatConfirmedAt:
-        hasVatRegistration &&
-        formData.get("vatConfirmedAt")
+      vatConfirmedAt: hasVatRegistration
+        ? formData.get("vatConfirmedAt")
           ? new Date(
               String(formData.get("vatConfirmedAt"))
             )
+          : null
+        : vatStatusUnconfirmed
+          ? company.vatConfirmedAt
           : null,
 
       vatConfirmedBy: hasVatRegistration
         ? String(
             formData.get("vatConfirmedBy") || ""
           ) || null
-        : null,
+        : vatStatusUnconfirmed
+          ? company.vatConfirmedBy
+          : null,
 
       nextVoucherNumber,
 
@@ -604,7 +624,12 @@ export default function CompanyEditForm({
           )}
 
           {activities.map(
-            (activity, index) => (
+            (activity, index) => {
+              const isRskManaged =
+                activity.dataSource === "RSK" &&
+                activity.registeredAtRsk;
+
+              return (
               <div
                 key={
                   activity.id ??
@@ -627,7 +652,12 @@ export default function CompanyEditForm({
                         })
                       }
                       placeholder="t.d. 69.20.0"
-                      className="block w-full rounded border bg-white p-2"
+                      readOnly={isRskManaged}
+                      className={`block w-full rounded border p-2 ${
+                        isRskManaged
+                          ? "bg-slate-100 text-slate-600"
+                          : "bg-white"
+                      }`}
                     />
                   </div>
 
@@ -645,7 +675,12 @@ export default function CompanyEditForm({
                         })
                       }
                       placeholder="t.d. Reikningshald og bókhald"
-                      className="block w-full rounded border bg-white p-2"
+                      readOnly={isRskManaged}
+                      className={`block w-full rounded border p-2 ${
+                        isRskManaged
+                          ? "bg-slate-100 text-slate-600"
+                          : "bg-white"
+                      }`}
                     />
                   </div>
                 </div>
@@ -657,12 +692,17 @@ export default function CompanyEditForm({
                       checked={
                         activity.registeredAtRsk
                       }
-                      onChange={(event) =>
+                      onChange={(event) => {
+                        if (isRskManaged) {
+                          return;
+                        }
+
                         updateActivity(index, {
                           registeredAtRsk:
                             event.target.checked,
-                        })
-                      }
+                        });
+                      }}
+                      disabled={isRskManaged}
                       className="h-4 w-4"
                     />
 
@@ -685,18 +725,25 @@ export default function CompanyEditForm({
                     Virk starfsemi
                   </label>
 
-                  <button
-                    type="button"
-                    onClick={() =>
-                      removeActivity(index)
-                    }
-                    className="ml-auto rounded border border-red-200 bg-white px-3 py-1.5 text-sm font-medium text-red-700 hover:bg-red-50"
-                  >
-                    Fjarlægja
-                  </button>
+                  {isRskManaged ? (
+                    <span className="ml-auto rounded border border-blue-200 bg-blue-50 px-3 py-1.5 text-sm font-medium text-blue-800">
+                      Uppruni: RSK
+                    </span>
+                  ) : (
+                    <button
+                      type="button"
+                      onClick={() =>
+                        removeActivity(index)
+                      }
+                      className="ml-auto rounded border border-red-200 bg-white px-3 py-1.5 text-sm font-medium text-red-700 hover:bg-red-50"
+                    >
+                      Fjarlægja
+                    </button>
+                  )}
                 </div>
               </div>
-            )
+              );
+            }
           )}
         </div>
 
