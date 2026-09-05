@@ -101,6 +101,8 @@ function formatFactValue(fact: {
   booleanValue: boolean | null;
   unit: string | null;
   currency: string | null;
+  periodStart?: Date | null;
+  periodEnd?: Date | null;
 }) {
   if (fact.numberValue !== null) {
     const value = Number(fact.numberValue);
@@ -134,6 +136,14 @@ function formatFactValue(fact: {
 
   if (fact.booleanValue !== null) {
     return fact.booleanValue ? "Já" : "Nei";
+  }
+
+  if (fact.periodStart || fact.periodEnd) {
+    return `${formatDate(
+      fact.periodStart ?? null
+    )} – ${formatDate(
+      fact.periodEnd ?? null
+    )}`;
   }
 
   return "—";
@@ -463,6 +473,8 @@ export default async function InnsynPage() {
         currency: true,
         confidence: true,
         source: true,
+        periodStart: true,
+        periodEnd: true,
         createdAt: true,
       },
     }),
@@ -739,6 +751,63 @@ export default async function InnsynPage() {
           latestInsurance.documentId
         )
       : null;
+  const insurancePeriodFact =
+    latestInsurance?.facts.find(
+      (fact) =>
+        fact.periodStart !== null ||
+        fact.periodEnd !== null
+    ) ?? null;
+
+  const insurancePeriod =
+    insurancePeriodFact &&
+    (insurancePeriodFact.periodStart ||
+      insurancePeriodFact.periodEnd)
+      ? `${formatDate(
+          insurancePeriodFact.periodStart
+        )} – ${formatDate(
+          insurancePeriodFact.periodEnd
+        )}`
+      : null;
+
+  const insuranceFactsForDisplay =
+    latestInsurance?.facts.filter(
+      (fact, index, allFacts) => {
+        const label = normalizeText(fact.label);
+        const isPeriodFact =
+          fact.factType.toUpperCase() === "PERIOD" ||
+          label.includes("tryggingatimabil") ||
+          label.includes("vatryggingartimabil");
+
+        if (!isPeriodFact) {
+          return true;
+        }
+
+        return (
+          allFacts.findIndex((otherFact) => {
+            const otherLabel = normalizeText(
+              otherFact.label
+            );
+            const otherIsPeriodFact =
+              otherFact.factType.toUpperCase() ===
+                "PERIOD" ||
+              otherLabel.includes(
+                "tryggingatimabil"
+              ) ||
+              otherLabel.includes(
+                "vatryggingartimabil"
+              );
+
+            return (
+              otherIsPeriodFact &&
+              otherFact.periodStart?.getTime() ===
+                fact.periodStart?.getTime() &&
+              otherFact.periodEnd?.getTime() ===
+                fact.periodEnd?.getTime()
+            );
+          }) === index
+        );
+      }
+    ) ?? [];
 
   const latestInsuranceEntities =
     latestInsuranceKey
@@ -1038,6 +1107,20 @@ export default async function InnsynPage() {
             </div>
           </div>
 
+          {insurancePeriod && (
+            <div className="border-b px-5 py-4">
+              <div className="flex items-center justify-between gap-4">
+                <span className="text-sm font-medium text-slate-600">
+                  Vátryggingartímabil
+                </span>
+
+                <span className="text-sm font-semibold text-slate-900">
+                  {insurancePeriod}
+                </span>
+              </div>
+            </div>
+          )}
+
           <div className="grid gap-6 p-5 lg:grid-cols-2">
             <div>
               <h3 className="font-semibold text-slate-900">
@@ -1195,7 +1278,7 @@ export default async function InnsynPage() {
                 </summary>
 
                 <div className="divide-y border-t">
-                  {latestInsurance.facts.map(
+                  {insuranceFactsForDisplay.map(
                     (fact) => (
                       <div
                         key={fact.id}
