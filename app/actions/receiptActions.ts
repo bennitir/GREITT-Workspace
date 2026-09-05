@@ -1252,6 +1252,163 @@ if (dateWarnings.length > 0) {
   revalidatePath("/fylgiskjol");
 }
 
+export async function confirmInsightEntityAccountLink(
+  documentId: number,
+  entityId: number,
+  accountNumber: string
+) {
+  const document = await prisma.aiDetectedDocument.findUnique({
+    where: { id: documentId },
+    include: {
+      receipt: true,
+      entityLinks: {
+        where: { entityId, role: "LOAN" },
+        include: { entity: true },
+      },
+    },
+  });
+
+  if (!document) throw new Error("Greint fylgiskjal fannst ekki.");
+
+  await requireCompanyBookAccess(document.receipt.companyId);
+
+  const user = await getEffectiveUser();
+  if (!user) throw new Error("Innskráning er nauðsynleg.");
+
+  if (document.approvedAt || document.voucherNumber != null) {
+    throw new Error("Ekki er hægt að breyta lánatengingu eftir bókun.");
+  }
+
+  if (document.disposedAt || document.disposition) {
+    throw new Error("Ekki er hægt að breyta lánatengingu á afgreiddu skjali.");
+  }
+
+  const entityLink = document.entityLinks[0];
+  if (!entityLink || entityLink.entity.entityType !== "LOAN") {
+    throw new Error("Lánatenging fannst ekki á þessu fylgiskjali.");
+  }
+
+  if (entityLink.entity.companyId !== document.receipt.companyId) {
+    throw new Error("Lánið tilheyrir ekki sama fyrirtæki og fylgiskjalið.");
+  }
+
+  const cleanAccountNumber = accountNumber.trim();
+  if (!cleanAccountNumber) throw new Error("Velja þarf skuldareikning.");
+
+  const account = await prisma.account.findFirst({
+    where: {
+      companyId: document.receipt.companyId,
+      number: cleanAccountNumber,
+      isActive: true,
+      type: {
+        in: ["SHORT_TERM_LIABILITY", "LONG_TERM_LIABILITY"],
+      },
+    },
+  });
+
+  if (!account) {
+    throw new Error("Velja þarf virkan skuldareikning (skammtíma- eða langtímaskuld) hjá fyrirtækinu.");
+  }
+
+  const confirmedAt = new Date();
+
+  await prisma.$transaction(async (tx) => {
+    const existingLinks = await tx.insightEntityAccountLink.findMany({
+      where: { entityId, role: "LIABILITY_PRINCIPAL" },
+      include: { account: true },
+    });
+
+    const previousConfirmed = existingLinks.find(
+      (link) => link.status === "CONFIRMED"
+    );
+
+    await tx.insightEntityAccountLink.updateMany({
+      where: {
+        entityId,
+        role: "LIABILITY_PRINCIPAL",
+        status: "CONFIRMED",
+      },
+      data: { status: "REJECTED" },
+    });
+
+    await tx.insightEntityAccountLink.upsert({
+      where: {
+        entityId_accountId_role: {
+          entityId,
+          accountId: account.id,
+          role: "LIABILITY_PRINCIPAL",
+        },
+      },
+      update: {
+        status: "CONFIRMED",
+        source: "USER",
+        confidence: 1,
+        confirmedAt,
+        confirmedBy: user.id,
+        note: "Skuldareikningur staðfestur af notanda.",
+      },
+      create: {
+        entityId,
+        accountId: account.id,
+        role: "LIABILITY_PRINCIPAL",
+        status: "CONFIRMED",
+        source: "USER",
+        confidence: 1,
+        confirmedAt,
+        confirmedBy: user.id,
+        note: "Skuldareikningur staðfestur af notanda.",
+      },
+    });
+
+    await tx.insightEntity.update({
+      where: { id: entityId },
+      data: {
+        relationshipStatus: "CONFIRMED",
+      },
+    });
+
+    await tx.auditEvent.create({
+      data: {
+        companyId: document.receipt.companyId,
+        userId: user.id,
+        entityType: "InsightEntity",
+        entityId,
+        action: "CONFIRM_ACCOUNT_LINK",
+        parentEntityType: "AiDetectedDocument",
+        parentEntityId: document.id,
+        source: "USER",
+        description: `Skuldareikningur ${account.number} staðfestur fyrir ${entityLink.entity.name}.`,
+        beforeData: previousConfirmed
+          ? {
+              accountId: previousConfirmed.accountId,
+              accountNumber: previousConfirmed.account.number,
+              role: previousConfirmed.role,
+              status: previousConfirmed.status,
+            }
+          : undefined,
+        afterData: {
+          accountId: account.id,
+          accountNumber: account.number,
+          role: "LIABILITY_PRINCIPAL",
+          status: "CONFIRMED",
+          confirmedAt: confirmedAt.toISOString(),
+          confirmedBy: user.id,
+        },
+        metadata: {
+          receiptId: document.receiptId,
+          detectedDocumentId: document.id,
+          insightEntityId: entityId,
+          identifierType: entityLink.entity.identifierType,
+          identifierValue: entityLink.entity.identifierValue,
+        },
+      },
+    });
+  });
+
+  revalidatePath(`/fylgiskjol/${document.receiptId}`);
+  revalidatePath("/fylgiskjol");
+}
+
   export async function reviewDetectedDocument(documentId: number) {
   const document = await prisma.aiDetectedDocument.findFirst({
     where: {
@@ -1329,6 +1486,160 @@ if (dateWarnings.length > 0) {
 
   revalidatePath(`/fylgiskjol/${document.receiptId}`);
   revalidatePath("/fylgiskjol");
+  revalidatePath("/");
+}
+
+export async function markDetectedDocumentOutsideBusiness(
+  documentId: number,
+  reason: string
+) {
+  return finalizeDetectedDocumentWithoutBooking(
+    documentId,
+    "OUTSIDE_BUSINESS",
+    reason
+  );
+}
+
+export async function retainDetectedDocumentForInsight(
+  documentId: number,
+  reason = "Varðveitt sem hluti af Innsýn án bókunar."
+) {
+  return finalizeDetectedDocumentWithoutBooking(
+    documentId,
+    "INSIGHT_ONLY",
+    reason
+  );
+}
+
+export async function resolveDetectedDocumentAsSupporting(
+  documentId: number,
+  reason = "Afgreitt sem stuðningsskjal við annan fjárhagsatburð."
+) {
+  return finalizeDetectedDocumentWithoutBooking(
+    documentId,
+    "SUPPORTING_RESOLVED",
+    reason
+  );
+}
+
+async function finalizeDetectedDocumentWithoutBooking(
+  documentId: number,
+  disposition: "OUTSIDE_BUSINESS" | "INSIGHT_ONLY" | "SUPPORTING_RESOLVED",
+  reason: string
+) {
+  const document = await prisma.aiDetectedDocument.findUnique({
+    where: { id: documentId },
+    include: { receipt: true },
+  });
+
+  if (!document) {
+    throw new Error("Greint fylgiskjal fannst ekki.");
+  }
+
+  await requireCompanyBookAccess(document.receipt.companyId);
+
+  const user = await getEffectiveUser();
+  if (!user) {
+    throw new Error("Innskráning er nauðsynleg.");
+  }
+
+  const cleanReason = reason.trim();
+  if (cleanReason.length < 3) {
+    throw new Error("Skrá þarf stutta skýringu á afgreiðslu skjalsins.");
+  }
+
+  if (document.approvedAt || document.voucherNumber != null) {
+    throw new Error("Ekki er hægt að afgreiða bókfært fylgiskjal án bókunar.");
+  }
+
+  if (document.disposedAt || document.disposition) {
+    throw new Error("Þetta fylgiskjal hefur þegar verið endanlega afgreitt.");
+  }
+
+  const disposedAt = new Date();
+  const action =
+    disposition === "INSIGHT_ONLY"
+      ? "RETAIN_FOR_INSIGHT"
+      : disposition === "SUPPORTING_RESOLVED"
+        ? "RESOLVE_SUPPORTING_DOCUMENT"
+        : "MARK_OUTSIDE_BUSINESS";
+  const description =
+    disposition === "INSIGHT_ONLY"
+      ? "Fylgiskjal varðveitt fyrir Innsýn án bókunar."
+      : disposition === "SUPPORTING_RESOLVED"
+        ? "Fylgiskjal afgreitt sem stuðningsskjal án sjálfstæðrar bókunar."
+        : "Fylgiskjal afgreitt án bókunar – utan atvinnurekstrarbókhalds.";
+
+  await prisma.$transaction(async (tx) => {
+    await tx.aiDetectedDocument.update({
+      where: { id: document.id },
+      data: {
+        disposition,
+        dispositionReason: cleanReason,
+        disposedAt,
+        disposedById: user.id,
+        reviewedAt: document.reviewedAt ?? disposedAt,
+      },
+    });
+
+    await tx.auditEvent.create({
+      data: {
+        companyId: document.receipt.companyId,
+        userId: user.id,
+        entityType: "Receipt",
+        entityId: document.receiptId,
+        action,
+        parentEntityType: "AiDetectedDocument",
+        parentEntityId: document.id,
+        source: "USER",
+        description,
+        afterData: {
+          disposition,
+          dispositionReason: cleanReason,
+          disposedAt: disposedAt.toISOString(),
+          disposedById: user.id,
+        },
+        metadata: {
+          detectedDocumentId: document.id,
+          receiptId: document.receiptId,
+          merchantName: document.merchantName,
+          receiptNumber: document.receiptNumber,
+          documentDate: document.date?.toISOString() ?? null,
+          totalAmount: document.totalAmount,
+          documentType: document.documentType,
+          documentRole: document.documentRole,
+          reason: cleanReason,
+        },
+      },
+    });
+
+    const remainingUnresolved = await tx.aiDetectedDocument.count({
+      where: {
+        receiptId: document.receiptId,
+        approvedAt: null,
+        disposedAt: null,
+        id: { not: document.id },
+      },
+    });
+
+    if (remainingUnresolved === 0) {
+      const approvedCount = await tx.aiDetectedDocument.count({
+        where: {
+          receiptId: document.receiptId,
+          approvedAt: { not: null },
+        },
+      });
+
+      await tx.receipt.update({
+        where: { id: document.receiptId },
+        data: { status: approvedCount > 0 ? "APPROVED" : "NOT_BOOKED" },
+      });
+    }
+  });
+
+  revalidatePath(`/fylgiskjol/${document.receiptId}`);
+  revalidatePath("/fylgiskjol");
+  revalidatePath("/innsyn");
   revalidatePath("/");
 }
 
