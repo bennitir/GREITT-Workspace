@@ -512,21 +512,39 @@ export async function loginUser(
   formData: FormData
 ) {
   const email = String(
-  formData.get("email") || ""
-)
-  .trim()
-  .toLowerCase();
+    formData.get("email") || ""
+  )
+    .trim()
+    .toLowerCase();
 
-const next = String(formData.get("next") ?? "");
+  const next =
+    String(formData.get("next") ?? "") ===
+    "/mobile"
+      ? "/mobile"
+      : "";
 
   const password = String(
     formData.get("password") || ""
   );
 
-  if (!email || !password) {
-    throw new Error(
-      "Netfang og lykilorð vantar."
+  const loginPath = next
+    ? `/innskraning?next=${encodeURIComponent(next)}`
+    : "/innskraning";
+
+  function redirectWithError(
+    error: "missing" | "invalid" | "inactive"
+  ): never {
+    const separator = loginPath.includes("?")
+      ? "&"
+      : "?";
+
+    redirect(
+      `${loginPath}${separator}error=${error}`
     );
+  }
+
+  if (!email || !password) {
+    redirectWithError("missing");
   }
 
   const user = await prisma.user.findUnique({
@@ -534,15 +552,11 @@ const next = String(formData.get("next") ?? "");
   });
 
   if (!user || !user.passwordHash) {
-    throw new Error(
-      "Rangt netfang eða lykilorð."
-    );
+    redirectWithError("invalid");
   }
 
   if (!user.isActive) {
-    throw new Error(
-      "Notandinn er óvirkur."
-    );
+    redirectWithError("inactive");
   }
 
   const passwordOk = await bcrypt.compare(
@@ -551,9 +565,7 @@ const next = String(formData.get("next") ?? "");
   );
 
   if (!passwordOk) {
-    throw new Error(
-      "Rangt netfang eða lykilorð."
-    );
+    redirectWithError("invalid");
   }
 
   const token = crypto
@@ -588,14 +600,14 @@ const next = String(formData.get("next") ?? "");
   cookieStore.delete("activeCompanyId");
 
   if (user.mustChangePassword) {
-  redirect("/skipta-lykilordi");
-}
+    redirect("/skipta-lykilordi");
+  }
 
-if (next === "/mobile") {
-  redirect("/mobile");
-}
+  if (next === "/mobile") {
+    redirect("/mobile");
+  }
 
-redirect("/");
+  redirect("/");
 }
 
 export async function logoutUser() {
