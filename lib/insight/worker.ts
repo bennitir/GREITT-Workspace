@@ -61,6 +61,50 @@ function buildSemanticSource(
   return `AI_INNSYN:${processingVersion}`;
 }
 
+/*
+ * Samræmum sterk auðkenni áður en entity er leitað/stofnað.
+ *
+ * AI getur lýst íslensku fastanúmeri ökutækis sem FASTANUMER,
+ * en í InsightEntity notum við REGISTRATION_NUMBER sem canonical
+ * identifierType. Þannig verður t.d. JUH30 alltaf sama ökutækið
+ * óháð orðalagi í einstöku skjali.
+ */
+function normalizeInsightEntityIdentifier(input: {
+  entityType: string;
+  identifierType: string | null;
+  identifierValue: string | null;
+}) {
+  let identifierType =
+    input.identifierType?.trim() || null;
+
+  let identifierValue =
+    input.identifierValue?.trim() || null;
+
+  if (
+    input.entityType === "VEHICLE" &&
+    identifierType === "FASTANUMER"
+  ) {
+    identifierType =
+      "REGISTRATION_NUMBER";
+  }
+
+  if (
+    input.entityType === "VEHICLE" &&
+    identifierType === "REGISTRATION_NUMBER" &&
+    identifierValue
+  ) {
+    identifierValue =
+      identifierValue
+        .toUpperCase()
+        .replace(/[^A-Z0-9]/g, "");
+  }
+
+  return {
+    identifierType,
+    identifierValue,
+  };
+}
+
 async function findOrCreateInsightEntity(
   tx: Parameters<
     Parameters<
@@ -88,6 +132,16 @@ async function findOrCreateInsightEntity(
     entity,
   } = input;
 
+  const normalizedIdentifier =
+    normalizeInsightEntityIdentifier({
+      entityType:
+        entity.entityType,
+      identifierType:
+        entity.identifierType,
+      identifierValue:
+        entity.identifierValue,
+    });
+
   /*
    * Sterkt auðkenni hefur forgang.
    *
@@ -96,8 +150,8 @@ async function findOrCreateInsightEntity(
    * VEHICLE + REGISTRATION_NUMBER + ABC12
    */
   if (
-    entity.identifierType &&
-    entity.identifierValue
+    normalizedIdentifier.identifierType &&
+    normalizedIdentifier.identifierValue
   ) {
     const existing =
       await tx.insightEntity.findFirst({
@@ -106,9 +160,9 @@ async function findOrCreateInsightEntity(
           entityType:
             entity.entityType,
           identifierType:
-            entity.identifierType,
+            normalizedIdentifier.identifierType,
           identifierValue:
-            entity.identifierValue,
+            normalizedIdentifier.identifierValue,
           status: "ACTIVE",
         },
       });
@@ -153,10 +207,10 @@ async function findOrCreateInsightEntity(
       status: "ACTIVE",
 
       identifierType:
-        entity.identifierType,
+        normalizedIdentifier.identifierType,
 
       identifierValue:
-        entity.identifierValue,
+        normalizedIdentifier.identifierValue,
 
       relationshipStatus:
         "UNCONFIRMED",
