@@ -511,14 +511,62 @@ async function persistInsightAnalysis(
       /*
        * DETERMINISTIC FACT -> VEHICLE TENGING
        *
-       * Ef staðreynd nefnir nákvæmlega eitt skráningarnúmer
-       * ökutækis sem þegar var greint/vistað úr sama skjali,
-       * tengjum við factið beint við það VEHICLE entity.
+       * 1. Sterkasta reglan:
+       *    Ef fact nefnir nákvæmlega eitt skráningarnúmer
+       *    ökutækis sem þegar var greint/vistað úr sama skjali,
+       *    tengjum við factið beint við það VEHICLE entity.
        *
-       * Við giskum ekki út frá heiti ökutækis. Ef ekkert eða
-       * fleiri en eitt skráningarnúmer passar helst entityId null.
+       * 2. Eins-bíls samhengi:
+       *    Ef nákvæmlega eitt ökutæki kemur fyrir í skjalinu má
+       *    tengja facts sem greinilega lýsa ökutækinu eða gjöldum
+       *    þess við það ökutæki, þótt fastanúmerið sé ekki
+       *    endurtekið í hverju facti.
+       *
+       * Almenn skjala-/greiðslufacts, svo sem gjalddagi,
+       * eindagi, keyrsludagur, seðilnúmer og greiðsluháttur,
+       * eru ekki tengd við ökutækið eingöngu vegna eins-bíls
+       * samhengis.
        */
+      const singleVehicleEntityId =
+        vehicles.length === 1
+          ? vehicles[0]?.id ?? null
+          : null;
+
+      const isSingleVehicleContextFact = (fact: {
+        factType: string;
+        label: string;
+      }) => {
+        if (!singleVehicleEntityId) {
+          return false;
+        }
+
+        if (
+          fact.factType === "FEE" ||
+          fact.factType === "ASSET_IDENTIFIER"
+        ) {
+          return true;
+        }
+
+        const normalizedLabel =
+          fact.label
+            .trim()
+            .toLocaleLowerCase("is-IS");
+
+        const vehicleDetailLabels = new Set([
+          "tegund ökutækis",
+          "árgerð ökutækis",
+          "eiginþyngd ökutækis",
+          "co2-losun",
+          "eldsneyti",
+        ]);
+
+        return vehicleDetailLabels.has(
+          normalizedLabel,
+        );
+      };
+
       const findVehicleEntityIdForFact = (fact: {
+        factType: string;
         label: string;
         valueText: string | null;
       }) => {
@@ -555,11 +603,21 @@ async function persistInsightAnalysis(
           }
         }
 
-        if (matchedVehicleIds.size !== 1) {
-          return null;
+        if (matchedVehicleIds.size === 1) {
+          return [...matchedVehicleIds][0] ?? null;
         }
 
-        return [...matchedVehicleIds][0] ?? null;
+        if (
+          matchedVehicleIds.size === 0 &&
+          isSingleVehicleContextFact({
+            factType: fact.factType,
+            label: fact.label,
+          })
+        ) {
+          return singleVehicleEntityId;
+        }
+
+        return null;
       };
 
       let factCount = 0;
@@ -570,6 +628,7 @@ async function persistInsightAnalysis(
       ) {
         const matchedVehicleEntityId =
           findVehicleEntityIdForFact({
+            factType: fact.factType,
             label: fact.label,
             valueText: fact.valueText,
           });
