@@ -508,12 +508,72 @@ async function persistInsightAnalysis(
         }
       }
 
+      /*
+       * DETERMINISTIC FACT -> VEHICLE TENGING
+       *
+       * Ef staðreynd nefnir nákvæmlega eitt skráningarnúmer
+       * ökutækis sem þegar var greint/vistað úr sama skjali,
+       * tengjum við factið beint við það VEHICLE entity.
+       *
+       * Við giskum ekki út frá heiti ökutækis. Ef ekkert eða
+       * fleiri en eitt skráningarnúmer passar helst entityId null.
+       */
+      const findVehicleEntityIdForFact = (fact: {
+        label: string;
+        valueText: string | null;
+      }) => {
+        const searchableText = [
+          fact.label,
+          fact.valueText ?? "",
+        ]
+          .join(" ")
+          .toUpperCase();
+
+        const matchedVehicleIds = new Set<number>();
+
+        for (const vehicle of vehicles) {
+          const registrationNumber =
+            normalizeRegistrationNumber(
+              vehicle.identifierValue ?? "",
+            );
+
+          if (!registrationNumber) {
+            continue;
+          }
+
+          const normalizedSearchableText =
+            normalizeRegistrationNumber(
+              searchableText,
+            );
+
+          if (
+            normalizedSearchableText.includes(
+              registrationNumber,
+            )
+          ) {
+            matchedVehicleIds.add(vehicle.id);
+          }
+        }
+
+        if (matchedVehicleIds.size !== 1) {
+          return null;
+        }
+
+        return [...matchedVehicleIds][0] ?? null;
+      };
+
       let factCount = 0;
 
       for (
         const fact
         of analysis.facts
       ) {
+        const matchedVehicleEntityId =
+          findVehicleEntityIdForFact({
+            label: fact.label,
+            valueText: fact.valueText,
+          });
+
         await tx.insightFact.create({
           data: {
             companyId,
@@ -521,11 +581,11 @@ async function persistInsightAnalysis(
             documentId,
 
             /*
-             * Við tengjum staðreynd ekki sjálfkrafa
-             * við entity eða FinancialEvent fyrr en
-             * örugg samsvörun er til.
+             * Aðeins deterministic VEHICLE samsvörun er
+             * tengd sjálfkrafa. Önnur facts haldast ótengd
+             * þar til jafn örugg matching-regla er til.
              */
-            entityId: null,
+            entityId: matchedVehicleEntityId,
             eventId: null,
 
             factType:
