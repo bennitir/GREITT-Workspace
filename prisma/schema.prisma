@@ -32,14 +32,14 @@ model Company {
   vatConfirmedBy      String?
 
   // RSK / starfsemi
-rskRegisteredActivities String?
-activeActivities        String?
-rskCertificatePath      String?
-rskDataUpdatedAt        DateTime?
-activitiesConfirmedAt   DateTime?
-activitiesConfirmedBy   String?
+  rskRegisteredActivities String?
+  activeActivities        String?
+  rskCertificatePath      String?
+  rskDataUpdatedAt        DateTime?
+  activitiesConfirmedAt   DateTime?
+  activitiesConfirmedBy   String?
 
-activities CompanyActivity[]
+  activities CompanyActivity[]
 
   // Tengingar
   accounts     Account[]
@@ -102,14 +102,14 @@ model Receipt {
   updatedAt              DateTime  @updatedAt
   storagePath            String?
 
-  aiBookingEntries    AiBookingEntry[]
-  aiDetectedDocuments AiDetectedDocument[]
-  company             Company              @relation(fields: [companyId], references: [id])
-  entries             ReceiptEntry[]
-  financialEventLinks DocumentFinancialEvent[]
-  entityLinks         DocumentEntityLink[]
-  insightFacts        InsightFact[]
-  insightProcessingItems InsightProcessingItem[]
+  aiBookingEntries          AiBookingEntry[]
+  aiDetectedDocuments       AiDetectedDocument[]
+  company                   Company                     @relation(fields: [companyId], references: [id])
+  entries                   ReceiptEntry[]
+  financialEventLinks       DocumentFinancialEvent[]
+  entityLinks               DocumentEntityLink[]
+  insightFacts              InsightFact[]
+  insightProcessingItems    InsightProcessingItem[]
   accountingPatternEvidence AccountingPatternEvidence[]
 
   @@index([companyId])
@@ -172,12 +172,12 @@ model AiDetectedDocument {
   classificationSource     String?
   classifiedAt             DateTime?
 
-  receipt             Receipt                   @relation(fields: [receiptId], references: [id], onDelete: Cascade)
-  bookingEntries      AiDetectedDocumentEntry[]
-  financialEventLinks DocumentFinancialEvent[]
-  entityLinks          DocumentEntityLink[]
-  insightFacts         InsightFact[]
-  insightProcessingItems InsightProcessingItem[]
+  receipt                   Receipt                     @relation(fields: [receiptId], references: [id], onDelete: Cascade)
+  bookingEntries            AiDetectedDocumentEntry[]
+  financialEventLinks       DocumentFinancialEvent[]
+  entityLinks               DocumentEntityLink[]
+  insightFacts              InsightFact[]
+  insightProcessingItems    InsightProcessingItem[]
   accountingPatternEvidence AccountingPatternEvidence[]
 
   @@index([receiptId])
@@ -235,16 +235,16 @@ model User {
   createdAt          DateTime @default(now())
   updatedAt          DateTime @updatedAt
 
-  sessions            Session[]
-  companies           UserCompany[]
-  workLogs            WorkLog[]
-  createdWorkOrders   WorkOrder[]
-  vatSubmissions      VatSubmission[]
-  passwordResetTokens PasswordResetToken[]
-  auditEvents         AuditEvent[]
-  accountingPatternConfirmations AccountingPattern[] @relation("AccountingPatternLastConfirmedBy")
+  sessions                       Session[]
+  companies                      UserCompany[]
+  workLogs                       WorkLog[]
+  createdWorkOrders              WorkOrder[]
+  vatSubmissions                 VatSubmission[]
+  passwordResetTokens            PasswordResetToken[]
+  auditEvents                    AuditEvent[]
+  accountingPatternConfirmations AccountingPattern[]         @relation("AccountingPatternLastConfirmedBy")
   accountingPatternEvidence      AccountingPatternEvidence[]
-  insightProcessingJobs          InsightProcessingJob[] @relation("InsightProcessingRequestedBy")
+  insightProcessingJobs          InsightProcessingJob[]      @relation("InsightProcessingRequestedBy")
 }
 
 model PasswordResetToken {
@@ -559,22 +559,25 @@ model VatSubmission {
 // ============================================================
 
 model InsightEntity {
-  id        Int      @id @default(autoincrement())
+  id        Int @id @default(autoincrement())
   companyId Int
 
-  // Almennt entity-líkan: VEHICLE, PROPERTY, PERSON, ORGANIZATION, LOAN, CONTRACT, METER o.fl.
+  // Almennt entity-líkan: VEHICLE, PROPERTY, PERSON, ORGANIZATION,
+  // INSURANCE_POLICY, LOAN, CONTRACT, METER o.fl.
   entityType String
   name       String
-  status     String   @default("ACTIVE")
+  status     String @default("ACTIVE")
 
-  // Sterkt auðkenni þegar það er til, t.d. skráningarnúmer, fasteignanúmer eða lánsnúmer.
+  // Sterkt auðkenni þegar það er til,
+  // t.d. skráningarnúmer, fasteignanúmer, trygginganúmer eða lánsnúmer.
   identifierType  String?
   identifierValue String?
 
-  // Tengsl við fyrirtækið/notandann eru staðfest sérstaklega; AI á ekki að gera ráð fyrir þeim.
-  relationshipStatus String?
-  relationshipType   String?
-  relationshipNote   String?
+  // Tengsl við fyrirtækið/notandann eru staðfest sérstaklega;
+  // AI á ekki að gera ráð fyrir þeim.
+  relationshipStatus      String?
+  relationshipType        String?
+  relationshipNote        String?
   relationshipConfirmedAt DateTime?
   relationshipConfirmedBy Int?
 
@@ -588,11 +591,62 @@ model InsightEntity {
   facts         InsightFact[]
   accountLinks  InsightEntityAccountLink[]
 
+  // Almenn tengsl milli Innsýn-entities.
+  // Dæmi:
+  // INSURANCE_POLICY -> VEHICLE, INSURES
+  // PERSON -> VEHICLE, USES
+  // LOAN -> PERSON, BORROWER
+  outgoingRelations InsightEntityRelation[] @relation("InsightEntityRelationFrom")
+  incomingRelations InsightEntityRelation[] @relation("InsightEntityRelationTo")
+
   @@index([companyId, entityType])
   @@index([companyId, identifierType, identifierValue])
   @@index([companyId, status])
 }
 
+model InsightEntityRelation {
+  id Int @id @default(autoincrement())
+
+  // Tengingin er stefnubundin:
+  // fromEntity --relationType--> toEntity
+  //
+  // Dæmi:
+  // Tryggingarskírteini --INSURES--> Bíll
+  fromEntityId Int
+  toEntityId   Int
+
+  // Almenn tegund tengingar.
+  // Dæmi: INSURES, OWNED_BY, USED_BY, BORROWER,
+  // LENDER, ASSOCIATED_WITH, COVERS.
+  relationType String
+
+  // PROPOSED = AI/SYSTEM hefur lagt tengingu til.
+  // CONFIRMED = notandi/bókari hefur staðfest hana.
+  // REJECTED = tillögu hefur verið hafnað.
+  status String @default("PROPOSED")
+
+  // Hvaðan tengingin kom.
+  // Dæmi: AI_INNSYN, SYSTEM, USER.
+  source String @default("SYSTEM")
+
+  confidence Float?
+  note       String?
+  metadata   Json?
+
+  confirmedAt DateTime?
+  confirmedBy Int?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  fromEntity InsightEntity @relation("InsightEntityRelationFrom", fields: [fromEntityId], references: [id], onDelete: Cascade)
+  toEntity   InsightEntity @relation("InsightEntityRelationTo", fields: [toEntityId], references: [id], onDelete: Cascade)
+
+  @@unique([fromEntityId, toEntityId, relationType])
+  @@index([fromEntityId, status])
+  @@index([toEntityId, status])
+  @@index([relationType, status])
+}
 
 model InsightEntityAccountLink {
   id        Int @id @default(autoincrement())
@@ -608,7 +662,7 @@ model InsightEntityAccountLink {
   // REJECTED = tillögu hefur verið hafnað.
   status String @default("PROPOSED")
 
-  source     String @default("SYSTEM")
+  source     String  @default("SYSTEM")
   confidence Float?
   note       String?
 
@@ -628,12 +682,12 @@ model InsightEntityAccountLink {
 }
 
 model FinancialEvent {
-  id        Int      @id @default(autoincrement())
+  id        Int @id @default(autoincrement())
   companyId Int
 
   // Dæmi: CHARGE, CREDIT, PAYMENT, SETTLEMENT, LOAN_INSTALLMENT, ANNUAL_ASSESSMENT.
   eventType String
-  status    String   @default("OPEN")
+  status    String    @default("OPEN")
   title     String?
   eventDate DateTime?
 
@@ -661,15 +715,15 @@ model FinancialEvent {
 }
 
 model DocumentFinancialEvent {
-  id          Int @id @default(autoincrement())
-  receiptId   Int
-  documentId  Int?
-  eventId     Int
+  id         Int  @id @default(autoincrement())
+  receiptId  Int
+  documentId Int?
+  eventId    Int
 
   // PRIMARY, PAYMENT, SETTLEMENT, SUPPORTING, CORRECTION o.fl.
   role       String
   confidence Float?
-  source     String @default("SYSTEM")
+  source     String   @default("SYSTEM")
   createdAt  DateTime @default(now())
 
   receipt  Receipt             @relation(fields: [receiptId], references: [id], onDelete: Cascade)
@@ -682,18 +736,18 @@ model DocumentFinancialEvent {
 }
 
 model DocumentEntityLink {
-  id         Int @id @default(autoincrement())
+  id         Int  @id @default(autoincrement())
   receiptId  Int
   documentId Int?
   entityId   Int
 
   // Dæmi: SUBJECT, ASSET, BORROWER, LENDER, POLICY_HOLDER, BENEFICIARY, PAYER.
-  role       String
-  confidence Float?
-  source     String @default("SYSTEM")
+  role        String
+  confidence  Float?
+  source      String    @default("SYSTEM")
   confirmedAt DateTime?
   confirmedBy Int?
-  createdAt  DateTime @default(now())
+  createdAt   DateTime  @default(now())
 
   receipt  Receipt             @relation(fields: [receiptId], references: [id], onDelete: Cascade)
   document AiDetectedDocument? @relation(fields: [documentId], references: [id], onDelete: Cascade)
@@ -705,10 +759,10 @@ model DocumentEntityLink {
 }
 
 model FinancialEventEntity {
-  id       Int @id @default(autoincrement())
-  eventId  Int
-  entityId Int
-  role     String
+  id        Int      @id @default(autoincrement())
+  eventId   Int
+  entityId  Int
+  role      String
   createdAt DateTime @default(now())
 
   event  FinancialEvent @relation(fields: [eventId], references: [id], onDelete: Cascade)
@@ -719,20 +773,20 @@ model FinancialEventEntity {
 }
 
 model InsightFact {
-  id        Int @id @default(autoincrement())
-  companyId Int
-  receiptId Int?
+  id         Int  @id @default(autoincrement())
+  companyId  Int
+  receiptId  Int?
   documentId Int?
-  entityId  Int?
-  eventId   Int?
+  entityId   Int?
+  eventId    Int?
 
   // Sveigjanlegar staðreyndir, t.d. DISTANCE_KM, UNIT_PRICE, USAGE_KWH, PREMIUM, DEDUCTIBLE.
   factType String
   label    String?
 
-  numberValue Decimal?
-  textValue   String?
-  dateValue   DateTime?
+  numberValue  Decimal?
+  textValue    String?
+  dateValue    DateTime?
   booleanValue Boolean?
   unit         String?
   currency     String?
@@ -740,9 +794,9 @@ model InsightFact {
   periodStart DateTime?
   periodEnd   DateTime?
   confidence  Float?
-  source      String @default("AI")
+  source      String    @default("AI")
   metadata    Json?
-  createdAt   DateTime @default(now())
+  createdAt   DateTime  @default(now())
 
   company  Company             @relation(fields: [companyId], references: [id], onDelete: Cascade)
   receipt  Receipt?            @relation(fields: [receiptId], references: [id], onDelete: Cascade)
@@ -786,22 +840,22 @@ model InsightProcessingJob {
 
   requestedById Int?
 
-  totalItems     Int @default(0)
-  pendingItems   Int @default(0)
+  totalItems      Int @default(0)
+  pendingItems    Int @default(0)
   processingItems Int @default(0)
-  completedItems Int @default(0)
-  failedItems    Int @default(0)
+  completedItems  Int @default(0)
+  failedItems     Int @default(0)
 
-  startedAt   DateTime?
-  completedAt DateTime?
+  startedAt    DateTime?
+  completedAt  DateTime?
   errorMessage String?
 
   metadata  Json?
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
-  company     Company @relation(fields: [companyId], references: [id], onDelete: Cascade)
-  requestedBy User?   @relation("InsightProcessingRequestedBy", fields: [requestedById], references: [id], onDelete: SetNull)
+  company     Company                 @relation(fields: [companyId], references: [id], onDelete: Cascade)
+  requestedBy User?                   @relation("InsightProcessingRequestedBy", fields: [requestedById], references: [id], onDelete: SetNull)
   items       InsightProcessingItem[]
 
   @@index([companyId, status])
@@ -882,8 +936,8 @@ model AuditEvent {
   // JSON texti varðveitir stöðu fyrir/eftir þegar þess þarf.
   // Við geymum ekki slíkt nema atburðurinn krefjist þess.
   beforeData Json?
-afterData  Json?
-metadata   Json?
+  afterData  Json?
+  metadata   Json?
 
   createdAt DateTime @default(now())
 
@@ -911,7 +965,7 @@ model CompanyActivity {
   isActive        Boolean @default(true)
 
   // Uppruni upplýsinganna
-  dataSource String?
+  dataSource    String?
   dataUpdatedAt DateTime?
 
   createdAt DateTime @default(now())
@@ -994,7 +1048,7 @@ model AccountingPattern {
 // AuditEvent er áfram almenni rekjanleikinn; þetta líkan geymir
 // sérstaklega sönnunargögn þess sem GLÖGGT hefur lært.
 model AccountingPatternEvidence {
-  id         Int @id @default(autoincrement())
+  id         Int  @id @default(autoincrement())
   patternId  Int
   receiptId  Int?
   documentId Int?
@@ -1021,4 +1075,3 @@ model AccountingPatternEvidence {
   @@index([documentId])
   @@index([userId])
 }
-

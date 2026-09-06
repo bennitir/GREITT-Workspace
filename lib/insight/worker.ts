@@ -249,6 +249,15 @@ async function persistInsightAnalysis(
 
       let entityLinkCount = 0;
 
+      const persistedEntities: Array<{
+        id: number;
+        entityType: string;
+        name: string;
+        identifierType: string | null;
+        identifierValue: string | null;
+        confidence: number;
+      }> = [];
+
       for (
         const detectedEntity
         of analysis.entities
@@ -280,6 +289,15 @@ async function persistInsightAnalysis(
               },
             },
           );
+
+        persistedEntities.push({
+          id: entity.id,
+          entityType: entity.entityType,
+          name: entity.name,
+          identifierType: entity.identifierType,
+          identifierValue: entity.identifierValue,
+          confidence: detectedEntity.confidence,
+        });
 
         /*
          * Ekki yfirskrifa eldri eða staðfest
@@ -317,6 +335,122 @@ async function persistInsightAnalysis(
           });
 
           entityLinkCount += 1;
+        }
+      }
+
+      /*
+       * VARFÆRIN ENTITY -> ENTITY TENGING
+       *
+       * Fyrsta deterministic reglan tengir tryggingarskírteini
+       * við ökutæki þegar skráningarnúmer ökutækisins kemur
+       * skýrt fram í heiti tryggingarskírteinisins.
+       *
+       * Við ályktum EKKI tengingu eingöngu af því að tvær
+       * einingar komi fyrir í sama skjali. AI má því ekki
+       * para saman tryggingu og bíl án sterks auðkennis.
+       *
+       * Tengingin er PROPOSED þar til notandi/bókari hefur
+       * staðfest hana.
+       */
+      let entityRelationCount = 0;
+
+      const normalizeRegistrationNumber = (value: string) =>
+        value
+          .toUpperCase()
+          .replace(/[^A-Z0-9]/g, "");
+
+      const vehicles = persistedEntities.filter(
+        (entity) =>
+          entity.entityType === "VEHICLE" &&
+          entity.identifierType === "REGISTRATION_NUMBER" &&
+          entity.identifierValue,
+      );
+
+      const insurancePolicies = persistedEntities.filter(
+        (entity) =>
+          entity.entityType === "INSURANCE_POLICY",
+      );
+
+      for (const policy of insurancePolicies) {
+        const normalizedPolicyName =
+          normalizeRegistrationNumber(policy.name);
+
+        for (const vehicle of vehicles) {
+          const registrationNumber =
+            normalizeRegistrationNumber(
+              vehicle.identifierValue ?? "",
+            );
+
+          if (
+            !registrationNumber ||
+            !normalizedPolicyName.includes(registrationNumber)
+          ) {
+            continue;
+          }
+
+          const confidence = Math.min(
+            policy.confidence,
+            vehicle.confidence,
+          );
+
+          const relationMetadata = {
+            processingVersion,
+            processingItemId: itemId,
+            matchMethod:
+              "POLICY_NAME_CONTAINS_REGISTRATION_NUMBER",
+            registrationNumber:
+              vehicle.identifierValue,
+          };
+
+          const existingRelation =
+            await tx.insightEntityRelation.findUnique({
+              where: {
+                fromEntityId_toEntityId_relationType: {
+                  fromEntityId: policy.id,
+                  toEntityId: vehicle.id,
+                  relationType: "INSURES",
+                },
+              },
+            });
+
+          if (!existingRelation) {
+            await tx.insightEntityRelation.create({
+              data: {
+                fromEntityId: policy.id,
+                toEntityId: vehicle.id,
+                relationType: "INSURES",
+                status: "PROPOSED",
+                source,
+                confidence,
+                metadata: relationMetadata,
+              },
+            });
+
+            entityRelationCount += 1;
+            continue;
+          }
+
+          /*
+           * AI má aðeins endurnýja eigin óstaðfesta
+           * tillögu. CONFIRMED, REJECTED og tengingar
+           * frá öðrum source eru varðveittar óbreyttar.
+           */
+          if (
+            existingRelation.status === "PROPOSED" &&
+            existingRelation.source === source
+          ) {
+            await tx.insightEntityRelation.update({
+              where: {
+                id: existingRelation.id,
+              },
+              data: {
+                confidence,
+                metadata: relationMetadata,
+              },
+            });
+
+            entityRelationCount += 1;
+          }
         }
       }
 
@@ -453,6 +587,9 @@ async function persistInsightAnalysis(
             insightFacts:
               factCount,
 
+            entityRelations:
+              entityRelationCount,
+
             hasFinancialEventCandidate:
               analysis.financialEventCandidate !==
               null,
@@ -462,6 +599,7 @@ async function persistInsightAnalysis(
 
       return {
         entityLinkCount,
+        entityRelationCount,
         factCount,
       };
     },
@@ -764,6 +902,9 @@ export async function processNextInsightItem(
           persisted: {
             entityLinks:
               persisted.entityLinkCount,
+
+            entityRelations:
+              persisted.entityRelationCount,
 
             facts:
               persisted.factCount,
