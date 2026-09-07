@@ -20,6 +20,7 @@ import DetectedDocumentEntriesEditor from "@/components/DetectedDocumentEntriesE
 
 import { prisma } from "@/lib/prisma";
 import Link from "next/link";
+import InsightJobAutoRefresh from "@/components/InsightJobAutoRefresh";
 import {
   formatDate,
   formatNumber,
@@ -533,11 +534,17 @@ const getNextUnresolvedDocument = (currentDocumentId: number) =>
                         const displayedInsightItem =
                           latestCompletedInsightItem ?? latestInsightItem;
 
+                        const shouldAutoRefreshInsight =
+                          latestAttemptPending || latestAttemptProcessing;
                         return (
-                          <div
-                            className={`mt-4 rounded border p-4 ${statusClass}`}
-                          >
-                            <div className="flex flex-wrap items-center justify-between gap-3">
+                        <div
+                          className={`mt-4 rounded border p-4 ${statusClass}`}
+                        >
+                         {shouldAutoRefreshInsight && latestInsightItem && (
+                          <InsightJobAutoRefresh jobId={latestInsightItem.job.id} />
+                           )}
+
+                         <div className="flex flex-wrap items-center justify-between gap-3">
                               <div>
                                 <div className="font-semibold">
                                   Innsýn
