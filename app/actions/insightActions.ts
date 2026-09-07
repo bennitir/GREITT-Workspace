@@ -7,6 +7,8 @@ import {
   getEffectiveUser,
 } from "@/lib/core/access-control";
 import { extractPersonKennitolur } from "@/lib/core/kennitala";
+import { extractTextFromPdfBuffer } from "@/lib/core/pdf-text";
+import { supabaseAdmin } from "@/lib/supabase";
 import { createInsightProcessingJob } from "@/lib/insight/processing-service";
 
 const INSIGHT_PROCESSING_VERSION = "innsyn-v1";
@@ -15,9 +17,109 @@ type CreateInsightJobOptions = {
   allowMultiplePersons?: boolean;
 };
 
+type PrivacyPreflightResult = {
+  text: string;
+  source:
+    | "PDF_SOURCE_TEXT"
+    | "OCR_TEXT_FALLBACK";
+};
+
+function isPdfDocument(input: {
+  fileName: string | null;
+  filePath: string | null;
+  storagePath: string | null;
+}) {
+  const candidates = [
+    input.fileName,
+    input.storagePath,
+    input.filePath,
+  ];
+
+  return candidates.some(
+    (value) =>
+      typeof value === "string" &&
+      value.toLowerCase().endsWith(".pdf"),
+  );
+}
+
+async function getPrivacyPreflightText(input: {
+  fileName: string | null;
+  filePath: string | null;
+  storagePath: string | null;
+  ocrText: string | null;
+}): Promise<PrivacyPreflightResult> {
+  /*
+   * PDF:
+   * Lesum frumskjalið sjálft staðbundið á GLÖGGT-servernum.
+   *
+   * Skjalið er ekki sent til AI við þessa athugun.
+   */
+  if (isPdfDocument(input)) {
+    if (!input.storagePath) {
+      throw new Error(
+        "Ekki tókst að framkvæma persónuverndarathugun Innsýnar því PDF-frumskjalið fannst ekki í varanlegri skjalageymslu.",
+      );
+    }
+
+    const { data, error } = await supabaseAdmin.storage
+      .from("fylgiskjol")
+      .download(input.storagePath);
+
+    if (error || !data) {
+      throw new Error(
+        "Ekki tókst að lesa PDF-frumskjalið fyrir persónuverndarathugun Innsýnar.",
+      );
+    }
+
+    const arrayBuffer = await data.arrayBuffer();
+    const pdfBuffer = new Uint8Array(arrayBuffer);
+
+    let text: string;
+
+    try {
+      text = await extractTextFromPdfBuffer(pdfBuffer);
+    } catch (error) {
+      console.error(
+        "Villa við PDF-textalestur fyrir Innsýn-preflight:",
+        error,
+      );
+
+      throw new Error(
+        "Ekki tókst að lesa textalag PDF-skjalsins fyrir persónuverndarathugun Innsýnar.",
+      );
+    }
+
+    if (!text.trim()) {
+      throw new Error(
+        "PDF-skjalið inniheldur ekkert læsilegt textalag. Innsýn verður ekki keyrð fyrr en hægt er að framkvæma örugga persónuverndarathugun á frumskjalinu.",
+      );
+    }
+
+    return {
+      text,
+      source: "PDF_SOURCE_TEXT",
+    };
+  }
+
+  /*
+   * Tímabundið fallback fyrir aðrar skráartegundir.
+   *
+   * PDF er nú lesið úr frumskjalinu sjálfu.
+   * Excel, Word, CSV, myndir o.fl. fá síðar eigin staðbundna
+   * source-parsera í sama preflight-lagi.
+   *
+   * Þetta fallback er því ekki fullkomin persónuverndarvörn
+   * fyrir allar skráartegundir.
+   */
+  return {
+    text: input.ocrText ?? "",
+    source: "OCR_TEXT_FALLBACK",
+  };
+}
+
 export async function createInsightJobForDocument(
   documentId: number,
-  options: CreateInsightJobOptions = {}
+  options: CreateInsightJobOptions = {},
 ) {
   if (!Number.isInteger(documentId) || documentId <= 0) {
     throw new Error("Ógilt skjalanúmer.");
@@ -42,6 +144,7 @@ export async function createInsightJobForDocument(
         select: {
           id: true,
           companyId: true,
+          fileName: true,
           filePath: true,
           storagePath: true,
           ocrText: true,
@@ -52,13 +155,16 @@ export async function createInsightJobForDocument(
 
   if (!document) {
     throw new Error(
-      "Skjalið fannst ekki eða þú hefur ekki aðgang að því."
+      "Skjalið fannst ekki eða þú hefur ekki aðgang að því.",
     );
   }
 
-  if (!document.receipt.storagePath && !document.receipt.filePath) {
+  if (
+    !document.receipt.storagePath &&
+    !document.receipt.filePath
+  ) {
     throw new Error(
-      "Frumskjal vantar og því er ekki hægt að keyra Innsýn."
+      "Frumskjal vantar og því er ekki hægt að keyra Innsýn.",
     );
   }
 
@@ -69,15 +175,23 @@ export async function createInsightJobForDocument(
    * Það breytir hvorki bókun, launum, Verk, VSK né annarri
    * skráningu GLÖGGT.
    *
-   * Við notum OCR-texta sem þegar er til áður en Innsýn-jobbið
-   * er stofnað. Innsýn fær því ekki skjalið fyrr en notandi hefur
-   * tekið afstöðu ef fleiri en ein persónukennitala finnst.
+   * Fyrir PDF er frumskjalið lesið staðbundið áður en
+   * Innsýn-jobb er stofnað.
    */
+  const privacyPreflight =
+    await getPrivacyPreflightText({
+      fileName: document.receipt.fileName,
+      filePath: document.receipt.filePath,
+      storagePath: document.receipt.storagePath,
+      ocrText: document.receipt.ocrText,
+    });
+
   const personKennitolur = extractPersonKennitolur(
-    document.receipt.ocrText ?? ""
+    privacyPreflight.text,
   );
 
-  const requiresPrivacyConfirmation = personKennitolur.length > 1;
+  const requiresPrivacyConfirmation =
+    personKennitolur.length > 1;
 
   if (
     requiresPrivacyConfirmation &&
@@ -95,26 +209,27 @@ export async function createInsightJobForDocument(
     };
   }
 
-  const existingItem = await prisma.insightProcessingItem.findFirst({
-    where: {
-      documentId: document.id,
-      processingVersion: INSIGHT_PROCESSING_VERSION,
-      status: {
-        in: ["PENDING", "PROCESSING"],
+  const existingItem =
+    await prisma.insightProcessingItem.findFirst({
+      where: {
+        documentId: document.id,
+        processingVersion: INSIGHT_PROCESSING_VERSION,
+        status: {
+          in: ["PENDING", "PROCESSING"],
+        },
+        job: {
+          companyId,
+        },
       },
-      job: {
-        companyId,
+      select: {
+        id: true,
+        jobId: true,
+        status: true,
       },
-    },
-    select: {
-      id: true,
-      jobId: true,
-      status: true,
-    },
-    orderBy: {
-      createdAt: "desc",
-    },
-  });
+      orderBy: {
+        createdAt: "desc",
+      },
+    });
 
   if (existingItem) {
     return {
@@ -132,12 +247,10 @@ export async function createInsightJobForDocument(
 
   /*
    * Ef fleiri en ein persónukennitala fannst og notandi hefur
-   * sérstaklega heimilað áframhaldandi Innsýn-vinnslu, varðveitum
-   * við ákvörðunina í sameiginlegum rekjanleika GLÖGGT.
+   * sérstaklega heimilað áframhaldandi Innsýn-vinnslu,
+   * varðveitum við ákvörðunina í rekjanleika GLÖGGT.
    *
    * Kennitölurnar sjálfar eru ekki settar í AuditEvent.
-   * Við varðveitum aðeins fjölda og þá staðreynd að notandi
-   * samþykkti áframhaldandi vinnslu.
    */
   if (
     requiresPrivacyConfirmation &&
@@ -157,7 +270,10 @@ export async function createInsightJobForDocument(
           "Notandi samþykkti Innsýn-vinnslu skjals sem inniheldur fleiri en eina persónukennitölu.",
         metadata: {
           personCount: personKennitolur.length,
-          processingVersion: INSIGHT_PROCESSING_VERSION,
+          processingVersion:
+            INSIGHT_PROCESSING_VERSION,
+          preflightSource:
+            privacyPreflight.source,
         },
       },
     });
@@ -181,8 +297,10 @@ export async function createInsightJobForDocument(
       documentRole: document.documentRole,
       disposition: document.disposition,
       privacyPreflight: {
+        source: privacyPreflight.source,
         personCount: personKennitolur.length,
-        multiplePersonsDetected: requiresPrivacyConfirmation,
+        multiplePersonsDetected:
+          requiresPrivacyConfirmation,
         userConfirmedMultiplePersons:
           requiresPrivacyConfirmation &&
           options.allowMultiplePersons === true,
@@ -192,7 +310,9 @@ export async function createInsightJobForDocument(
 
   revalidatePath("/fylgiskjol");
   revalidatePath("/fylgiskjol/skjalasafn");
-  revalidatePath(`/fylgiskjol/${document.receiptId}`);
+  revalidatePath(
+    `/fylgiskjol/${document.receiptId}`,
+  );
 
   return {
     created: true,
@@ -201,7 +321,8 @@ export async function createInsightJobForDocument(
     jobId: job.id,
     itemId: job.items[0]?.id ?? null,
     status: job.status,
-    message: "Skjalið hefur verið sett í Innsýn-vinnslu.",
+    message:
+      "Skjalið hefur verið sett í Innsýn-vinnslu.",
   };
 }
 
@@ -210,49 +331,51 @@ export async function getInsightJobStatus(jobId: number) {
     throw new Error("Ógilt vinnslunúmer.");
   }
 
-  const companyId = await requireActiveCompanyWriteAccess();
+  const companyId =
+    await requireActiveCompanyWriteAccess();
 
-  const job = await prisma.insightProcessingJob.findFirst({
-    where: {
-      id: jobId,
-      companyId,
-    },
-    select: {
-      id: true,
-      jobType: true,
-      status: true,
-      processingVersion: true,
-      totalItems: true,
-      pendingItems: true,
-      processingItems: true,
-      completedItems: true,
-      failedItems: true,
-      startedAt: true,
-      completedAt: true,
-      errorMessage: true,
-      createdAt: true,
-      updatedAt: true,
-      items: {
-        orderBy: {
-          id: "asc",
-        },
-        select: {
-          id: true,
-          receiptId: true,
-          documentId: true,
-          status: true,
-          attemptCount: true,
-          startedAt: true,
-          completedAt: true,
-          errorMessage: true,
+  const job =
+    await prisma.insightProcessingJob.findFirst({
+      where: {
+        id: jobId,
+        companyId,
+      },
+      select: {
+        id: true,
+        jobType: true,
+        status: true,
+        processingVersion: true,
+        totalItems: true,
+        pendingItems: true,
+        processingItems: true,
+        completedItems: true,
+        failedItems: true,
+        startedAt: true,
+        completedAt: true,
+        errorMessage: true,
+        createdAt: true,
+        updatedAt: true,
+        items: {
+          orderBy: {
+            id: "asc",
+          },
+          select: {
+            id: true,
+            receiptId: true,
+            documentId: true,
+            status: true,
+            attemptCount: true,
+            startedAt: true,
+            completedAt: true,
+            errorMessage: true,
+          },
         },
       },
-    },
-  });
+    });
 
   if (!job) {
     throw new Error(
-      "Innsýn-vinnslan fannst ekki eða þú hefur ekki aðgang að henni."
+      "Innsýn-vinnslan fannst ekki eða þú hefur ekki aðgang að henni.",
     );
   }
 
