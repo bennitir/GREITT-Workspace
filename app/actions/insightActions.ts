@@ -6,11 +6,19 @@ import {
   requireActiveCompanyWriteAccess,
   getEffectiveUser,
 } from "@/lib/core/access-control";
+import { extractPersonKennitolur } from "@/lib/core/kennitala";
 import { createInsightProcessingJob } from "@/lib/insight/processing-service";
 
 const INSIGHT_PROCESSING_VERSION = "innsyn-v1";
 
-export async function createInsightJobForDocument(documentId: number) {
+type CreateInsightJobOptions = {
+  allowMultiplePersons?: boolean;
+};
+
+export async function createInsightJobForDocument(
+  documentId: number,
+  options: CreateInsightJobOptions = {}
+) {
   if (!Number.isInteger(documentId) || documentId <= 0) {
     throw new Error("Ógilt skjalanúmer.");
   }
@@ -35,6 +43,8 @@ export async function createInsightJobForDocument(documentId: number) {
           id: true,
           companyId: true,
           filePath: true,
+          storagePath: true,
+          ocrText: true,
         },
       },
     },
@@ -46,8 +56,43 @@ export async function createInsightJobForDocument(documentId: number) {
     );
   }
 
-  if (!document.receipt.filePath) {
-    throw new Error("Frumskjal vantar og því er ekki hægt að keyra Innsýn.");
+  if (!document.receipt.storagePath && !document.receipt.filePath) {
+    throw new Error(
+      "Frumskjal vantar og því er ekki hægt að keyra Innsýn."
+    );
+  }
+
+  /*
+   * Persónuverndar-preflight fyrir Innsýn.
+   *
+   * Þetta hefur eingöngu áhrif á Innsýn-vinnslu skjalsins.
+   * Það breytir hvorki bókun, launum, Verk, VSK né annarri
+   * skráningu GLÖGGT.
+   *
+   * Við notum OCR-texta sem þegar er til áður en Innsýn-jobbið
+   * er stofnað. Innsýn fær því ekki skjalið fyrr en notandi hefur
+   * tekið afstöðu ef fleiri en ein persónukennitala finnst.
+   */
+  const personKennitolur = extractPersonKennitolur(
+    document.receipt.ocrText ?? ""
+  );
+
+  const requiresPrivacyConfirmation = personKennitolur.length > 1;
+
+  if (
+    requiresPrivacyConfirmation &&
+    options.allowMultiplePersons !== true
+  ) {
+    return {
+      created: false,
+      requiresPrivacyConfirmation: true,
+      personCount: personKennitolur.length,
+      jobId: null,
+      itemId: null,
+      status: "PRIVACY_CONFIRMATION_REQUIRED",
+      message:
+        "Skjalið virðist innihalda upplýsingar um fleiri en einn einstakling.",
+    };
   }
 
   const existingItem = await prisma.insightProcessingItem.findFirst({
@@ -74,6 +119,8 @@ export async function createInsightJobForDocument(documentId: number) {
   if (existingItem) {
     return {
       created: false,
+      requiresPrivacyConfirmation: false,
+      personCount: personKennitolur.length,
       jobId: existingItem.jobId,
       itemId: existingItem.id,
       status: existingItem.status,
@@ -82,6 +129,39 @@ export async function createInsightJobForDocument(documentId: number) {
   }
 
   const effectiveUser = await getEffectiveUser();
+
+  /*
+   * Ef fleiri en ein persónukennitala fannst og notandi hefur
+   * sérstaklega heimilað áframhaldandi Innsýn-vinnslu, varðveitum
+   * við ákvörðunina í sameiginlegum rekjanleika GLÖGGT.
+   *
+   * Kennitölurnar sjálfar eru ekki settar í AuditEvent.
+   * Við varðveitum aðeins fjölda og þá staðreynd að notandi
+   * samþykkti áframhaldandi vinnslu.
+   */
+  if (
+    requiresPrivacyConfirmation &&
+    options.allowMultiplePersons === true
+  ) {
+    await prisma.auditEvent.create({
+      data: {
+        companyId,
+        userId: effectiveUser?.id ?? null,
+        entityType: "AI_DETECTED_DOCUMENT",
+        entityId: document.id,
+        parentEntityType: "RECEIPT",
+        parentEntityId: document.receiptId,
+        action: "INSIGHT_PRIVACY_CONFIRMATION",
+        source: "USER",
+        description:
+          "Notandi samþykkti Innsýn-vinnslu skjals sem inniheldur fleiri en eina persónukennitölu.",
+        metadata: {
+          personCount: personKennitolur.length,
+          processingVersion: INSIGHT_PROCESSING_VERSION,
+        },
+      },
+    });
+  }
 
   const job = await createInsightProcessingJob({
     companyId,
@@ -100,6 +180,13 @@ export async function createInsightJobForDocument(documentId: number) {
       documentType: document.documentType,
       documentRole: document.documentRole,
       disposition: document.disposition,
+      privacyPreflight: {
+        personCount: personKennitolur.length,
+        multiplePersonsDetected: requiresPrivacyConfirmation,
+        userConfirmedMultiplePersons:
+          requiresPrivacyConfirmation &&
+          options.allowMultiplePersons === true,
+      },
     },
   });
 
@@ -109,6 +196,8 @@ export async function createInsightJobForDocument(documentId: number) {
 
   return {
     created: true,
+    requiresPrivacyConfirmation: false,
+    personCount: personKennitolur.length,
     jobId: job.id,
     itemId: job.items[0]?.id ?? null,
     status: job.status,

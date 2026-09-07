@@ -34,7 +34,7 @@ export default async function ReceiptPage({
   searchParams,
 }: {
   params: Promise<{ id: string }>;
-  searchParams: Promise<{ document?: string }>;
+  searchParams: Promise<{ document?: string; insightPrivacy?: string }>;
 }) {
     const cookieStore = await cookies();
   const activeUserId = cookieStore.get("activeUserId")?.value;
@@ -79,7 +79,10 @@ const canEdit = companyAccess.canWrite ?? false;
 
     const { id } = await params;
   
-  const { document: documentParam } = await searchParams;
+  const {
+    document: documentParam,
+    insightPrivacy: insightPrivacyParam,
+  } = await searchParams;
 
   const selectedDocumentId = documentParam
     ? Number(documentParam)
@@ -575,14 +578,77 @@ const getNextUnresolvedDocument = (currentDocumentId: number) =>
 
                               {canEdit &&
                                 (!latestInsightItem ||
-                                  latestAttemptFailed) && (
+                                  latestAttemptFailed) &&
+                                insightPrivacyParam ===
+                                  String(document.id) && (
+                                  <div className="w-full max-w-xl rounded border border-amber-300 bg-amber-50 p-4 text-amber-950">
+                                    <div className="font-semibold">
+                                      Persónuupplýsingar fleiri aðila fundust
+                                    </div>
+
+                                    <p className="mt-2 text-sm">
+                                      Þetta skjal virðist innihalda upplýsingar
+                                      um fleiri en einn einstakling. Viltu halda
+                                      áfram og leyfa Innsýn að vinna úr öllu
+                                      skjalinu?
+                                    </p>
+
+                                    <div className="mt-4 flex flex-wrap gap-2">
+                                      <Link
+                                        href={`/fylgiskjol/${receipt.id}?document=${document.id}`}
+                                        className="rounded border border-slate-300 bg-white px-4 py-2 font-semibold text-slate-800 hover:bg-slate-50"
+                                      >
+                                        Hætta við
+                                      </Link>
+
+                                      <form
+                                        action={async () => {
+                                          "use server";
+
+                                          await createInsightJobForDocument(
+                                            document.id,
+                                            {
+                                              allowMultiplePersons: true,
+                                            },
+                                          );
+
+                                          redirect(
+                                            `/fylgiskjol/${receipt.id}?document=${document.id}`,
+                                          );
+                                        }}
+                                      >
+                                        <button
+                                          type="submit"
+                                          className="rounded bg-indigo-700 px-4 py-2 font-semibold text-white hover:bg-indigo-800"
+                                        >
+                                          Halda áfram með allt skjalið
+                                        </button>
+                                      </form>
+                                    </div>
+                                  </div>
+                                )}
+
+                              {canEdit &&
+                                (!latestInsightItem ||
+                                  latestAttemptFailed) &&
+                                insightPrivacyParam !==
+                                  String(document.id) && (
                                   <form
                                     action={async () => {
                                       "use server";
 
-                                      await createInsightJobForDocument(
-                                        document.id,
-                                      );
+                                      const result =
+                                        await createInsightJobForDocument(
+                                          document.id,
+                                        );
+
+                                      if (
+                                        result.requiresPrivacyConfirmation
+                                      ) {
+                                        redirect(
+                                          `/fylgiskjol/${receipt.id}?document=${document.id}&insightPrivacy=${document.id}`,
+                                        );
+                                      }
 
                                       redirect(
                                         `/fylgiskjol/${receipt.id}?document=${document.id}`,
