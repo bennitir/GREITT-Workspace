@@ -1,6 +1,7 @@
 "use server";
 
 import { revalidatePath } from "next/cache";
+import { after } from "next/server";
 import { prisma } from "@/lib/prisma";
 import {
   requireActiveCompanyWriteAccess,
@@ -10,6 +11,7 @@ import { extractPersonKennitolur } from "@/lib/core/kennitala";
 import { extractTextFromPdfBuffer } from "@/lib/core/pdf-text";
 import { supabaseAdmin } from "@/lib/supabase";
 import { createInsightProcessingJob } from "@/lib/insight/processing-service";
+import { runInsightWorker } from "@/lib/insight/worker";
 
 const INSIGHT_PROCESSING_VERSION = "innsyn-v1";
 
@@ -306,6 +308,31 @@ export async function createInsightJobForDocument(
           options.allowMultiplePersons === true,
       },
     },
+  });
+
+  /*
+   * Ræsum nákvæmlega þetta Innsýn-jobb eftir að Server Action
+   * hefur lokið svari sínu.
+   *
+   * Jobbið sjálft er þegar varanlega skráð í gagnagrunninum.
+   * Þannig er biðröðin áfram sannleikurinn og hægt er að
+   * endurheimta vinnslu þótt þessi bakgrunnsræsing mistakist.
+   *
+   * maxItems: 1 passar við DOCUMENT_INSIGHT-jobb sem stofnað er
+   * hér með einu skjali.
+   */
+  after(async () => {
+    try {
+      await runInsightWorker({
+        jobId: job.id,
+        maxItems: 1,
+      });
+    } catch (error) {
+      console.error(
+        `Sjálfvirk Innsýn-vinnsla mistókst fyrir job ${job.id}:`,
+        error,
+      );
+    }
   });
 
   revalidatePath("/fylgiskjol");

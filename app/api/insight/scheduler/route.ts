@@ -4,10 +4,10 @@ import { runInsightWorker } from "@/lib/insight/worker";
 export const maxDuration = 300;
 
 function isAuthorized(request: NextRequest) {
-  const expectedSecret = process.env.INSIGHT_WORKER_SECRET;
+  const expectedSecret = process.env.CRON_SECRET;
 
   if (!expectedSecret) {
-    throw new Error("INSIGHT_WORKER_SECRET vantar.");
+    throw new Error("CRON_SECRET vantar.");
   }
 
   const authHeader = request.headers.get("authorization");
