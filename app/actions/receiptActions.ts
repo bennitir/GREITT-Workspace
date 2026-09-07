@@ -9,12 +9,12 @@ import { cookies } from "next/headers";
 import { createReadStream } from "fs";
 import OpenAI from "openai";
 import {
-  mkdir,
   writeFile,
   readFile,
-  rename,
+  unlink,
 } from "fs/promises";
 import path from "path";
+import os from "os";
 import crypto from "crypto";
 import { prisma } from "@/lib/prisma";
 import { supabaseAdmin } from "@/lib/supabase";
@@ -24,44 +24,66 @@ async function saveReceiptFile(file: File, companyId: number) {
   const bytes = await file.arrayBuffer();
   const buffer = Buffer.from(bytes);
   const safeFileName = file.name
-  .replace(/ð/gi, "d")
-  .replace(/þ/gi, "th")
-  .replace(/æ/gi, "ae")
-  .normalize("NFD")
-  .replace(/[\u0300-\u036f]/g, "")
-  .replace(/[^a-zA-Z0-9._-]/g, "_");
+    .replace(/ð/gi, "d")
+    .replace(/þ/gi, "th")
+    .replace(/æ/gi, "ae")
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .replace(/[^a-zA-Z0-9._-]/g, "_");
 
-const storagePath = `${companyId}/${Date.now()}-${safeFileName}`;
+  const timestamp = Date.now();
+  const storagePath = `${companyId}/${timestamp}-${safeFileName}`;
+
   const { error } = await supabaseAdmin.storage
-  .from("fylgiskjol")
-  .upload(storagePath, buffer, {
-    contentType: file.type || "application/octet-stream",
-    upsert: false,
-  });
+    .from("fylgiskjol")
+    .upload(storagePath, buffer, {
+      contentType: file.type || "application/octet-stream",
+      upsert: false,
+    });
 
-if (error) {
-  throw new Error(`Mistókst að vista fylgiskjal í Supabase: ${error.message}`);
-}
+  if (error) {
+    throw new Error(`Mistókst að vista fylgiskjal í Supabase: ${error.message}`);
+  }
 
-  const uploadDir = path.join(
-    process.cwd(),
-    "public",
-    "uploads"
-  );
-
-  await mkdir(uploadDir, { recursive: true });
-
-  const fileName = `${Date.now()}-${file.name}`;
-  const filePath = path.join(uploadDir, fileName);
-
-  await writeFile(filePath, buffer);
+  // Supabase Storage is the durable source of truth. filePath is retained as
+  // a compatibility/display path for older UI code; production must not rely
+  // on a writable public/uploads directory.
+  const fileName = `${timestamp}-${file.name}`;
 
   return {
-  fileName,
-  filePath: `/uploads/${fileName}`,
-  storagePath,
-};
+    fileName,
+    filePath: `/uploads/${fileName}`,
+    storagePath,
+  };
 }
+
+async function downloadReceiptBuffer(receipt: {
+  storagePath?: string | null;
+  filePath?: string | null;
+}) {
+  if (receipt.storagePath) {
+    const { data, error } = await supabaseAdmin.storage
+      .from("fylgiskjol")
+      .download(receipt.storagePath);
+
+    if (error || !data) {
+      throw new Error(
+        `Mistókst að sækja frumskjal úr Supabase: ${error?.message ?? "skrá fannst ekki"}`
+      );
+    }
+
+    return Buffer.from(await data.arrayBuffer());
+  }
+
+  // Legacy fallback for older local-only receipts.
+  if (receipt.filePath) {
+    const fullPath = path.join(process.cwd(), "public", receipt.filePath);
+    return readFile(fullPath);
+  }
+
+  throw new Error("Ekkert stafrænt frumskjal er tengt þessu fylgiskjali.");
+}
+
 async function backfillMissingReceiptHashes() {
   const receipts = await prisma.receipt.findMany({
     where: {
@@ -70,23 +92,13 @@ async function backfillMissingReceiptHashes() {
     select: {
       id: true,
       filePath: true,
+      storagePath: true,
     },
   });
 
   for (const receipt of receipts) {
-  if (!receipt.filePath) {
-    continue;
-  }
-
-  try {
-      const fullPath = path.join(
-        process.cwd(),
-        "public",
-        receipt.filePath
-      );
-
-      const buffer = await readFile(fullPath);
-
+    try {
+      const buffer = await downloadReceiptBuffer(receipt);
       const fileHash = crypto
         .createHash("sha256")
         .update(buffer)
@@ -109,11 +121,7 @@ async function backfillMissingReceiptHashes() {
   }
 }
 
-
-
-async function archiveReceiptFile(
-  receiptId: number
-) {
+async function archiveReceiptFile(receiptId: number) {
   const receipt = await prisma.receipt.findUnique({
     where: {
       id: receiptId,
@@ -128,110 +136,86 @@ async function archiveReceiptFile(
   }
 
   if (
-  receipt.aiDetectedDocuments.length === 0 &&
-  receipt.voucherNumber === null
-) {
-  return;
-}
+    receipt.aiDetectedDocuments.length === 0 &&
+    receipt.voucherNumber === null
+  ) {
+    return;
+  }
+
   const isManualReceipt =
-  receipt.aiDetectedDocuments.length === 0 &&
-  receipt.voucherNumber !== null;
+    receipt.aiDetectedDocuments.length === 0 &&
+    receipt.voucherNumber !== null;
 
-const allApproved = isManualReceipt
-  ? receipt.status === "APPROVED"
-  : receipt.aiDetectedDocuments.every(
-      (document) =>
-        document.approvedAt !== null &&
-        document.voucherNumber !== null
-    );
+  const allApproved = isManualReceipt
+    ? receipt.status === "APPROVED"
+    : receipt.aiDetectedDocuments.every(
+        (document) =>
+          document.approvedAt !== null &&
+          document.voucherNumber !== null
+      );
 
-if (!allApproved) {
-  return;
-}
+  if (!allApproved) {
+    return;
+  }
 
   const voucherNumbers = isManualReceipt
-  ? [receipt.voucherNumber]
-  : receipt.aiDetectedDocuments
-      .map((document) => document.voucherNumber)
-      .filter(
-        (number): number is number =>
-          number !== null
-      )
-      .sort((a, b) => a - b);
+    ? [receipt.voucherNumber]
+    : receipt.aiDetectedDocuments
+        .map((document) => document.voucherNumber)
+        .filter((number): number is number => number !== null)
+        .sort((a, b) => a - b);
 
   const firstVoucherNumber = voucherNumbers[0];
-  const lastVoucherNumber =
-    voucherNumbers[voucherNumbers.length - 1];
+  const lastVoucherNumber = voucherNumbers[voucherNumbers.length - 1];
 
   const voucherFolderName =
     firstVoucherNumber === lastVoucherNumber
       ? String(firstVoucherNumber)
       : `${firstVoucherNumber}-${lastVoucherNumber}`;
 
-  const documentDate =
-    receipt.aiDetectedDocuments[0]?.date ??
-    receipt.date;
+  const documentDate = receipt.aiDetectedDocuments[0]?.date ?? receipt.date;
 
-    if (!documentDate) {
-  return;
-}
+  if (!documentDate || !receipt.fileName) {
+    return;
+  }
 
-  const year = String(
-    documentDate.getFullYear()
-  );
-
-  const month = String(
-    documentDate.getMonth() + 1
-  ).padStart(2, "0");
-
-  const archiveDir = path.join(
-    process.cwd(),
-    "public",
-    "uploads",
-    "fylgiskjol",
-    year,
-    month,
-    voucherFolderName
-  );
-
-  await mkdir(archiveDir, {
-    recursive: true,
-  });
-
-  if (!receipt.filePath || !receipt.fileName) {
-  return;
-}
-  const oldFullPath = path.join(
-    process.cwd(),
-    "public",
-    receipt.filePath
-  );
-
-  const archivedFileName =
-  `${voucherFolderName}-${receipt.fileName}`;
-
-  const newFullPath = path.join(
-  archiveDir,
-  archivedFileName
-);
-
+  const year = String(documentDate.getFullYear());
+  const month = String(documentDate.getMonth() + 1).padStart(2, "0");
+  const archivedFileName = `${voucherFolderName}-${receipt.fileName}`;
   const newPublicPath =
     `/uploads/fylgiskjol/${year}/${month}/${voucherFolderName}/${archivedFileName}`;
 
+  if (receipt.storagePath) {
+    const newStoragePath =
+      `${receipt.companyId}/fylgiskjol/${year}/${month}/${voucherFolderName}/${archivedFileName}`;
+
+    if (receipt.storagePath !== newStoragePath) {
+      const { error } = await supabaseAdmin.storage
+        .from("fylgiskjol")
+        .move(receipt.storagePath, newStoragePath);
+
+      if (error) {
+        throw new Error(`Mistókst að færa fylgiskjal í skjalasafn: ${error.message}`);
+      }
+    }
+
+    await prisma.receipt.update({
+      where: { id: receipt.id },
+      data: {
+        filePath: newPublicPath,
+        storagePath: newStoragePath,
+      },
+    });
+    return;
+  }
+
+  // Legacy local-only receipts are left in place in production. They can be
+  // migrated to Supabase separately instead of relying on a writable bundle.
   if (receipt.filePath === newPublicPath) {
     return;
+  }
 }
-    await rename(oldFullPath, newFullPath);
 
-await prisma.receipt.update({
-  where: {
-    id: receipt.id,
-  },
-  data: {
-    filePath: newPublicPath,
-  },
-});
-}
 export async function createReceipt(formData: FormData) {
   await requireActiveCompanyWriteAccess();
   const file = formData.get("file") as File;
@@ -616,33 +600,19 @@ export async function analyzeReceiptWithAI(receiptId: number) {
           `${account.number} – ${account.name} [${account.type}]`
       )
       .join("\n");
-      if (!receipt.filePath) {
-  throw new Error("Ekkert stafrænt frumskjal er tengt þessu fylgiskjali.");
-}
+  if (!receipt.storagePath && !receipt.filePath) {
+    throw new Error("Ekkert stafrænt frumskjal er tengt þessu fylgiskjali.");
+  }
 
-  const fullPath = path.join(
-    process.cwd(),
-    "public",
-    receipt.filePath
-  );
-
-  const extension = path
-    .extname(fullPath)
-    .toLowerCase();
-
-  const isImage = [
-    ".jpg",
-    ".jpeg",
-    ".png",
-    ".webp",
-  ].includes(extension);
+  const sourceName = receipt.fileName ?? receipt.storagePath ?? receipt.filePath ?? "fylgiskjal";
+  const extension = path.extname(sourceName).toLowerCase();
+  const isImage = [".jpg", ".jpeg", ".png", ".webp"].includes(extension);
+  const sourceBuffer = await downloadReceiptBuffer(receipt);
 
   let uploadedFileId: string | null = null;
   let imageDataUrl: string | null = null;
 
   if (isImage) {
-    const imageBuffer = await readFile(fullPath);
-
     const mimeType =
       extension === ".png"
         ? "image/png"
@@ -650,18 +620,25 @@ export async function analyzeReceiptWithAI(receiptId: number) {
           ? "image/webp"
           : "image/jpeg";
 
-    imageDataUrl =
-      `data:${mimeType};base64,${imageBuffer.toString(
-        "base64"
-      )}`;
+    imageDataUrl = `data:${mimeType};base64,${sourceBuffer.toString("base64")}`;
   } else {
-    const uploadedFile =
-      await openai.files.create({
-        file: createReadStream(fullPath),
+    const safeBaseName = path.basename(sourceName).replace(/[^a-zA-Z0-9._-]/g, "_");
+    const temporaryPath = path.join(
+      os.tmpdir(),
+      `gloggt-${receipt.id}-${Date.now()}-${safeBaseName}`
+    );
+
+    await writeFile(temporaryPath, sourceBuffer);
+
+    try {
+      const uploadedFile = await openai.files.create({
+        file: createReadStream(temporaryPath),
         purpose: "user_data",
       });
-
-    uploadedFileId = uploadedFile.id;
+      uploadedFileId = uploadedFile.id;
+    } finally {
+      await unlink(temporaryPath).catch(() => undefined);
+    }
   }
 
   const response = await openai.responses.create({
