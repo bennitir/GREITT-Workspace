@@ -163,6 +163,184 @@ function normalizeText(value: string | null | undefined) {
     .replaceAll("þ", "th");
 }
 
+function normalizeFactType(value: string | null | undefined) {
+  return (value ?? "")
+    .trim()
+    .toUpperCase()
+    .replace(/[\s-]+/g, "_");
+}
+
+function parseYearMonth(value: string | null | undefined) {
+  const match = (value ?? "").match(/\b(20\d{2})-(0[1-9]|1[0-2])\b/);
+
+  if (!match) {
+    return null;
+  }
+
+  return `${match[1]}-${match[2]}`;
+}
+
+function yearMonthFromDate(value: Date | null | undefined) {
+  if (!value) {
+    return null;
+  }
+
+  const year = value.getFullYear();
+  const month = String(value.getMonth() + 1).padStart(2, "0");
+
+  return `${year}-${month}`;
+}
+
+function formatYearMonth(value: string | null) {
+  if (!value) {
+    return "Óþekkt tímabil";
+  }
+
+  const [yearText, monthText] = value.split("-");
+  const year = Number(yearText);
+  const month = Number(monthText);
+
+  if (
+    !Number.isInteger(year) ||
+    !Number.isInteger(month) ||
+    month < 1 ||
+    month > 12
+  ) {
+    return value;
+  }
+
+  const monthName = new Intl.DateTimeFormat("is-IS", {
+    month: "long",
+  }).format(new Date(year, month - 1, 1));
+
+  return `${monthName.charAt(0).toUpperCase()}${monthName.slice(1)} ${year}`;
+}
+
+function isActualDisabilityPensionFact(fact: {
+  factType: string;
+  label: string | null;
+  numberValue: unknown;
+}) {
+  if (fact.numberValue === null) {
+    return false;
+  }
+
+  const type = normalizeFactType(fact.factType);
+  const label = normalizeText(fact.label);
+
+  if (
+    label.includes("tekjuaætlun") ||
+    label.includes("tekjuaaetlun") ||
+    label.includes("aætlad") ||
+    label.includes("aaetlad")
+  ) {
+    return false;
+  }
+
+  if (
+    label.includes("barnalifeyrir") ||
+    label.includes("bifreid") ||
+    label.includes("okutaeki") ||
+    label.includes("okutaekja")
+  ) {
+    return false;
+  }
+
+  // Venjulegur örorkulífeyrir, einnig þegar beygingin er
+  // t.d. „örorkulífeyris“ í heiti uppbótar.
+  const saysDisabilityPension =
+    label.includes("ororkulifeyr");
+
+  // Orlofs-/desemberuppbætur eru raunverulegar tekjur en
+  // eiga ekki að ruglast saman við tekjuáætlanir.
+  const saysHolidayOrDecemberSupplement =
+    label.includes("orlofs") ||
+    label.includes("desemberuppbot");
+
+  return (
+    saysDisabilityPension ||
+    saysHolidayOrDecemberSupplement ||
+    type === "PENSION_INCOME"
+  );
+}
+
+function isTaxableDisabilityPensionCorrectionFact(fact: {
+  factType: string;
+  label: string | null;
+  numberValue: unknown;
+  periodStart: Date | null;
+  periodEnd: Date | null;
+}) {
+  if (fact.numberValue === null) {
+    return false;
+  }
+
+  const label = normalizeText(fact.label);
+
+  if (
+    label.includes("tekjuaætlun") ||
+    label.includes("tekjuaaetlun") ||
+    label.includes("barnalifeyrir") ||
+    label.includes("bifreid") ||
+    label.includes("okutaeki") ||
+    label.includes("okutaekja") ||
+    label.includes("ostadgreidsluskyld")
+  ) {
+    return false;
+  }
+
+  const saysCorrection =
+    label.includes("leidrett") &&
+    label.includes("rettindi");
+
+  const saysTaxable =
+    label.includes("stadgreidsluskyld");
+
+  if (!saysCorrection || !saysTaxable) {
+    return false;
+  }
+
+  // Við tökum aðeins sjálfvirkt inn leiðréttingu sem tilheyrir
+  // einum mánuði. Fjölmánaða leiðréttingu á ekki að dreifa
+  // eftir ágiskun.
+  const startMonth = yearMonthFromDate(fact.periodStart);
+  const endMonth = yearMonthFromDate(fact.periodEnd);
+
+  return (
+    startMonth !== null &&
+    endMonth !== null &&
+    startMonth === endMonth
+  );
+}
+
+function isDisabilityPensionPaymentTypeFact(fact: {
+  factType: string;
+  textValue: string | null;
+}) {
+  return (
+    normalizeFactType(fact.factType) === "PAYMENT_TYPE" &&
+    normalizeText(fact.textValue).includes("ororkulifeyrir")
+  );
+}
+
+function isGrossPensionFallbackFact(fact: {
+  factType: string;
+  label: string | null;
+  numberValue: unknown;
+}) {
+  if (fact.numberValue === null) {
+    return false;
+  }
+
+  const type = normalizeFactType(fact.factType);
+  const label = normalizeText(fact.label);
+
+  return (
+    type === "GROSS_PENSION" ||
+    label === "lifeyrir samtals"
+  );
+}
+
 function documentKey(
   receiptId: number | null,
   documentId: number | null
@@ -358,6 +536,7 @@ export default async function InnsynPage() {
     receipts,
     entities,
     facts,
+    incomeFacts,
     financialEvents,
     processingJobs,
     entityCount,
@@ -407,7 +586,7 @@ export default async function InnsynPage() {
       orderBy: {
         updatedAt: "desc",
       },
-      take: 50,
+      take: 250,
       select: {
         id: true,
         entityType: true,
@@ -473,6 +652,79 @@ export default async function InnsynPage() {
         currency: true,
         confidence: true,
         source: true,
+        periodStart: true,
+        periodEnd: true,
+        createdAt: true,
+      },
+    }),
+
+    prisma.insightFact.findMany({
+      where: {
+        companyId,
+        OR: [
+          {
+            label: {
+              contains: "lífeyr",
+              mode: "insensitive",
+            },
+          },
+          {
+            label: {
+              contains: "örorku",
+              mode: "insensitive",
+            },
+          },
+          {
+            label: {
+              contains: "staðgreiðsluskyld",
+              mode: "insensitive",
+            },
+          },
+          {
+            label: {
+              contains: "desemberuppbót",
+              mode: "insensitive",
+            },
+          },
+          {
+            label: {
+              contains: "orlofs",
+              mode: "insensitive",
+            },
+          },
+          {
+            label: {
+              in: [
+                "Tímabil lífeyrisseðils",
+                "Lífeyrir samtals",
+                "Staðgreiðsla samtals",
+                "Útborgað samtals",
+              ],
+            },
+          },
+          {
+            factType: {
+              in: [
+                "PENSION_INCOME",
+                "GROSS_PENSION",
+                "PAYMENT_TYPE",
+              ],
+            },
+          },
+        ],
+      },
+      orderBy: {
+        createdAt: "desc",
+      },
+      take: 1000,
+      select: {
+        id: true,
+        receiptId: true,
+        documentId: true,
+        factType: true,
+        label: true,
+        numberValue: true,
+        textValue: true,
         periodStart: true,
         periodEnd: true,
         createdAt: true,
@@ -670,6 +922,369 @@ export default async function InnsynPage() {
       return false;
     })
     .slice(0, 8);
+
+  // ==========================================================
+  // TEKJUR ÚR ÖRORKULÍFEYRI OG LÍFEYRISSJÓÐUM
+  //
+  // Rekstrartekjur hér fyrir ofan halda áfram að koma úr
+  // bókhaldsfærslum. Þessi samantekt er aðskilin Innsýn úr
+  // staðreyndum í skjölum og telur aðeins raunverulegar
+  // örorkulífeyris-/lífeyrisfjárhæðir, ekki tekjuáætlanir.
+  // ==========================================================
+
+  const pensionGroups = new Map<
+    string,
+    {
+      receiptId: number | null;
+      documentId: number | null;
+      facts: typeof incomeFacts;
+    }
+  >();
+
+  for (const fact of incomeFacts) {
+    if (
+      fact.receiptId === null &&
+      fact.documentId === null
+    ) {
+      continue;
+    }
+
+    const key = documentKey(
+      fact.receiptId,
+      fact.documentId
+    );
+
+    const current = pensionGroups.get(key);
+
+    if (current) {
+      current.facts.push(fact);
+      continue;
+    }
+
+    pensionGroups.set(key, {
+      receiptId: fact.receiptId,
+      documentId: fact.documentId,
+      facts: [fact],
+    });
+  }
+
+  const incomePayerCandidatesByDocument = new Map<
+    string,
+    Set<string>
+  >();
+
+  const incomePayerEntityTypes = new Set([
+    "ORGANIZATION",
+    "COMPANY",
+    "PENSION_FUND",
+    "FUND",
+    "GOVERNMENT_AGENCY",
+    "AGENCY",
+    "INSTITUTION",
+  ]);
+
+  for (const entity of entities) {
+    const entityType = normalizeFactType(
+      entity.entityType
+    );
+
+    if (!incomePayerEntityTypes.has(entityType)) {
+      continue;
+    }
+
+    for (const link of entity.documentLinks) {
+      const key = documentKey(
+        link.receiptId,
+        link.documentId
+      );
+
+      const current =
+        incomePayerCandidatesByDocument.get(key) ??
+        new Set<string>();
+
+      current.add(entity.name);
+      incomePayerCandidatesByDocument.set(
+        key,
+        current
+      );
+    }
+  }
+
+  const monthlyPensionIncome = new Map<
+    string,
+    number
+  >();
+
+  const monthlyPensionIncomeByPayer = new Map<
+    string,
+    Map<string, number>
+  >();
+
+  const addPensionIncome = (
+    period: string,
+    payer: string,
+    amount: number
+  ) => {
+    monthlyPensionIncome.set(
+      period,
+      (monthlyPensionIncome.get(period) ?? 0) + amount
+    );
+
+    const payerTotals =
+      monthlyPensionIncomeByPayer.get(period) ??
+      new Map<string, number>();
+
+    payerTotals.set(
+      payer,
+      (payerTotals.get(payer) ?? 0) + amount
+    );
+
+    monthlyPensionIncomeByPayer.set(
+      period,
+      payerTotals
+    );
+  };
+
+  let pensionIncomeDocumentCount = 0;
+  let pensionIncomeWithoutPeriod = 0;
+  let pensionIncomeWithoutConfirmedPayer = 0;
+
+  for (const group of pensionGroups.values()) {
+    const groupKey = documentKey(
+      group.receiptId,
+      group.documentId
+    );
+
+    const payerCandidates = Array.from(
+      incomePayerCandidatesByDocument.get(groupKey) ??
+        []
+    ).filter((name) => name.trim().length > 0);
+
+    const normalizedPayerCandidates =
+      payerCandidates.map((name) => ({
+        name,
+        normalized: normalizeText(name),
+      }));
+
+    const trCandidate =
+      normalizedPayerCandidates.find(
+        (candidate) =>
+          candidate.normalized.includes(
+            "tryggingastofnun"
+          )
+      );
+
+    const nonBankPayerCandidates =
+      normalizedPayerCandidates.filter(
+        (candidate) =>
+          !candidate.normalized.includes("banki") &&
+          !candidate.normalized.includes("bank")
+      );
+
+    const payerName =
+      trCandidate?.name ??
+      (nonBankPayerCandidates.length === 1
+        ? nonBankPayerCandidates[0].name
+        : "Óstaðfestur greiðandi");
+
+    const actualIncomeFacts = group.facts.filter(
+      isActualDisabilityPensionFact
+    );
+
+    const correctionFacts = group.facts.filter(
+      isTaxableDisabilityPensionCorrectionFact
+    );
+
+    const incomeFactsToAllocate = [
+      ...actualIncomeFacts,
+      ...correctionFacts.filter(
+        (correctionFact) =>
+          !actualIncomeFacts.some(
+            (actualFact) =>
+              actualFact.id === correctionFact.id
+          )
+      ),
+    ];
+
+    const periodFact = group.facts.find(
+      (fact) =>
+        normalizeFactType(fact.factType) ===
+          "PERIOD" ||
+        normalizeText(fact.label).includes(
+          "timabil lifeyrissedils"
+        )
+    );
+
+    let groupAddedIncome = false;
+    let groupHasIncomeWithoutPeriod = false;
+
+    for (const incomeFact of incomeFactsToAllocate) {
+      if (incomeFact.numberValue === null) {
+        continue;
+      }
+
+      const amount = Number(incomeFact.numberValue);
+
+      if (!Number.isFinite(amount) || amount === 0) {
+        continue;
+      }
+
+      const periodKey =
+        yearMonthFromDate(
+          incomeFact.periodStart ??
+            incomeFact.periodEnd ??
+            null
+        ) ??
+        parseYearMonth(periodFact?.textValue) ??
+        yearMonthFromDate(
+          periodFact?.periodStart ??
+            periodFact?.periodEnd ??
+            null
+        );
+
+      if (!periodKey) {
+        groupHasIncomeWithoutPeriod = true;
+        continue;
+      }
+
+      const normalizedIncomeLabel =
+        normalizeText(incomeFact.label);
+
+      const allocatedPayerName =
+        normalizedIncomeLabel.includes("fra gildi")
+          ? "Greiðslustofa lífeyrissjóða · Gildi"
+          : normalizedIncomeLabel.includes("fra festu") ||
+              normalizedIncomeLabel.includes("fra festa")
+            ? "Greiðslustofa lífeyrissjóða · Festa"
+            : payerName;
+
+      addPensionIncome(
+        periodKey,
+        allocatedPayerName,
+        amount
+      );
+
+      groupAddedIncome = true;
+    }
+
+    // Eldri/öðruvísi lífeyrisskjöl geta sagt PAYMENT_TYPE =
+    // Örorkulífeyrir en geymt brúttófjárhæðina sem GROSS_PENSION
+    // eða „Lífeyrir samtals“. Þá höldum við fallback-reglunni.
+    if (!groupAddedIncome) {
+      const saysDisabilityPension =
+        group.facts.some(
+          isDisabilityPensionPaymentTypeFact
+        );
+
+      if (saysDisabilityPension) {
+        const fallbackFact = group.facts.find(
+          isGrossPensionFallbackFact
+        );
+
+        if (
+          fallbackFact &&
+          fallbackFact.numberValue !== null
+        ) {
+          const fallbackAmount = Number(
+            fallbackFact.numberValue
+          );
+
+          const fallbackPeriodKey =
+            yearMonthFromDate(
+              fallbackFact.periodStart ??
+                fallbackFact.periodEnd ??
+                null
+            ) ??
+            parseYearMonth(periodFact?.textValue) ??
+            yearMonthFromDate(
+              periodFact?.periodStart ??
+                periodFact?.periodEnd ??
+                null
+            );
+
+          if (
+            Number.isFinite(fallbackAmount) &&
+            fallbackAmount !== 0 &&
+            fallbackPeriodKey
+          ) {
+            addPensionIncome(
+              fallbackPeriodKey,
+              payerName,
+              fallbackAmount
+            );
+
+            groupAddedIncome = true;
+          } else if (
+            Number.isFinite(fallbackAmount) &&
+            fallbackAmount !== 0
+          ) {
+            groupHasIncomeWithoutPeriod = true;
+          }
+        }
+      }
+    }
+
+    if (groupAddedIncome) {
+      pensionIncomeDocumentCount += 1;
+
+      const hasConfirmedPensionSource =
+        group.facts.some((fact) => {
+          const label = normalizeText(fact.label);
+
+          return (
+            label.includes("fra gildi") ||
+            label.includes("fra festu") ||
+            label.includes("fra festa")
+          );
+        });
+
+      if (
+        payerName === "Óstaðfestur greiðandi" &&
+        !hasConfirmedPensionSource
+      ) {
+        pensionIncomeWithoutConfirmedPayer += 1;
+      }
+    }
+
+    if (groupHasIncomeWithoutPeriod) {
+      pensionIncomeWithoutPeriod += 1;
+    }
+  }
+
+  const currentYear = new Date().getFullYear();
+
+  const pensionIncomeMonths = Array.from(
+    monthlyPensionIncome.entries()
+  )
+    .map(([period, amount]) => ({
+      period,
+      amount,
+      payers: Array.from(
+        monthlyPensionIncomeByPayer.get(period)?.entries() ??
+          []
+      )
+        .map(([name, payerAmount]) => ({
+          name,
+          amount: payerAmount,
+        }))
+        .sort((a, b) => b.amount - a.amount),
+    }))
+    .sort((a, b) =>
+      b.period.localeCompare(a.period)
+    );
+
+  const pensionIncomeCurrentYear =
+    pensionIncomeMonths
+      .filter((item) =>
+        item.period.startsWith(`${currentYear}-`)
+      )
+      .reduce(
+        (sum, item) => sum + item.amount,
+        0
+      );
+
+  const latestPensionIncome =
+    pensionIncomeMonths[0] ?? null;
 
   // ==========================================================
   // TRYGGINGAR – FYRSTA ALVÖRU INNSÝN-SAGAN
@@ -1025,6 +1640,141 @@ export default async function InnsynPage() {
           </p>
         </div>
       </div>
+
+      {pensionIncomeDocumentCount > 0 && (
+        <section className="mt-8 overflow-hidden rounded-xl border bg-white">
+          <div className="border-b bg-slate-50 p-5">
+            <p className="text-xs font-semibold uppercase tracking-wide text-slate-500">
+              Innsýn úr skjölum
+            </p>
+
+            <h2 className="mt-1 text-2xl font-bold text-slate-900">
+              Tekjur úr örorkulífeyri og lífeyrissjóðum
+            </h2>
+
+            <p className="mt-2 max-w-3xl text-sm text-slate-600">
+              Brúttótekjur sem GLÖGGT hefur greint úr raunverulegum
+              greiðsluskjölum. Tekjuáætlanir eru ekki taldar með og
+              bifreiðatengdar uppbætur eru áfram aðskildar. Greiðslustofa
+              lífeyrissjóða er sýnd sem greiðandi þegar skjalið greinir
+              Gildi eða Festu sem réttindasjóð/tekjuuppsprettu. Óljós
+              tengsl eru áfram merkt óstaðfest.
+            </p>
+          </div>
+
+          <div className="grid gap-4 border-b p-5 sm:grid-cols-3">
+            <div className="rounded-xl bg-slate-50 p-4">
+              <p className="text-sm text-slate-500">
+                Greint samtals {currentYear}
+              </p>
+
+              <p className="mt-1 text-xl font-bold text-slate-900">
+                {formatKr(pensionIncomeCurrentYear)}
+              </p>
+
+              <p className="mt-1 text-xs text-slate-500">
+                Brúttó, fyrir staðgreiðslu
+              </p>
+            </div>
+
+            <div className="rounded-xl bg-slate-50 p-4">
+              <p className="text-sm text-slate-500">
+                Nýjasta greinda tímabil
+              </p>
+
+              <p className="mt-1 text-xl font-bold text-slate-900">
+                {latestPensionIncome
+                  ? formatKr(latestPensionIncome.amount)
+                  : "Ekki greint"}
+              </p>
+
+              <p className="mt-1 text-xs text-slate-500">
+                {latestPensionIncome
+                  ? formatYearMonth(
+                      latestPensionIncome.period
+                    )
+                  : "—"}
+              </p>
+            </div>
+
+            <div className="rounded-xl bg-slate-50 p-4">
+              <p className="text-sm text-slate-500">
+                Greind greiðsluskjöl
+              </p>
+
+              <p className="mt-1 text-xl font-bold text-slate-900">
+                {pensionIncomeDocumentCount}
+              </p>
+
+              {pensionIncomeWithoutPeriod > 0 && (
+                <p className="mt-1 text-xs text-slate-500">
+                  {pensionIncomeWithoutPeriod} án greinds tímabils
+                </p>
+              )}
+
+              {pensionIncomeWithoutConfirmedPayer > 0 && (
+                <p className="mt-1 text-xs text-amber-700">
+                  {pensionIncomeWithoutConfirmedPayer} með óstaðfestan
+                  greiðanda
+                </p>
+              )}
+            </div>
+          </div>
+
+          {pensionIncomeMonths.length > 0 && (
+            <div className="p-5">
+              <h3 className="font-semibold text-slate-900">
+                Greint eftir mánuðum
+              </h3>
+
+              <div className="mt-3 divide-y rounded-lg border">
+                {pensionIncomeMonths
+                  .slice(0, 12)
+                  .map((item) => (
+                    <div
+                      key={item.period}
+                      className="px-4 py-3 text-sm"
+                    >
+                      <div className="flex items-center justify-between gap-4">
+                        <span className="font-medium text-slate-700">
+                          {formatYearMonth(item.period)}
+                        </span>
+
+                        <span className="font-semibold text-slate-900">
+                          {formatKr(item.amount)}
+                        </span>
+                      </div>
+
+                      <div className="mt-2 space-y-1">
+                        {item.payers.map((payer) => (
+                          <div
+                            key={`${item.period}:${payer.name}`}
+                            className="flex items-center justify-between gap-4 text-xs"
+                          >
+                            <span
+                              className={
+                                payer.name ===
+                                "Óstaðfestur greiðandi"
+                                  ? "text-amber-700"
+                                  : "text-slate-500"
+                              }
+                            >
+                              {payer.name}
+                            </span>
+
+                            <span className="font-medium text-slate-600">
+                              {formatKr(payer.amount)}
+                            </span>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  ))}
+              </div>
+            </div>
+          )}
+        </section>
+      )}
 
       {latestInsurance && (
         <section className="mt-8 overflow-hidden rounded-xl border bg-white">
