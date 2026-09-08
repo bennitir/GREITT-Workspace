@@ -174,7 +174,7 @@ export default function ManualReceiptForm({
           <input
             type="file"
             name="file"
-            accept="application/pdf,image/*"
+            accept="application/pdf,image/*,.xlsx,.csv,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet,text/csv"
             className="block w-full rounded-lg border px-3 py-2"
           />
         </div>
