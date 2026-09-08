@@ -12,6 +12,8 @@ import { extractTextFromPdfBuffer } from "@/lib/core/pdf-text";
 import { supabaseAdmin } from "@/lib/supabase";
 import { createInsightProcessingJob } from "@/lib/insight/processing-service";
 import { runInsightWorker } from "@/lib/insight/worker";
+import { queueInsightForDocument } from "@/lib/insight/auto-enqueue";
+
 
 const INSIGHT_PROCESSING_VERSION = "innsyn-v1";
 
@@ -127,33 +129,24 @@ export async function createInsightJobForDocument(
     throw new Error("Ógilt skjalanúmer.");
   }
 
-  const companyId = await requireActiveCompanyWriteAccess();
+  const companyId =
+    await requireActiveCompanyWriteAccess();
 
-  const document = await prisma.aiDetectedDocument.findFirst({
-    where: {
-      id: documentId,
-      receipt: {
-        companyId,
-      },
-    },
-    select: {
-      id: true,
-      receiptId: true,
-      documentType: true,
-      documentRole: true,
-      disposition: true,
-      receipt: {
-        select: {
-          id: true,
-          companyId: true,
-          fileName: true,
-          filePath: true,
-          storagePath: true,
-          ocrText: true,
+  // Tryggjum áfram að handvirki Innsýn-takkinn geti aðeins
+  // unnið skjal sem tilheyrir virku fyrirtæki notandans.
+  const document =
+    await prisma.aiDetectedDocument.findFirst({
+      where: {
+        id: documentId,
+        receipt: {
+          companyId,
         },
       },
-    },
-  });
+      select: {
+        id: true,
+        receiptId: true,
+      },
+    });
 
   if (!document) {
     throw new Error(
@@ -161,179 +154,33 @@ export async function createInsightJobForDocument(
     );
   }
 
-  if (
-    !document.receipt.storagePath &&
-    !document.receipt.filePath
-  ) {
-    throw new Error(
-      "Frumskjal vantar og því er ekki hægt að keyra Innsýn.",
-    );
-  }
-
-  /*
-   * Persónuverndar-preflight fyrir Innsýn.
-   *
-   * Þetta hefur eingöngu áhrif á Innsýn-vinnslu skjalsins.
-   * Það breytir hvorki bókun, launum, Verk, VSK né annarri
-   * skráningu GLÖGGT.
-   *
-   * Fyrir PDF er frumskjalið lesið staðbundið áður en
-   * Innsýn-jobb er stofnað.
-   */
-  const privacyPreflight =
-    await getPrivacyPreflightText({
-      fileName: document.receipt.fileName,
-      filePath: document.receipt.filePath,
-      storagePath: document.receipt.storagePath,
-      ocrText: document.receipt.ocrText,
-    });
-
-  const personKennitolur = extractPersonKennitolur(
-    privacyPreflight.text,
-  );
-
-  const requiresPrivacyConfirmation =
-    personKennitolur.length > 1;
-
-  if (
-    requiresPrivacyConfirmation &&
-    options.allowMultiplePersons !== true
-  ) {
-    return {
-      created: false,
-      requiresPrivacyConfirmation: true,
-      personCount: personKennitolur.length,
-      jobId: null,
-      itemId: null,
-      status: "PRIVACY_CONFIRMATION_REQUIRED",
-      message:
-        "Skjalið virðist innihalda upplýsingar um fleiri en einn einstakling.",
-    };
-  }
-
-  const existingItem =
-    await prisma.insightProcessingItem.findFirst({
-      where: {
-        documentId: document.id,
-        processingVersion: INSIGHT_PROCESSING_VERSION,
-        status: {
-          in: ["PENDING", "PROCESSING"],
-        },
-        job: {
-          companyId,
-        },
-      },
-      select: {
-        id: true,
-        jobId: true,
-        status: true,
-      },
-      orderBy: {
-        createdAt: "desc",
-      },
-    });
-
-  if (existingItem) {
-    return {
-      created: false,
-      requiresPrivacyConfirmation: false,
-      personCount: personKennitolur.length,
-      jobId: existingItem.jobId,
-      itemId: existingItem.id,
-      status: existingItem.status,
-      message: "Skjalið er þegar í Innsýn-vinnslu.",
-    };
-  }
-
   const effectiveUser = await getEffectiveUser();
 
-  /*
-   * Ef fleiri en ein persónukennitala fannst og notandi hefur
-   * sérstaklega heimilað áframhaldandi Innsýn-vinnslu,
-   * varðveitum við ákvörðunina í rekjanleika GLÖGGT.
-   *
-   * Kennitölurnar sjálfar eru ekki settar í AuditEvent.
-   */
-  if (
-    requiresPrivacyConfirmation &&
-    options.allowMultiplePersons === true
-  ) {
-    await prisma.auditEvent.create({
-      data: {
-        companyId,
-        userId: effectiveUser?.id ?? null,
-        entityType: "AI_DETECTED_DOCUMENT",
-        entityId: document.id,
-        parentEntityType: "RECEIPT",
-        parentEntityId: document.receiptId,
-        action: "INSIGHT_PRIVACY_CONFIRMATION",
-        source: "USER",
-        description:
-          "Notandi samþykkti Innsýn-vinnslu skjals sem inniheldur fleiri en eina persónukennitölu.",
-        metadata: {
-          personCount: personKennitolur.length,
-          processingVersion:
-            INSIGHT_PROCESSING_VERSION,
-          preflightSource:
-            privacyPreflight.source,
-        },
-      },
+  const result = await queueInsightForDocument({
+    documentId: document.id,
+    requestedById: effectiveUser?.id ?? null,
+    enabled: true,
+    allowMultiplePersons:
+      options.allowMultiplePersons === true,
+    source: "USER_REQUEST",
+    trigger: "SERVER_ACTION",
+  });
+
+  if (result.created && result.jobId) {
+    after(async () => {
+      try {
+        await runInsightWorker({
+          jobId: result.jobId!,
+          maxItems: 1,
+        });
+      } catch (error) {
+        console.error(
+          `Sjálfvirk Innsýn-vinnsla mistókst fyrir job ${result.jobId}:`,
+          error,
+        );
+      }
     });
   }
-
-  const job = await createInsightProcessingJob({
-    companyId,
-    requestedById: effectiveUser?.id ?? null,
-    jobType: "DOCUMENT_INSIGHT",
-    processingVersion: INSIGHT_PROCESSING_VERSION,
-    source: "USER_REQUEST",
-    targets: [
-      {
-        receiptId: document.receiptId,
-        documentId: document.id,
-      },
-    ],
-    metadata: {
-      trigger: "SERVER_ACTION",
-      documentType: document.documentType,
-      documentRole: document.documentRole,
-      disposition: document.disposition,
-      privacyPreflight: {
-        source: privacyPreflight.source,
-        personCount: personKennitolur.length,
-        multiplePersonsDetected:
-          requiresPrivacyConfirmation,
-        userConfirmedMultiplePersons:
-          requiresPrivacyConfirmation &&
-          options.allowMultiplePersons === true,
-      },
-    },
-  });
-
-  /*
-   * Ræsum nákvæmlega þetta Innsýn-jobb eftir að Server Action
-   * hefur lokið svari sínu.
-   *
-   * Jobbið sjálft er þegar varanlega skráð í gagnagrunninum.
-   * Þannig er biðröðin áfram sannleikurinn og hægt er að
-   * endurheimta vinnslu þótt þessi bakgrunnsræsing mistakist.
-   *
-   * maxItems: 1 passar við DOCUMENT_INSIGHT-jobb sem stofnað er
-   * hér með einu skjali.
-   */
-  after(async () => {
-    try {
-      await runInsightWorker({
-        jobId: job.id,
-        maxItems: 1,
-      });
-    } catch (error) {
-      console.error(
-        `Sjálfvirk Innsýn-vinnsla mistókst fyrir job ${job.id}:`,
-        error,
-      );
-    }
-  });
 
   revalidatePath("/fylgiskjol");
   revalidatePath("/fylgiskjol/skjalasafn");
@@ -341,19 +188,11 @@ export async function createInsightJobForDocument(
     `/fylgiskjol/${document.receiptId}`,
   );
 
-  return {
-    created: true,
-    requiresPrivacyConfirmation: false,
-    personCount: personKennitolur.length,
-    jobId: job.id,
-    itemId: job.items[0]?.id ?? null,
-    status: job.status,
-    message:
-      "Skjalið hefur verið sett í Innsýn-vinnslu.",
-  };
+  return result;
 }
 
 export async function getInsightJobStatus(jobId: number) {
+
   if (!Number.isInteger(jobId) || jobId <= 0) {
     throw new Error("Ógilt vinnslunúmer.");
   }

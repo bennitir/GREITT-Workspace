@@ -1,4 +1,6 @@
 "use server";
+import { queueInsightForDocument } from "@/lib/insight/auto-enqueue";
+import { runInsightWorker } from "@/lib/insight/worker";
 import {
   requireActiveCompanyWriteAccess,
   requireCompanyBookAccess,
@@ -6,6 +8,7 @@ import {
   getEffectiveUser,
 } from "@/lib/core/access-control";
 import { cookies } from "next/headers";
+import { after } from "next/server";
 import { createReadStream } from "fs";
 import OpenAI from "openai";
 import {
@@ -216,6 +219,31 @@ async function archiveReceiptFile(receiptId: number) {
   }
 }
 
+async function runAutomaticInsightForDocuments(documentIds: number[]) {
+  for (const documentId of documentIds) {
+    try {
+      const insightResult = await queueInsightForDocument({
+        documentId,
+        enabled: true,
+        source: "SYSTEM",
+        trigger: "RECEIPT_ANALYSIS",
+      });
+
+      if (insightResult.created && insightResult.jobId) {
+        await runInsightWorker({
+          jobId: insightResult.jobId,
+          maxItems: 1,
+        });
+      }
+    } catch (error) {
+      console.error(
+        `Sjálfvirk Innsýn mistókst fyrir skjal ${documentId}:`,
+        error,
+      );
+    }
+  }
+}
+
 export async function createReceipt(formData: FormData) {
   await requireActiveCompanyWriteAccess();
   const file = formData.get("file") as File;
@@ -291,23 +319,27 @@ amount: formData.get("amount")
       fileHash,
     },
   });
-try {
-  await analyzeReceiptWithAI(createdReceipt.id);
-} catch (error) {
-  console.error(
-    `AI-lestur mistókst fyrir fylgiskjal ${createdReceipt.id}:`,
-    error
-  );
-  await prisma.receipt.update({
-  where: {
-    id: createdReceipt.id,
-  },
-  data: {
-    status: "NEEDS_ATTENTION",
-    ocrStatus: "AI-lestur mistókst",
-  },
+after(async () => {
+  try {
+    const analysisResult = await analyzeReceiptWithAI(createdReceipt.id);
+    await runAutomaticInsightForDocuments(analysisResult.createdDocumentIds);
+  } catch (error) {
+    console.error(
+      `AI-lestur mistókst fyrir fylgiskjal ${createdReceipt.id}:`,
+      error
+    );
+
+    await prisma.receipt.update({
+      where: {
+        id: createdReceipt.id,
+      },
+      data: {
+        status: "NEEDS_ATTENTION",
+        ocrStatus: "AI-lestur mistókst",
+      },
+    });
+  }
 });
-}
   revalidatePath("/fylgiskjol");
 
   return {
@@ -455,6 +487,8 @@ export async function addReceiptEntries(receiptId: number) {
       },
     ],
   });
+
+  
 
   revalidatePath(`/fylgiskjol/${receiptId}`);
 }
@@ -863,6 +897,10 @@ Mikilvæg VSK-regla:
 - Ef VSK-skráningarstaða er "Ekki staðfest" má ekki gera sjálfvirka VSK-færslu. Ekki nota VAT_INPUT eða VAT_OUTPUT fyrr en staðan hefur verið staðfest.
 - Ef fyrirtækið er "Já, VSK-skráð" má VSK-meðferð aðeins beita þegar önnur gögn og reglur styðja hana. VSK-skráning ein og sér sannar ekki innskattsrétt einstakra útgjalda.
 
+- MIKILVÆGT: Ef fyrirtækið er merkt "Nei, ekki VSK-skráð" er skortur á innskattsrétti EKKI ástæða til að flokka annars fullnægjandi bókunarskjal sem REVIEW. Ef skjalið er að öðru leyti fullnægjandi bókunarheimild skal það vera BOOKABLE og leggja skal til bókun heildarupphæðarinnar án VAT_INPUT eða VAT_OUTPUT.
+
+- Ef fyrirtækið er ekki VSK-skráð skal ekki krefjast sérstakrar staðfestingar á VSK-meðferð áður en bókunartillaga er búin til. Heildarupphæð kostnaðar skal fara á viðeigandi kostnaðar-, eigna- eða skuldareikning eftir eðli færslunnar.
+
 Ekki færa virðisaukaskatt af fæðiskaupum, veitingum,
 kaffistofu eða mötuneyti sem innskatt nema fyrir liggi
 skýr heimild til þess, svo sem þegar fæðið er endurselt.
@@ -1192,6 +1230,8 @@ await prisma.aiUsage.create({
   },
 });
 
+const createdDocumentIds: number[] = [];
+
   await prisma.$transaction(async (tx) => {
     await tx.receipt.update({
       where: {
@@ -1355,6 +1395,8 @@ if (hasInvalidDate) {
               receiptId,
             },
           });
+
+          createdDocumentIds.push(createdDocument.id);
 
         const loanInfo =
           document.loanInfo &&
@@ -1553,13 +1595,14 @@ if (dateWarnings.length > 0) {
 }
   });
 
-
-
-  revalidatePath(
+  
+    revalidatePath(
     `/fylgiskjol/${receiptId}`
   );
 
   revalidatePath("/fylgiskjol");
+
+  return { createdDocumentIds };
 }
 
 export async function confirmInsightEntityAccountLink(
