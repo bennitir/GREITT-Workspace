@@ -775,6 +775,9 @@ async function persistInsightAnalysis(
         entityRelationCount,
         factCount,
       };
+        },
+    {
+      timeout: 30_000,
     },
   );
 }
