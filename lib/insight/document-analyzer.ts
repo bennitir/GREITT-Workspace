@@ -667,7 +667,7 @@ export async function analyzeDocumentForInsight(
   const openai = new OpenAI({
     apiKey:
       process.env.OPENAI_API_KEY,
-    timeout: 60 * 1000,
+    timeout: 180 * 1000,
     maxRetries: 0,
   });
 
@@ -832,6 +832,80 @@ Finndu staðreyndir sem raunverulega koma fram
 á skjalinu.
 
 Ekki giska.
+
+TRYGGINGAHREYFINGAYFIRLIT
+
+Ef skjalið er hreyfingayfirlit frá tryggingafélagi
+skal ekki aðeins skila samantekt yfir tímabilið.
+
+Varðveittu hverja efnislega tryggingahreyfingu
+sem sérstakt fact þegar línan sýnir nægar upplýsingar.
+
+Notaðu eftirfarandi stöðugu factType þegar við á:
+
+INSURANCE_PREMIUM
+- Iðgjald eða sambærileg tryggingakrafa.
+- Þetta lýsir tryggingakostnaði/skuldbindingu,
+  ekki endilega greiðslu.
+
+INSURANCE_PREMIUM_ADJUSTMENT
+- Iðgjaldabreyting eða önnur breyting á áður
+  skráðu iðgjaldi.
+- Varðveittu formerki fjárhæðarinnar nákvæmlega.
+
+INSURANCE_PREMIUM_REVERSAL
+- Niðurfelling eða bakfærsla iðgjalds.
+- Varðveittu formerki fjárhæðarinnar nákvæmlega.
+
+INSURANCE_PAYMENT
+- Beingreiðsla eða önnur greiðsla inn á stöðu
+  hjá tryggingafélagi.
+- Greiðslan má EKKI túlka sem nýtt iðgjald eða
+  nýjan tryggingakostnað.
+
+INSURANCE_PAYMENT_PLAN_FEE
+- Álag eða gjald vegna greiðsludreifingar.
+
+INSURANCE_DEDUCTIBLE
+- Eigin áhætta þegar slík hreyfing kemur fram.
+
+INSURANCE_TRANSFER
+- Millifærsla til tryggingafélags þegar merking
+  hennar er ekki nægilega skýr til að flokka hana
+  sem iðgjald eða greiðslu.
+- Ekki giska á bókhaldslega merkingu hennar.
+
+Fyrir hverja slíka hreyfingu:
+
+- valueNumber skal vera fjárhæð hreyfingarinnar
+  með sama formerki og á frumskjalinu.
+- valueDate skal vera dagsetning hreyfingarinnar.
+- periodStart og periodEnd skulu vera
+  vátryggingartímabilið ef það kemur fram.
+- label skal varðveita næg auðkenni til að hægt sé
+  að tengja hreyfinguna aftur við trygginguna.
+
+Ef skírteinisnúmer kemur fram skal það vera í label.
+Ef tryggður hlutur kemur fram skal hann vera í label,
+t.d. skráningarnúmer ökutækis, fasteign eða nafn
+tryggðs einstaklings.
+Ef tryggingategund kemur fram skal hún einnig vera
+í label.
+
+Dæmi um label:
+"JE651 · 00003952082 · Lögboðin ökutækjatrygging"
+
+Ekki sameina margar skírteinishreyfingar í eina
+heildarupphæð.
+
+Ekki nota stöðu í upphafi tímabils,
+hreyfingar tímabils eða stöðu í lok tímabils
+sem tryggingakostnað.
+
+Ef sama skírteini hefur bæði iðgjald og
+iðgjaldabreytingu skulu báðar hreyfingarnar
+varðveittar sérstaklega svo síðar sé hægt að
+reikna nettó iðgjald án ágiskunar.
 
 Dæmi:
 - magn,
