@@ -569,53 +569,62 @@ export default async function SkjalasafnPage({
                 return (
                   <tr
                     key={item.key}
-                    className="hover:bg-blue-50"
+                    className="group hover:bg-blue-50"
                   >
-                    <td className="border-b p-3 whitespace-nowrap">
-                      {item.date
-                        ? formatDate(item.date)
-                        : "—"}
-                    </td>
-
-                    <td className="border-b p-3">
-                      <Link
-                        href={href}
-                        className="font-semibold text-blue-700 hover:underline"
-                      >
-                        {item.title}
+                    <td className="border-b p-0 whitespace-nowrap">
+                      <Link href={href} className="block p-3">
+                        {item.date
+                          ? formatDate(item.date)
+                          : "—"}
                       </Link>
-
-                      {item.detail && (
-                        <p className="mt-1 text-sm text-slate-500">
-                          {item.detail}
-                        </p>
-                      )}
                     </td>
 
-                    <td className="border-b p-3 whitespace-nowrap">
-                      {item.merchantKennitala ?? "—"}
+                    <td className="border-b p-0">
+                      <Link href={href} className="block p-3">
+                        <span className="font-semibold text-blue-700 group-hover:underline">
+                          {item.title}
+                        </span>
+
+                        {item.detail && (
+                          <p className="mt-1 text-sm text-slate-500">
+                            {item.detail}
+                          </p>
+                        )}
+                      </Link>
                     </td>
 
-                    <td className="border-b p-3 text-right whitespace-nowrap font-semibold">
-                      {formatNumber(item.amount)} kr.
+                    <td className="border-b p-0 whitespace-nowrap">
+                      <Link href={href} className="block p-3">
+                        {item.merchantKennitala ?? "—"}
+                      </Link>
+                    </td>
+
+                    <td className="border-b p-0 text-right whitespace-nowrap font-semibold">
+                      <Link href={href} className="block p-3">
+                        {formatNumber(item.amount)} kr.
+                      </Link>
                     </td>
 
                     <td
-                      className={`border-b p-3 whitespace-nowrap font-semibold ${item.statusClass}`}
+                      className={`border-b p-0 whitespace-nowrap font-semibold ${item.statusClass}`}
                     >
-                      {item.statusLabel}
+                      <Link href={href} className="block p-3">
+                        {item.statusLabel}
+                      </Link>
                     </td>
 
-                    <td className="border-b p-3">
-                      {item.bookingAccounts.length > 0
-                        ? item.bookingAccounts.join(", ")
-                        : "—"}
+                    <td className="border-b p-0">
+                      <Link href={href} className="block p-3">
+                        {item.bookingAccounts.length > 0
+                          ? item.bookingAccounts.join(", ")
+                          : "—"}
+                      </Link>
                     </td>
 
-                    <td className="border-b p-3 text-right">
+                    <td className="border-b p-0 text-right">
                       <Link
                         href={href}
-                        className="inline-flex items-center gap-2 rounded px-3 py-2 font-medium text-blue-700 hover:bg-blue-100"
+                        className="flex items-center justify-end gap-2 p-3 font-medium text-blue-700 group-hover:underline"
                       >
                         Opna
                         <span aria-hidden="true">→</span>

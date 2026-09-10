@@ -80,9 +80,25 @@ async function getPrivacyPreflightText(input: {
     }
 
     if (!text.trim()) {
-      throw new Error(
-        "PDF-skjalið inniheldur ekkert læsilegt textalag. Innsýn verður ekki keyrð fyrr en hægt er að framkvæma örugga persónuverndarathugun á frumskjalinu.",
-      );
+      const ocrText = input.ocrText?.trim() ?? "";
+
+      if (!ocrText) {
+        throw new Error(
+          "PDF-skjalið inniheldur ekkert læsilegt textalag og enginn vistaður OCR-texti er tiltækur. Innsýn verður ekki keyrð fyrr en hægt er að framkvæma örugga persónuverndarathugun á frumskjalinu.",
+        );
+      }
+
+      /*
+       * Skannað PDF getur verið án innbyggðs textalags þótt GLÖGGT
+       * hafi þegar OCR-lesið frumskjalið við móttöku/AI-greiningu.
+       * Þá má nota þann vistaða OCR-texta eingöngu sem inntak í
+       * persónuverndar-preflight. Við sleppum ekki athuguninni:
+       * extractPersonKennitolur keyrir á OCR-textanum hér fyrir neðan.
+       */
+      return {
+        text: ocrText,
+        source: "OCR_TEXT_FALLBACK",
+      };
     }
 
     return {

@@ -352,18 +352,22 @@ function isInsuranceFact(fact: {
   factType: string;
   label: string | null;
 }) {
-  const type = fact.factType.toUpperCase();
+  const type = normalizeFactType(fact.factType);
   const label = normalizeText(fact.label);
 
+  // Nýja Innsýn-greiningin notar INSURANCE_* tegundir.
+  // Almenn FEE má EKKI teljast tryggingastaðreynd, annars geta t.d.
+  // fasteignagjöld orðið „nýjasta tryggingaskjalið“ og ruglað Sjóvá-sýnina.
   if (
+    type.startsWith("INSURANCE_") ||
     type === "PREMIUM" ||
-    type === "FEE" ||
     type === "COVERAGE" ||
     type === "DEDUCTIBLE"
   ) {
     return true;
   }
 
+  // Fallback fyrir eldri tryggingaskjöl þar sem factType var almennara.
   return (
     label.includes("trygg") ||
     label.includes("idgjald") ||
@@ -483,6 +487,47 @@ function isPossibleRefundFact(fact: {
   );
 }
 
+type ExpenseInsightCategory =
+  | "Fjármögnun og lán"
+  | "Bifreiðar"
+  | "Banki og þjónustugjöld"
+  | "Önnur útgjöld";
+
+function getExpenseInsightCategory(account: string, name: string): ExpenseInsightCategory {
+  const normalizedName = normalizeText(name);
+
+  // Innsýn-merkið er aðskilið frá bókhaldslyklinum.
+  // Við notum fyrst merkingu reikningsheitis og aðeins mjög afmarkaðar
+  // þekktar vísbendingar. Bókhaldsreikningurinn sjálfur breytist ekki.
+  if (
+    normalizedName.includes("vext") ||
+    normalizedName.includes("verdb") ||
+    normalizedName.includes("verdbaet") ||
+    normalizedName.includes("lan")
+  ) {
+    return "Fjármögnun og lán";
+  }
+
+  if (
+    normalizedName.includes("bifreid") ||
+    normalizedName.includes("okutaek") ||
+    normalizedName.includes("bilakost")
+  ) {
+    return "Bifreiðar";
+  }
+
+  if (
+    normalizedName.includes("bank") ||
+    normalizedName.includes("innheimt") ||
+    normalizedName.includes("greidslugjald") ||
+    normalizedName.includes("thjonustugjald")
+  ) {
+    return "Banki og þjónustugjöld";
+  }
+
+  return "Önnur útgjöld";
+}
+
 export default async function InnsynPage() {
   const cookieStore = await cookies();
   const activeUser = await getEffectiveUser();
@@ -558,6 +603,7 @@ export default async function InnsynPage() {
       },
       select: {
         number: true,
+        name: true,
         entryRole: true,
         type: true,
       },
@@ -568,6 +614,10 @@ export default async function InnsynPage() {
         companyId,
       },
       select: {
+        id: true,
+        date: true,
+        description: true,
+        merchantName: true,
         entries: {
           select: {
             account: true,
@@ -603,6 +653,24 @@ export default async function InnsynPage() {
             receiptId: true,
             documentId: true,
             role: true,
+          },
+        },
+
+        accountLinks: {
+          where: {
+            role: "LIABILITY_PRINCIPAL",
+            status: "CONFIRMED",
+          },
+          select: {
+            accountId: true,
+            role: true,
+            status: true,
+            account: {
+              select: {
+                number: true,
+                name: true,
+              },
+            },
           },
         },
 
@@ -836,6 +904,20 @@ export default async function InnsynPage() {
   let outputVat = 0;
   let inputVat = 0;
 
+  const accountNameByNumber = new Map(
+    accounts.map((account) => [account.number, account.name])
+  );
+
+  const expenseBreakdown = new Map<
+    string,
+    {
+      account: string;
+      name: string;
+      amount: number;
+      receiptIds: Set<number>;
+    }
+  >();
+
   for (const receipt of receipts) {
     for (const entry of receipt.entries) {
       if (
@@ -848,8 +930,21 @@ export default async function InnsynPage() {
       if (
         expenseAccounts.has(entry.account)
       ) {
-        expenses +=
-          entry.debit - entry.credit;
+        const expenseAmount = entry.debit - entry.credit;
+        expenses += expenseAmount;
+
+        const currentExpense = expenseBreakdown.get(entry.account);
+        expenseBreakdown.set(entry.account, {
+          account: entry.account,
+          name:
+            accountNameByNumber.get(entry.account) ??
+            "Ónefndur gjaldaliður",
+          amount: (currentExpense?.amount ?? 0) + expenseAmount,
+          receiptIds: new Set([
+            ...(currentExpense?.receiptIds ?? []),
+            receipt.id,
+          ]),
+        });
       }
 
       if (
@@ -867,6 +962,230 @@ export default async function InnsynPage() {
       }
     }
   }
+
+  const expenseBreakdownRows = Array.from(
+    expenseBreakdown.values()
+  )
+    .filter((item) => Math.abs(item.amount) > 0.005)
+    .sort((a, b) => b.amount - a.amount);
+
+  // Lækkun skuldar er efnahagshreyfing, ekki rekstrarútgjald.
+  // Við byggjum þetta á bókhaldslegri tegund reikningsins en ekki nafni hans.
+  // Debetfærsla á skulda-/lánareikning lækkar skuldina.
+  const liabilityAccounts = new Set(
+    accounts
+      .filter(
+        (account) =>
+          account.type === "SHORT_TERM_LIABILITY" ||
+          account.type === "LONG_TERM_LIABILITY"
+      )
+      .map((account) => account.number)
+  );
+
+  const principalRepayments = receipts
+    .flatMap((receipt) =>
+      receipt.entries
+        .filter(
+          (entry) =>
+            liabilityAccounts.has(entry.account) &&
+            entry.debit - entry.credit > 0.005
+        )
+        .map((entry) => {
+          // Finna fyrst lán sem er staðfest á sama skuldareikning.
+          // Ef sama upprunaskjal tengist nákvæmlega einu slíku láni notum við það.
+          // Ef skjalatengingin vantar en aðeins eitt staðfest lán notar reikninginn,
+          // má samt sýna það án ágiskunar. Ef fleiri en eitt lán deila reikningnum
+          // og skjalið greinir þau ekki að, sýnum við ekkert lánsnúmer.
+          const loansForAccount = entities.filter(
+            (entity) =>
+              normalizeFactType(entity.entityType) === "LOAN" &&
+              entity.accountLinks.some(
+                (link) => link.account.number === entry.account
+              )
+          );
+
+          const loansForReceiptAndAccount = loansForAccount.filter(
+            (entity) =>
+              entity.documentLinks.some(
+                (link) => link.receiptId === receipt.id
+              )
+          );
+
+          // Eldri Festa-fylgiskjöl geta borið gamla handvirka lánatengingu frá því
+          // áður en raunverulegt Festa-lánsnúmer var staðfest. Þegar GLÖGGT hefur
+          // síðan nákvæmlega eitt Festa-lán á sama skuldareikningi sem er stutt af
+          // endurtekinni skjalatengingu (2+ skjöl), notum við þá nýrri staðfestu
+          // þekkingu aðeins til birtingar í Innsýn. Fjárhæðin kemur áfram eingöngu
+          // úr bókuðu færslunni og breytist því ekki.
+          const normalizedSourceName = normalizeText(
+            receipt.merchantName?.trim() || receipt.description?.trim() || ""
+          );
+
+          const repeatedFestaLoans = normalizedSourceName.includes("festa")
+            ? loansForAccount.filter(
+                (entity) =>
+                  normalizeText(entity.name).includes("festa") &&
+                  entity.documentLinks.length >= 2
+              )
+            : [];
+
+          const matchedLoan =
+            repeatedFestaLoans.length === 1
+              ? repeatedFestaLoans[0]
+              : loansForReceiptAndAccount.length === 1
+                ? loansForReceiptAndAccount[0]
+                : loansForReceiptAndAccount.length === 0 &&
+                    loansForAccount.length === 1
+                  ? loansForAccount[0]
+                  : null;
+
+          return {
+            receiptId: receipt.id,
+            date: receipt.date,
+            sourceName:
+              receipt.merchantName?.trim() ||
+              receipt.description?.trim() ||
+              `Fylgiskjal #${receipt.id}`,
+            account: entry.account,
+            accountName:
+              accountNameByNumber.get(entry.account) ??
+              "Skuldareikningur",
+            loanName: matchedLoan?.name?.trim() || null,
+            loanNumber: matchedLoan?.identifierValue?.trim() || null,
+            amount: entry.debit - entry.credit,
+          };
+        })
+    )
+    .sort(
+      (a, b) =>
+        (a.date?.getTime() ?? 0) -
+          (b.date?.getTime() ?? 0) ||
+        a.receiptId - b.receiptId
+    );
+
+  const principalRepaymentTotal = principalRepayments.reduce(
+    (sum, item) => sum + item.amount,
+    0
+  );
+
+
+  const expenseEntityNames = (
+    item: (typeof expenseBreakdownRows)[number],
+    entityType: "LOAN" | "VEHICLE"
+  ) => {
+    const names = new Set<string>();
+
+    for (const entity of entities) {
+      if (normalizeFactType(entity.entityType) !== entityType) {
+        continue;
+      }
+
+      const linkedToExpense = entity.documentLinks.some(
+        (link) =>
+          link.receiptId !== null &&
+          item.receiptIds.has(link.receiptId)
+      );
+
+      if (linkedToExpense) {
+        names.add(entity.name);
+      }
+    }
+
+    return Array.from(names).sort((a, b) =>
+      a.localeCompare(b, "is")
+    );
+  };
+
+  const expenseReceiptSources = (
+    item: (typeof expenseBreakdownRows)[number]
+  ) =>
+    receipts
+      .filter((receipt) => item.receiptIds.has(receipt.id))
+      .map((receipt) => {
+        const amount = receipt.entries
+          .filter((entry) => entry.account === item.account)
+          .reduce(
+            (sum, entry) => sum + (entry.debit - entry.credit),
+            0
+          );
+
+        return {
+          id: receipt.id,
+          date: receipt.date,
+          label:
+            receipt.merchantName?.trim() ||
+            receipt.description?.trim() ||
+            `Fylgiskjal #${receipt.id}`,
+          amount,
+        };
+      })
+      .filter((source) => Math.abs(source.amount) > 0.005)
+      .sort(
+        (a, b) =>
+          (a.date?.getTime() ?? 0) -
+            (b.date?.getTime() ?? 0) ||
+          a.id - b.id
+      );
+
+  const knownLoans = entities
+    .filter((entity) => normalizeFactType(entity.entityType) === "LOAN")
+    .map((entity) => ({
+      id: entity.id,
+      name: entity.name,
+      identifierValue: entity.identifierValue,
+      confirmedLiabilityAccounts: entity.accountLinks.map((link) => ({
+        number: link.account.number,
+        name: link.account.name,
+      })),
+      documentCount: entity.documentLinks.length,
+    }))
+    .filter((loan) => loan.confirmedLiabilityAccounts.length > 0)
+    .sort((a, b) => a.name.localeCompare(b.name, "is"));
+
+  const expenseInsightGroups = Array.from(
+    expenseBreakdownRows.reduce(
+      (groups, item) => {
+        const category = getExpenseInsightCategory(item.account, item.name);
+        const current = groups.get(category) ?? {
+          category,
+          amount: 0,
+          items: [] as Array<
+            (typeof expenseBreakdownRows)[number] & {
+              linkedEntities: string[];
+            }
+          >,
+        };
+
+        const linkedEntities =
+          category === "Fjármögnun og lán"
+            ? expenseEntityNames(item, "LOAN")
+            : category === "Bifreiðar"
+              ? expenseEntityNames(item, "VEHICLE")
+              : [];
+
+        current.amount += item.amount;
+        current.items.push({
+          ...item,
+          linkedEntities,
+        });
+        groups.set(category, current);
+
+        return groups;
+      },
+      new Map<
+        ExpenseInsightCategory,
+        {
+          category: ExpenseInsightCategory;
+          amount: number;
+          items: Array<
+            (typeof expenseBreakdownRows)[number] & {
+              linkedEntities: string[];
+            }
+          >;
+        }
+      >()
+    ).values()
+  ).sort((a, b) => b.amount - a.amount);
 
   const result = revenue - expenses;
   const vatBalance =
@@ -1286,6 +1605,13 @@ export default async function InnsynPage() {
   const latestPensionIncome =
     pensionIncomeMonths[0] ?? null;
 
+  // Innsýn sýnir fjárhagsmyndina sem GLÖGGT þekkir, ekki aðeins bókaðar færslur.
+  // Fyrsta skrefið: staðfestar lífeyris-/greiðslutekjur úr skjölum teljast með innkomu.
+  // Bókaðar tekjur eru áfram sýndar í sundurliðun svo uppruni tölunnar sé rekjanlegur.
+  const insightIncome = revenue + pensionIncomeCurrentYear;
+  const insightExpenses = expenses;
+  const insightBalance = insightIncome - insightExpenses;
+
   // ==========================================================
   // TRYGGINGAR – FYRSTA ALVÖRU INNSÝN-SAGAN
   //
@@ -1466,6 +1792,558 @@ export default async function InnsynPage() {
       }
     );
 
+      const insurancePremiumMovementTypes = new Set([
+    "INSURANCE_PREMIUM",
+    "INSURANCE_PREMIUM_ADJUSTMENT",
+    "INSURANCE_PREMIUM_REVERSAL",
+  ]);
+
+  const insurancePremiumMovements =
+    latestInsurance?.facts
+      .filter(
+        (fact) =>
+          fact.numberValue !== null &&
+          insurancePremiumMovementTypes.has(
+            normalizeFactType(fact.factType)
+          )
+      )
+      .map((fact) => ({
+        id: fact.id,
+        label:
+          fact.label?.trim() ||
+          "Ógreind trygging",
+        factType:
+          normalizeFactType(fact.factType),
+        amount:
+          Number(fact.numberValue),
+        date:
+          fact.dateValue,
+        periodStart:
+          fact.periodStart,
+        periodEnd:
+          fact.periodEnd,
+      }))
+      .filter((movement) =>
+        Number.isFinite(movement.amount)
+      ) ?? [];
+
+  const insurancePolicies = Array.from(
+    insurancePremiumMovements.reduce(
+      (groups, movement) => {
+        const current =
+          groups.get(movement.label) ?? {
+            label: movement.label,
+            amount: 0,
+            movements: [] as typeof insurancePremiumMovements,
+          };
+
+        current.amount += movement.amount;
+        current.movements.push(movement);
+
+        groups.set(
+          movement.label,
+          current
+        );
+
+        return groups;
+      },
+      new Map<
+        string,
+        {
+          label: string;
+          amount: number;
+          movements: typeof insurancePremiumMovements;
+        }
+      >()
+    ).values()
+  )
+    .map((policy) => {
+      const parts =
+        policy.label
+          .split("·")
+          .map((part) => part.trim())
+          .filter(Boolean);
+
+      const periodStart =
+  policy.movements
+    .map((movement) => movement.periodStart)
+    .filter((value): value is Date => value !== null)
+    .sort((a, b) => a.getTime() - b.getTime())[0] ?? null;
+
+const periodEnd =
+  policy.movements
+    .map((movement) => movement.periodEnd)
+    .filter((value): value is Date => value !== null)
+    .sort((a, b) => b.getTime() - a.getTime())[0] ?? null;
+
+return {
+  ...policy,
+  insuredItem:
+    parts[0] ??
+    policy.label,
+  policyNumber:
+    parts[1] ?? null,
+  insuranceType:
+    parts[2] ?? null,
+  periodStart,
+  periodEnd,
+};
+    })
+    .sort((a, b) =>
+      a.insuredItem.localeCompare(
+        b.insuredItem,
+        "is"
+      )
+    );
+
+    const insuranceAssetGroups = Array.from(
+  insurancePolicies.reduce(
+    (groups, policy) => {
+      const key = policy.insuredItem;
+
+      const current =
+        groups.get(key) ?? {
+          insuredItem: policy.insuredItem,
+          amount: 0,
+          policies: [] as typeof insurancePolicies,
+        };
+
+      current.amount += policy.amount;
+      current.policies.push(policy);
+
+      groups.set(key, current);
+
+      return groups;
+    },
+    new Map<
+      string,
+      {
+        insuredItem: string;
+        amount: number;
+        policies: typeof insurancePolicies;
+      }
+    >()
+  ).values()
+).sort((a, b) =>
+  a.insuredItem.localeCompare(b.insuredItem, "is")
+);
+
+  const insurancePropertyNames = new Set(
+    insuranceProperties.map((property) =>
+      normalizeText(property.name)
+    )
+  );
+
+  const householdInsuranceAssetGroups =
+    insuranceAssetGroups.filter((asset) => {
+      const assetName = normalizeText(asset.insuredItem);
+
+      return Array.from(insurancePropertyNames).some(
+        (propertyName) =>
+          assetName.includes(propertyName) ||
+          propertyName.includes(assetName)
+      );
+    });
+
+  const householdInsuranceTotal =
+    householdInsuranceAssetGroups.reduce(
+      (sum, asset) => sum + asset.amount,
+      0
+    );
+
+  // ==========================================================
+  // FASTEIGNAGJÖLD ÚR FRUMGÖGNUM
+  //
+  // Þetta er þekking úr greindum skjölum, ekki bókuð útgjöld.
+  // Við notum aðeins heildarálagningu sem aðaltölu og sýnum
+  // gjaldaliðina sem sundurliðun svo sama upphæð teljist ekki tvisvar.
+  // ==========================================================
+
+  const propertyAssessmentCandidates = facts
+    .filter(
+      (fact) =>
+        fact.numberValue !== null &&
+        normalizeFactType(fact.factType) === "FEE" &&
+        normalizeText(fact.label).includes("samtals alogd gjold")
+    )
+    .map((totalFact) => {
+      const key = documentKey(
+        totalFact.receiptId,
+        totalFact.documentId
+      );
+
+      const propertyEntity = entities.find(
+        (entity) =>
+          normalizeFactType(entity.entityType) === "PROPERTY" &&
+          entity.documentLinks.some(
+            (link) =>
+              documentKey(
+                link.receiptId,
+                link.documentId
+              ) === key
+          )
+      );
+
+      if (!propertyEntity) {
+        return null;
+      }
+
+      const detailFacts = facts
+        .filter(
+          (fact) =>
+            documentKey(
+              fact.receiptId,
+              fact.documentId
+            ) === key &&
+            fact.id !== totalFact.id &&
+            fact.numberValue !== null &&
+            normalizeFactType(fact.factType) === "FEE"
+        )
+        .map((fact) => ({
+          id: fact.id,
+          label:
+            fact.label?.trim() ||
+            "Ógreint fasteignagjald",
+          amount: Number(fact.numberValue),
+        }))
+        .filter(
+          (item) =>
+            Number.isFinite(item.amount) &&
+            Math.abs(item.amount) > 0.005
+        );
+
+      const amount = Number(totalFact.numberValue);
+
+      if (!Number.isFinite(amount)) {
+        return null;
+      }
+
+      return {
+        id: totalFact.id,
+        receiptId: totalFact.receiptId,
+        documentId: totalFact.documentId,
+        propertyName: propertyEntity.name,
+        propertyIdentifier: propertyEntity.identifierValue,
+        amount,
+        periodStart: totalFact.periodStart,
+        periodEnd: totalFact.periodEnd,
+        createdAt: totalFact.createdAt,
+        details: detailFacts,
+      };
+    })
+    .filter(
+      (
+        assessment
+      ): assessment is NonNullable<typeof assessment> =>
+        assessment !== null
+    );
+
+  // Ef sama álagning hefur óvart verið greind úr tvíteknu skjali
+  // sýnum við hana aðeins einu sinni í Innsýn.
+  const propertyAssessments = Array.from(
+    propertyAssessmentCandidates.reduce(
+      (deduped, assessment) => {
+        const year =
+          assessment.periodStart?.getFullYear() ??
+          assessment.periodEnd?.getFullYear() ??
+          "unknown";
+
+        const propertyKey = normalizeText(
+          assessment.propertyIdentifier ||
+            assessment.propertyName
+        );
+
+        const key =
+          `${propertyKey}:${year}:${assessment.amount}`;
+
+        const current = deduped.get(key);
+
+        if (
+          !current ||
+          assessment.createdAt > current.createdAt
+        ) {
+          deduped.set(key, assessment);
+        }
+
+        return deduped;
+      },
+      new Map<
+        string,
+        (typeof propertyAssessmentCandidates)[number]
+      >()
+    ).values()
+  ).sort(
+    (a, b) =>
+      a.propertyName.localeCompare(
+        b.propertyName,
+        "is"
+      ) ||
+      (b.periodStart?.getTime() ?? 0) -
+        (a.periodStart?.getTime() ?? 0)
+  );
+
+  // ==========================================================
+  // VEITUR ÚR FRUMGÖGNUM
+  //
+  // Heildarreikningur er sýndur einu sinni. Undirliðirnir eru
+  // sundurliðun en leggjast ekki aftur við heildina.
+  // ==========================================================
+
+  const utilityDocumentGroups = Array.from(
+    facts.reduce(
+      (groups, fact) => {
+        if (
+          fact.receiptId === null &&
+          fact.documentId === null
+        ) {
+          return groups;
+        }
+
+        const key = documentKey(
+          fact.receiptId,
+          fact.documentId
+        );
+
+        const current =
+          groups.get(key) ?? {
+            receiptId: fact.receiptId,
+            documentId: fact.documentId,
+            facts: [] as typeof facts,
+          };
+
+        current.facts.push(fact);
+        groups.set(key, current);
+        return groups;
+      },
+      new Map<
+        string,
+        {
+          receiptId: number | null;
+          documentId: number | null;
+          facts: typeof facts;
+        }
+      >()
+    ).values()
+  );
+
+  const householdUtilityBills = utilityDocumentGroups
+    .map((group) => {
+      const key = documentKey(
+        group.receiptId,
+        group.documentId
+      );
+
+      const serviceLocation = entities.find(
+        (entity) =>
+          normalizeFactType(entity.entityType) ===
+            "SERVICE_LOCATION" &&
+          entity.documentLinks.some(
+            (link) =>
+              documentKey(
+                link.receiptId,
+                link.documentId
+              ) === key
+          )
+      );
+
+      if (!serviceLocation) {
+        return null;
+      }
+
+      const totalFact = group.facts.find((fact) => {
+        if (fact.numberValue === null) {
+          return false;
+        }
+
+        const label = normalizeText(fact.label);
+        return (
+          label.includes("samtals til greidslu") ||
+          label.includes("heildarupphaed reiknings") ||
+          label.includes("reikningur samtals")
+        );
+      });
+
+      if (!totalFact?.numberValue) {
+        return null;
+      }
+
+      const amount = Number(totalFact.numberValue);
+
+      if (!Number.isFinite(amount)) {
+        return null;
+      }
+
+      const detailFacts = group.facts
+        .filter((fact) => {
+          if (
+            fact.id === totalFact.id ||
+            fact.numberValue === null
+          ) {
+            return false;
+          }
+
+          const label = normalizeText(fact.label);
+
+          return (
+            label.includes("rafmagn") ||
+            label.includes("rafdreif") ||
+            label.includes("hitaveit")
+          );
+        })
+        .map((fact) => ({
+          id: fact.id,
+          label:
+            fact.label?.trim() ||
+            "Ógreind veita",
+          amount: Number(fact.numberValue),
+        }))
+        .filter(
+          (item) =>
+            Number.isFinite(item.amount) &&
+            Math.abs(item.amount) > 0.005
+        );
+
+      const periodFact = group.facts.find(
+        (fact) =>
+          fact.periodStart !== null ||
+          fact.periodEnd !== null
+      );
+
+      return {
+        id: totalFact.id,
+        receiptId: group.receiptId,
+        documentId: group.documentId,
+        propertyName: serviceLocation.name,
+        propertyIdentifier:
+          serviceLocation.identifierValue,
+        amount,
+        periodStart:
+          periodFact?.periodStart ?? null,
+        periodEnd:
+          periodFact?.periodEnd ?? null,
+        createdAt: totalFact.createdAt,
+        details: detailFacts,
+      };
+    })
+    .filter(
+      (
+        bill
+      ): bill is NonNullable<typeof bill> =>
+        bill !== null
+    );
+
+  const householdPropertyGroups = Array.from(
+    [
+      ...householdInsuranceAssetGroups.map((asset) => ({
+        name: asset.insuredItem,
+        insurance: asset,
+        assessment: null as
+          | (typeof propertyAssessments)[number]
+          | null,
+        utility: null as
+          | (typeof householdUtilityBills)[number]
+          | null,
+      })),
+      ...propertyAssessments.map((assessment) => ({
+        name: assessment.propertyName,
+        insurance: null as
+          | (typeof householdInsuranceAssetGroups)[number]
+          | null,
+        assessment,
+        utility: null as
+          | (typeof householdUtilityBills)[number]
+          | null,
+      })),
+      ...householdUtilityBills.map((utility) => ({
+        name: utility.propertyName,
+        insurance: null as
+          | (typeof householdInsuranceAssetGroups)[number]
+          | null,
+        assessment: null as
+          | (typeof propertyAssessments)[number]
+          | null,
+        utility,
+      })),
+    ].reduce(
+      (groups, item) => {
+        const normalizedName = normalizeText(item.name);
+
+        const existingEntry = Array.from(
+          groups.entries()
+        ).find(([key]) =>
+          key.includes(normalizedName) ||
+          normalizedName.includes(key)
+        );
+
+        const key =
+          existingEntry?.[0] ?? normalizedName;
+
+        const current =
+          existingEntry?.[1] ?? {
+            name: item.name,
+            insurance: null as
+              | (typeof householdInsuranceAssetGroups)[number]
+              | null,
+            assessments: [] as typeof propertyAssessments,
+            utilities: [] as typeof householdUtilityBills,
+          };
+
+        if (item.insurance) {
+          current.insurance = item.insurance;
+        }
+
+        if (item.assessment) {
+          current.assessments.push(item.assessment);
+        }
+
+        if (item.utility) {
+          current.utilities.push(item.utility);
+        }
+
+        groups.set(key, current);
+        return groups;
+      },
+      new Map<
+        string,
+        {
+          name: string;
+          insurance:
+            | (typeof householdInsuranceAssetGroups)[number]
+            | null;
+          assessments: typeof propertyAssessments;
+          utilities: typeof householdUtilityBills;
+        }
+      >()
+    ).values()
+  ).sort((a, b) =>
+    a.name.localeCompare(b.name, "is")
+  );
+
+  const householdSourceDataTotal =
+    householdPropertyGroups.reduce(
+      (sum, property) =>
+        sum +
+        (property.insurance?.amount ?? 0) +
+        property.assessments.reduce(
+          (assessmentSum, assessment) =>
+            assessmentSum + assessment.amount,
+          0
+        ) +
+        property.utilities.reduce(
+          (utilitySum, utility) =>
+            utilitySum + utility.amount,
+          0
+        ),
+      0
+    );
+
+  const insurancePremiumNetTotal =
+    insurancePolicies.reduce(
+      (sum, policy) =>
+        sum + policy.amount,
+      0
+    );
+
   let quotedAnnualPremium:
     | number
     | null = null;
@@ -1578,958 +2456,1122 @@ export default async function InnsynPage() {
 
   return (
     <div className="p-6 md:p-8">
-      <div>
-        <p className="text-sm font-semibold uppercase tracking-wide text-slate-500">
-          GLÖGGT Innsýn
-        </p>
-
-        <h1 className="mt-1 text-3xl font-bold text-slate-900">
-          {company.name}
-        </h1>
-
-        <p className="mt-2 max-w-3xl text-slate-600">
-          Reksturinn í tölum og sú þekking
-          sem GLÖGGT hefur byggt upp úr
-          skjölum fyrirtækisins.
-        </p>
-      </div>
-
-      <div className="mt-8 grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
-        <div className="rounded-xl border bg-white p-5">
-          <p className="text-sm font-medium text-slate-500">
-            Tekjur
-          </p>
-
-          <p className="mt-2 text-2xl font-bold text-slate-900">
-            {formatKr(revenue)}
-          </p>
-        </div>
-
-        <div className="rounded-xl border bg-white p-5">
-          <p className="text-sm font-medium text-slate-500">
-            Gjöld
-          </p>
-
-          <p className="mt-2 text-2xl font-bold text-slate-900">
-            {formatKr(expenses)}
-          </p>
-        </div>
-
-        <div className="rounded-xl border bg-white p-5">
-          <p className="text-sm font-medium text-slate-500">
-            Rekstrarniðurstaða
-          </p>
-
-          <p className="mt-2 text-2xl font-bold text-slate-900">
-            {formatKr(result)}
-          </p>
-        </div>
-
-        <div className="rounded-xl border bg-white p-5">
-          <p className="text-sm font-medium text-slate-500">
-            Þekkingaratriði
-          </p>
-
-          <p className="mt-2 text-2xl font-bold text-slate-900">
-            {totalKnowledgeItems}
-          </p>
-
-          <p className="mt-1 text-xs text-slate-500">
-            {entityCount} fyrirbæri ·{" "}
-            {factCount} staðreyndir
-          </p>
-        </div>
-      </div>
-
-      {pensionIncomeDocumentCount > 0 && (
-        <section className="mt-8 overflow-hidden rounded-xl border bg-white">
-          <div className="border-b bg-slate-50 p-5">
-            <p className="text-xs font-semibold uppercase tracking-wide text-slate-500">
-              Innsýn úr skjölum
+      <div className="mx-auto max-w-7xl">
+        <div className="flex flex-wrap items-end justify-between gap-4">
+          <div>
+            <p className="text-sm font-semibold uppercase tracking-[0.18em] text-slate-500">
+              GLÖGGT Innsýn
             </p>
-
-            <h2 className="mt-1 text-2xl font-bold text-slate-900">
-              Tekjur úr örorkulífeyri og lífeyrissjóðum
-            </h2>
-
-            <p className="mt-2 max-w-3xl text-sm text-slate-600">
-              Brúttótekjur sem GLÖGGT hefur greint úr raunverulegum
-              greiðsluskjölum. Tekjuáætlanir eru ekki taldar með og
-              bifreiðatengdar uppbætur eru áfram aðskildar. Greiðslustofa
-              lífeyrissjóða er sýnd sem greiðandi þegar skjalið greinir
-              Gildi eða Festu sem réttindasjóð/tekjuuppsprettu. Óljós
-              tengsl eru áfram merkt óstaðfest.
+            <h1 className="mt-1 text-3xl font-bold tracking-tight text-slate-950 md:text-4xl">
+              {company.name}
+            </h1>
+            <p className="mt-2 max-w-2xl text-slate-600">
+              Staðan í dag, byggð á bókhaldi og þeim gögnum sem GLÖGGT þekkir.
             </p>
           </div>
 
-          <div className="grid gap-4 border-b p-5 sm:grid-cols-3">
-            <div className="rounded-xl bg-slate-50 p-4">
-              <p className="text-sm text-slate-500">
-                Greint samtals {currentYear}
-              </p>
+          <div className="rounded-full border bg-white px-4 py-2 text-sm text-slate-600 shadow-sm">
+            {currentYear}
+          </div>
+        </div>
 
-              <p className="mt-1 text-xl font-bold text-slate-900">
-                {formatKr(pensionIncomeCurrentYear)}
+        <section className="mt-8 overflow-hidden rounded-2xl border bg-white shadow-sm">
+          <div className="grid lg:grid-cols-[1.35fr_1fr]">
+            <div className="p-6 md:p-8">
+              <p className="text-sm font-semibold text-slate-500">Staðan í dag</p>
+              <p
+                className={`mt-2 text-4xl font-bold tracking-tight md:text-5xl ${
+                  insightBalance >= 0 ? "text-emerald-700" : "text-slate-950"
+                }`}
+              >
+                {formatKr(insightBalance)}
               </p>
-
-              <p className="mt-1 text-xs text-slate-500">
-                Brúttó, fyrir staðgreiðslu
+              <p className="mt-3 text-sm text-slate-600">
+                Innkoma að frádregnum útgjöldum samkvæmt þeim gögnum sem GLÖGGT þekkir.
               </p>
-            </div>
-
-            <div className="rounded-xl bg-slate-50 p-4">
-              <p className="text-sm text-slate-500">
-                Nýjasta greinda tímabil
-              </p>
-
-              <p className="mt-1 text-xl font-bold text-slate-900">
-                {latestPensionIncome
-                  ? formatKr(latestPensionIncome.amount)
-                  : "Ekki greint"}
-              </p>
-
-              <p className="mt-1 text-xs text-slate-500">
-                {latestPensionIncome
-                  ? formatYearMonth(
-                      latestPensionIncome.period
-                    )
-                  : "—"}
+              <p className="mt-2 text-xs text-slate-400">
+                Samanburður við fyrra ár og áætlun birtist hér þegar samanburðargögn liggja fyrir.
               </p>
             </div>
 
-            <div className="rounded-xl bg-slate-50 p-4">
-              <p className="text-sm text-slate-500">
-                Greind greiðsluskjöl
+            <div className="grid grid-cols-2 border-t bg-slate-50/70 lg:border-l lg:border-t-0">
+              <div className="border-r p-5 md:p-6">
+                <a href="#innkoma-greining" className="block rounded-lg focus:outline-none focus:ring-2 focus:ring-slate-300">
+                  <p className="text-sm font-medium text-slate-500">Innkoma</p>
+                  <p className="mt-2 text-2xl font-bold text-slate-950">
+                    {formatKr(insightIncome)}
+                  </p>
+                  <p className="mt-1 text-xs font-medium text-slate-500">Sjá nánar →</p>
+                </a>
+              </div>
+              <div className="p-5 md:p-6">
+                <a href="#utgjold-greining" className="block rounded-lg focus:outline-none focus:ring-2 focus:ring-slate-300">
+                  <p className="text-sm font-medium text-slate-500">Útgjöld</p>
+                  <p className="mt-2 text-2xl font-bold text-slate-950">
+                    {formatKr(insightExpenses)}
+                  </p>
+                  <p className="mt-1 text-xs font-medium text-slate-500">Sjá nánar →</p>
+                </a>
+              </div>
+              <div className="col-span-2 border-t p-5 md:p-6">
+                <div className="flex flex-wrap items-center justify-between gap-3">
+                  <div>
+                    <p className="text-sm font-medium text-slate-500">VSK-staða</p>
+                    <p className="mt-1 text-xl font-bold text-slate-950">
+                      {formatKr(vatBalance)}
+                    </p>
+                  </div>
+                  <a
+                    href="/vsk"
+                    className="text-sm font-semibold text-slate-700 hover:text-slate-950"
+                  >
+                    Sjá VSK →
+                  </a>
+                </div>
+              </div>
+            </div>
+          </div>
+        </section>
+
+        <section className="mt-6 rounded-2xl border bg-white p-5 shadow-sm md:p-6">
+          <div className="flex flex-wrap items-center justify-between gap-3">
+            <div>
+              <p className="text-xs font-semibold uppercase tracking-[0.16em] text-slate-500">
+                GLÖGGT vekur athygli á
               </p>
-
-              <p className="mt-1 text-xl font-bold text-slate-900">
-                {pensionIncomeDocumentCount}
-              </p>
-
-              {pensionIncomeWithoutPeriod > 0 && (
-                <p className="mt-1 text-xs text-slate-500">
-                  {pensionIncomeWithoutPeriod} án greinds tímabils
-                </p>
-              )}
-
-              {pensionIncomeWithoutConfirmedPayer > 0 && (
-                <p className="mt-1 text-xs text-amber-700">
-                  {pensionIncomeWithoutConfirmedPayer} með óstaðfestan
-                  greiðanda
-                </p>
-              )}
+              <h2 className="mt-1 text-xl font-bold text-slate-950">
+                Það sem skiptir mestu máli núna
+              </h2>
             </div>
           </div>
 
-          {pensionIncomeMonths.length > 0 && (
-            <div className="p-5">
-              <h3 className="font-semibold text-slate-900">
-                Greint eftir mánuðum
-              </h3>
+          <div className="mt-5 grid gap-3 lg:grid-cols-3">
+            <div className="rounded-xl border bg-slate-50/60 p-4">
+              <div className="flex items-start gap-3">
+                <span
+                  className={`mt-1 h-2.5 w-2.5 shrink-0 rounded-full ${
+                    insightBalance < 0 ? "bg-amber-500" : "bg-emerald-500"
+                  }`}
+                />
+                <div>
+                  <p className="font-semibold text-slate-900">Rekstur</p>
+                  <p className="mt-1 text-sm leading-6 text-slate-600">
+                    {insightBalance < 0
+                      ? `Útgjöld eru ${formatKr(Math.abs(insightBalance))} umfram þekkta innkomu.`
+                      : `Þekkt innkoma er ${formatKr(insightBalance)} umfram útgjöld.`}
+                  </p>
+                </div>
+              </div>
+            </div>
 
-              <div className="mt-3 divide-y rounded-lg border">
-                {pensionIncomeMonths
-                  .slice(0, 12)
-                  .map((item) => (
-                    <div
-                      key={item.period}
-                      className="px-4 py-3 text-sm"
-                    >
-                      <div className="flex items-center justify-between gap-4">
-                        <span className="font-medium text-slate-700">
-                          {formatYearMonth(item.period)}
-                        </span>
+            <div className="rounded-xl border bg-slate-50/60 p-4">
+              <div className="flex items-start gap-3">
+                <span
+                  className={`mt-1 h-2.5 w-2.5 shrink-0 rounded-full ${
+                    pensionIncomeWithoutPeriod > 0 ||
+                    pensionIncomeWithoutConfirmedPayer > 0
+                      ? "bg-amber-500"
+                      : "bg-emerald-500"
+                  }`}
+                />
+                <div>
+                  <p className="font-semibold text-slate-900">Gögn úr skjölum</p>
+                  <p className="mt-1 text-sm leading-6 text-slate-600">
+                    {pensionIncomeWithoutPeriod > 0 ||
+                    pensionIncomeWithoutConfirmedPayer > 0
+                      ? `${pensionIncomeWithoutPeriod + pensionIncomeWithoutConfirmedPayer} atriði í lífeyrisgögnum þarfnast nánari staðfestingar.`
+                      : hasInsightData
+                        ? "Engin augljós óstaðfest lífeyrisatriði í samantektinni."
+                        : "Innsýn er enn að byggjast upp úr skjölum fyrirtækisins."}
+                  </p>
+                </div>
+              </div>
+            </div>
 
+            <div className="rounded-xl border bg-slate-50/60 p-4">
+              <div className="flex items-start gap-3">
+                <span
+                  className={`mt-1 h-2.5 w-2.5 shrink-0 rounded-full ${
+                    activeProcessingJobs > 0 ? "bg-sky-500" : "bg-emerald-500"
+                  }`}
+                />
+                <div>
+                  <p className="font-semibold text-slate-900">Innsýn-vinnsla</p>
+                  <p className="mt-1 text-sm leading-6 text-slate-600">
+                    {activeProcessingJobs > 0
+                      ? `${activeProcessingJobs} Innsýn-vinnsla er í gangi.`
+                      : "Engin virk Innsýn-vinnsla bíður núna."}
+                  </p>
+                </div>
+              </div>
+            </div>
+          </div>
+        </section>
+
+        <section id="utgjold-greining" className="mt-6 scroll-mt-6 rounded-2xl border bg-white p-5 shadow-sm md:p-6">
+          <p className="text-xs font-semibold uppercase tracking-[0.16em] text-slate-500">
+            Útgjöld
+          </p>
+          <div className="mt-2 flex flex-wrap items-end justify-between gap-4">
+            <div>
+              <h2 className="text-xl font-bold text-slate-950">Hvað hefur farið út</h2>
+              <p className="mt-2 text-3xl font-bold text-slate-950">
+                {formatKr(insightExpenses)}
+              </p>
+              <p className="mt-1 text-sm text-slate-500">
+                Staðfest útgjöld sem GLÖGGT getur nú tengt við bókaðar færslur.
+              </p>
+            </div>
+            <div className="rounded-xl bg-slate-50 px-4 py-3 text-right">
+              <p className="text-xs text-slate-500">Bókuð útgjöld</p>
+              <p className="mt-1 font-bold text-slate-900">{formatKr(expenses)}</p>
+            </div>
+          </div>
+
+          <details className="mt-5 rounded-xl border">
+            <summary className="cursor-pointer p-4 text-sm font-semibold text-slate-700">
+              Sjá nánari greiningu →
+            </summary>
+            <div className="space-y-3 border-t p-4 text-sm">
+              {householdPropertyGroups.length > 0 && (
+                <details className="overflow-hidden rounded-lg border bg-slate-50/70">
+                  <summary className="cursor-pointer list-none p-3">
+                    <div className="flex items-center justify-between gap-4">
+                      <div className="min-w-0">
+                        <p className="font-semibold text-slate-900">
+                          Kostnaður heimilis
+                        </p>
+                        <p className="mt-0.5 text-xs text-slate-500">
+                          Greind gögn um fasteignir úr frumgögnum GLÖGGT
+                        </p>
+                      </div>
+                      <span className="shrink-0 font-bold text-slate-950">
+                        {formatKr(householdSourceDataTotal)}
+                      </span>
+                    </div>
+                  </summary>
+
+                  <div className="space-y-3 border-t bg-white p-3">
+                    <p className="text-xs leading-5 text-slate-500">
+                      GLÖGGT hefur greint þessi gögn úr frumgögnum. Þau eru
+                      sýnd til upplýsingar og breyta ekki bókuðum útgjöldum
+                      fyrr en bókun liggur fyrir.
+                    </p>
+
+                    {householdPropertyGroups.map((property) => (
+                      <div
+                        key={property.name}
+                        className="rounded-lg bg-slate-50 p-3"
+                      >
+                        <div className="flex items-start justify-between gap-4">
+                          <div className="min-w-0">
+                            <p className="font-semibold text-slate-900">
+                              {property.name}
+                            </p>
+                            <p className="mt-0.5 text-xs text-slate-500">
+                              {[
+                                property.insurance ? "Tryggingar" : null,
+                                property.assessments.length > 0
+                                  ? "Fasteignagjöld"
+                                  : null,
+                                property.utilities.length > 0
+                                  ? "Veitur"
+                                  : null,
+                              ]
+                                .filter(Boolean)
+                                .join(" · ")}
+                            </p>
+                          </div>
+                          <span className="shrink-0 font-semibold text-slate-900">
+                            {formatKr(
+                              (property.insurance?.amount ?? 0) +
+                                property.assessments.reduce(
+                                  (sum, assessment) =>
+                                    sum + assessment.amount,
+                                  0
+                                ) +
+                                property.utilities.reduce(
+                                  (sum, utility) =>
+                                    sum + utility.amount,
+                                  0
+                                )
+                            )}
+                          </span>
+                        </div>
+
+                        <div className="mt-3 space-y-3 border-t border-slate-200 pt-3">
+                          {property.insurance && (
+                            <details className="rounded-md bg-white">
+                              <summary className="cursor-pointer list-none px-3 py-2">
+                                <div className="flex items-center justify-between gap-3">
+                                  <div>
+                                    <p className="font-medium text-slate-800">
+                                      Tryggingar
+                                    </p>
+                                    <p className="mt-0.5 text-xs text-slate-500">
+                                      {property.insurance.policies.length} skírteini
+                                    </p>
+                                  </div>
+                                  <span className="font-semibold text-slate-900">
+                                    {formatKr(property.insurance.amount)}
+                                  </span>
+                                </div>
+                              </summary>
+
+                              <div className="space-y-2 border-t border-slate-100 p-2">
+                                {property.insurance.policies.map((policy) => (
+                                  <div
+                                    key={policy.label}
+                                    className="flex flex-wrap items-start justify-between gap-3 rounded-md bg-slate-50 px-3 py-2"
+                                  >
+                                    <div>
+                                      <p className="font-medium text-slate-800">
+                                        {policy.insuranceType ?? "Trygging"}
+                                      </p>
+                                      {policy.policyNumber && (
+                                        <p className="mt-0.5 text-xs text-slate-400">
+                                          Skírteini {policy.policyNumber}
+                                        </p>
+                                      )}
+                                      {(policy.periodStart || policy.periodEnd) && (
+                                        <p className="mt-0.5 text-xs text-slate-500">
+                                          {formatDate(policy.periodStart)} –{" "}
+                                          {formatDate(policy.periodEnd)}
+                                        </p>
+                                      )}
+                                    </div>
+                                    <span className="shrink-0 font-semibold text-slate-900">
+                                      {formatKr(policy.amount)}
+                                    </span>
+                                  </div>
+                                ))}
+                              </div>
+                            </details>
+                          )}
+
+                          {property.assessments.map((assessment) => {
+                            const assessmentYear =
+                              assessment.periodStart?.getFullYear() ??
+                              assessment.periodEnd?.getFullYear() ??
+                              null;
+
+                            return (
+                              <details
+                                key={assessment.id}
+                                className="rounded-md bg-white"
+                              >
+                                <summary className="cursor-pointer list-none px-3 py-2">
+                                  <div className="flex items-center justify-between gap-3">
+                                    <div>
+                                      <p className="font-medium text-slate-800">
+                                        Fasteignagjöld
+                                        {assessmentYear
+                                          ? ` ${assessmentYear}`
+                                          : ""}
+                                      </p>
+                                      <p className="mt-0.5 text-xs text-slate-500">
+                                        Álögð gjöld · ekki staðfest greiðsla
+                                      </p>
+                                    </div>
+                                    <span className="font-semibold text-slate-900">
+                                      {formatKr(assessment.amount)}
+                                    </span>
+                                  </div>
+                                </summary>
+
+                                <div className="space-y-2 border-t border-slate-100 p-2">
+                                  {assessment.details.map((detail) => (
+                                    <div
+                                      key={detail.id}
+                                      className="flex items-center justify-between gap-3 rounded-md bg-slate-50 px-3 py-2"
+                                    >
+                                      <span className="text-slate-700">
+                                        {detail.label}
+                                      </span>
+                                      <span className="shrink-0 font-semibold text-slate-900">
+                                        {formatKr(detail.amount)}
+                                      </span>
+                                    </div>
+                                  ))}
+
+                                  {assessment.receiptId !== null && (
+                                    <div className="flex justify-end px-1 pt-1">
+                                      <a
+                                        href={`/fylgiskjol/${assessment.receiptId}`}
+                                        className="text-xs font-semibold text-slate-600 hover:text-slate-950"
+                                      >
+                                        Opna frumskjal →
+                                      </a>
+                                    </div>
+                                  )}
+                                </div>
+                              </details>
+                            );
+                          })}
+
+                          {property.utilities.map((utility) => {
+                            const utilityPeriod =
+                              utility.periodStart ||
+                              utility.periodEnd
+                                ? formatYearMonth(
+                                    yearMonthFromDate(
+                                      utility.periodStart ??
+                                        utility.periodEnd
+                                    )
+                                  )
+                                : null;
+
+                            return (
+                              <details
+                                key={utility.id}
+                                className="rounded-md bg-white"
+                              >
+                                <summary className="cursor-pointer list-none px-3 py-2">
+                                  <div className="flex items-center justify-between gap-3">
+                                    <div>
+                                      <p className="font-medium text-slate-800">
+                                        Veitur
+                                        {utilityPeriod
+                                          ? ` · ${utilityPeriod}`
+                                          : ""}
+                                      </p>
+                                      <p className="mt-0.5 text-xs text-slate-500">
+                                        Reikningur úr frumgögnum · ekki staðfest greiðsla
+                                      </p>
+                                    </div>
+                                    <span className="font-semibold text-slate-900">
+                                      {formatKr(utility.amount)}
+                                    </span>
+                                  </div>
+                                </summary>
+
+                                <div className="space-y-2 border-t border-slate-100 p-2">
+                                  {utility.details.map((detail) => (
+                                    <div
+                                      key={detail.id}
+                                      className="flex items-center justify-between gap-3 rounded-md bg-slate-50 px-3 py-2"
+                                    >
+                                      <span className="text-slate-700">
+                                        {detail.label}
+                                      </span>
+                                      <span className="shrink-0 font-semibold text-slate-900">
+                                        {formatKr(detail.amount)}
+                                      </span>
+                                    </div>
+                                  ))}
+
+                                  {utility.receiptId !== null && (
+                                    <div className="flex justify-end px-1 pt-1">
+                                      <a
+                                        href={`/fylgiskjol/${utility.receiptId}`}
+                                        className="text-xs font-semibold text-slate-600 hover:text-slate-950"
+                                      >
+                                        Opna frumskjal →
+                                      </a>
+                                    </div>
+                                  )}
+                                </div>
+                              </details>
+                            );
+                          })}
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                </details>
+              )}
+
+              {expenseInsightGroups.length > 0 ? (
+                <div className="space-y-3">
+                  {expenseInsightGroups.map((group) => (
+                    <details key={group.category} className="overflow-hidden rounded-lg border bg-slate-50/70">
+                      <summary className="cursor-pointer list-none p-3">
+                        <div className="flex items-center justify-between gap-4">
+                          <div className="min-w-0">
+                            <p className="font-semibold text-slate-900">
+                              {group.category}
+                            </p>
+                            <p className="mt-0.5 text-xs text-slate-500">
+                              {group.items.length} {group.items.length === 1 ? "bókhaldsliður" : "bókhaldsliðir"}
+                            </p>
+                          </div>
+                          <span className="shrink-0 font-bold text-slate-950">
+                            {formatKr(group.amount)}
+                          </span>
+                        </div>
+                      </summary>
+
+                      <div className="space-y-2 border-t bg-white p-3">
+                        {group.category === "Fjármögnun og lán" && knownLoans.length > 0 && (
+                          <div className="mb-3 rounded-lg border border-slate-200 bg-slate-50 p-3">
+                            <p className="text-xs font-semibold uppercase tracking-[0.12em] text-slate-500">
+                              Lán sem GLÖGGT þekkir
+                            </p>
+                            <div className="mt-2 space-y-2">
+                              {knownLoans.map((loan) => (
+                                <div
+                                  key={loan.id}
+                                  className="flex flex-wrap items-start justify-between gap-2 rounded-md bg-white px-3 py-2"
+                                >
+                                  <div className="min-w-0">
+                                    <p className="font-medium text-slate-800">
+                                      {loan.name}
+                                    </p>
+                                    <p className="mt-0.5 text-xs text-slate-500">
+                                      {loan.confirmedLiabilityAccounts.map((account) =>
+                                        `${account.number} – ${account.name}`
+                                      ).join(" · ")}
+                                    </p>
+                                  </div>
+                                  <span className="shrink-0 text-xs font-medium text-emerald-700">
+                                    Staðfest tenging
+                                  </span>
+                                </div>
+                              ))}
+                            </div>
+                            <p className="mt-2 text-xs leading-5 text-slate-500">
+                              Þessi lánatenging er þekking úr skjölum og staðfestingum. Hún breytir ekki bókuðum útgjöldum fyrr en færsla er bókuð.
+                            </p>
+                          </div>
+                        )}
+
+                        {group.items.map((item) => {
+                          const sources = expenseReceiptSources(item);
+
+                          return (
+                            <div
+                              key={item.account}
+                              className="rounded-lg bg-slate-50 p-3"
+                            >
+                              <div className="flex items-start justify-between gap-4">
+                                <div className="min-w-0">
+                                  <p className="font-medium text-slate-800">
+                                    {item.name}
+                                  </p>
+                                  <p className="mt-0.5 text-xs text-slate-500">
+                                    Reikningur {item.account}
+                                  </p>
+
+                                  {group.category === "Fjármögnun og lán" && (
+                                    <p className="mt-1 text-xs text-slate-500">
+                                      {item.linkedEntities.length === 1
+                                        ? `Lán: ${item.linkedEntities[0]}`
+                                        : item.linkedEntities.length > 1
+                                          ? `Möguleg lán: ${item.linkedEntities.join(" · ")}`
+                                          : "Ekki tengt við ákveðið lán"}
+                                    </p>
+                                  )}
+
+                                  {group.category === "Bifreiðar" && (
+                                    <p className="mt-1 text-xs text-slate-500">
+                                      {item.linkedEntities.length === 1
+                                        ? `Bifreið: ${item.linkedEntities[0]}`
+                                        : item.linkedEntities.length > 1
+                                          ? `Mögulegar bifreiðar: ${item.linkedEntities.join(" · ")}`
+                                          : "Ekki tengt við ákveðna bifreið"}
+                                    </p>
+                                  )}
+                                </div>
+
+                                <span className="shrink-0 font-semibold text-slate-900">
+                                  {formatKr(item.amount)}
+                                </span>
+                              </div>
+
+                              {sources.length > 0 && (
+                                <div className="mt-3 space-y-2 border-t border-slate-200 pt-3">
+                                  <p className="text-[11px] font-semibold uppercase tracking-[0.12em] text-slate-400">
+                                    Bókað úr fylgiskjali
+                                  </p>
+
+                                  {sources.map((source) => (
+                                    <div
+                                      key={source.id}
+                                      className="flex flex-wrap items-center justify-between gap-2 rounded-md bg-white px-3 py-2"
+                                    >
+                                      <div className="min-w-0">
+                                        <p className="font-medium text-slate-700">
+                                          {source.label}
+                                        </p>
+                                        <p className="mt-0.5 text-xs text-slate-500">
+                                          {formatDate(source.date)} · Fylgiskjal #{source.id}
+                                        </p>
+                                      </div>
+
+                                      <div className="flex shrink-0 items-center gap-3">
+                                        <span className="text-xs font-semibold text-slate-700">
+                                          {formatKr(source.amount)}
+                                        </span>
+                                        <a
+                                          href={`/fylgiskjol/${source.id}`}
+                                          className="text-xs font-semibold text-slate-600 hover:text-slate-950"
+                                        >
+                                          Opna frumskjal →
+                                        </a>
+                                      </div>
+                                    </div>
+                                  ))}
+                                </div>
+                              )}
+                            </div>
+                          );
+                        })}
+                      </div>
+                    </details>
+                  ))}
+                </div>
+              ) : (
+                <div className="rounded-lg bg-slate-50 p-3 text-slate-600">
+                  Engin bókuð útgjöld fundust á tímabilinu.
+                </div>
+              )}
+
+              <div className="flex items-center justify-between gap-4 border-t pt-3">
+                <span className="font-semibold text-slate-700">Samtals bókuð útgjöld</span>
+                <span className="font-bold text-slate-950">{formatKr(expenses)}</span>
+              </div>
+
+              <p className="text-xs leading-5 text-slate-500">
+                Flokkarnir hér eru Innsýn-merking ofan á bókhaldið. Reikningslyklar og bókaðar færslur haldast óbreytt. GLÖGGT sýnir aðeins ákveðið lán eða bifreið þegar tengingin finnst í sama upprunaskjali; annars er tengingin skilin eftir óstaðfest.
+              </p>
+            </div>
+          </details>
+        </section>
+
+        {principalRepayments.length > 0 && (
+          <section className="mt-6 rounded-2xl border bg-white p-5 shadow-sm md:p-6">
+            <p className="text-xs font-semibold uppercase tracking-[0.16em] text-slate-500">
+              Skuldir og afborganir
+            </p>
+
+            <div className="mt-2 flex flex-wrap items-end justify-between gap-4">
+              <div>
+                <h2 className="text-xl font-bold text-slate-950">
+                  Lækkun höfuðstóls
+                </h2>
+                <p className="mt-2 text-3xl font-bold text-slate-950">
+                  {formatKr(principalRepaymentTotal)}
+                </p>
+                <p className="mt-1 text-sm text-slate-500">
+                  Bókaðar hreyfingar sem lækka skuldir en teljast ekki til rekstrarútgjalda.
+                </p>
+              </div>
+
+              <div className="rounded-xl bg-slate-50 px-4 py-3 text-right">
+                <p className="text-xs text-slate-500">Áhrif á útgjöld</p>
+                <p className="mt-1 font-bold text-emerald-700">0 kr.</p>
+              </div>
+            </div>
+
+            <details className="mt-5 rounded-xl border">
+              <summary className="cursor-pointer p-4 text-sm font-semibold text-slate-700">
+                Sjá afborganir →
+              </summary>
+
+              <div className="space-y-2 border-t p-4">
+                {principalRepayments.map((item) => (
+                  <div
+                    key={`${item.receiptId}:${item.account}`}
+                    className="rounded-lg bg-slate-50 p-3"
+                  >
+                    <div className="flex flex-wrap items-start justify-between gap-3">
+                      <div className="min-w-0">
+                        <p className="font-medium text-slate-800">
+                          {item.sourceName}
+                        </p>
+                        <p className="mt-0.5 text-xs text-slate-500">
+                          {formatDate(item.date)}
+                          {item.loanNumber ? ` · Lán ${item.loanNumber}` : ""}
+                          {" · "}
+                          {item.account} – {item.accountName}
+                        </p>
+                        <p className="mt-1 text-xs font-medium text-slate-600">
+                          Lækkun skuldar · ekki rekstrarútgjald
+                        </p>
+                      </div>
+
+                      <div className="flex shrink-0 items-center gap-3">
                         <span className="font-semibold text-slate-900">
                           {formatKr(item.amount)}
                         </span>
-                      </div>
-
-                      <div className="mt-2 space-y-1">
-                        {item.payers.map((payer) => (
-                          <div
-                            key={`${item.period}:${payer.name}`}
-                            className="flex items-center justify-between gap-4 text-xs"
-                          >
-                            <span
-                              className={
-                                payer.name ===
-                                "Óstaðfestur greiðandi"
-                                  ? "text-amber-700"
-                                  : "text-slate-500"
-                              }
-                            >
-                              {payer.name}
-                            </span>
-
-                            <span className="font-medium text-slate-600">
-                              {formatKr(payer.amount)}
-                            </span>
-                          </div>
-                        ))}
+                        <a
+                          href={`/fylgiskjol/${item.receiptId}`}
+                          className="text-xs font-semibold text-slate-600 hover:text-slate-950"
+                        >
+                          Opna frumskjal →
+                        </a>
                       </div>
                     </div>
-                  ))}
-              </div>
-            </div>
-          )}
-        </section>
-      )}
+                  </div>
+                ))}
 
-      {latestInsurance && (
-        <section className="mt-8 overflow-hidden rounded-xl border bg-white">
-          <div className="border-b bg-slate-50 p-5">
-            <div className="flex flex-wrap items-start justify-between gap-4">
-              <div>
-                <p className="text-xs font-semibold uppercase tracking-wide text-slate-500">
-                  Innsýn úr skjölum
-                </p>
-
-                <h2 className="mt-1 text-2xl font-bold text-slate-900">
-                  Tryggingar
-                </h2>
-
-                <p className="mt-2 max-w-3xl text-sm text-slate-600">
-                  Samantekt úr nýjustu
-                  tryggingaupplýsingunum sem
-                  GLÖGGT hefur greint. Eldri
-                  tryggingaskjöl eru ekki
-                  blönduð inn í þessa
-                  samantekt.
+                <p className="pt-2 text-xs leading-5 text-slate-500">
+                  Lækkun skuldar breytir efnahag félagsins en er ekki rekstrarútgjald. Vextir, verðbætur og gjöld eru áfram sýnd sérstaklega undir útgjöldum.
                 </p>
               </div>
+            </details>
+          </section>
+        )}
 
-              <span className="rounded-full bg-white px-3 py-1 text-xs font-medium text-slate-600 ring-1 ring-slate-200">
-                {formatDate(
-                  latestInsurance.latestCreatedAt
-                )}
-              </span>
-            </div>
-          </div>
-
-          <div className="grid gap-4 border-b p-5 sm:grid-cols-2 xl:grid-cols-4">
-            <div className="rounded-xl bg-slate-50 p-4">
-              <p className="text-sm text-slate-500">
-                Ársiðgjöld samkvæmt tilboði
+        <div className="mt-6 grid gap-6 xl:grid-cols-2">
+          {pensionIncomeDocumentCount > 0 && (
+            <section id="innkoma-greining" className="scroll-mt-6 rounded-2xl border bg-white p-5 shadow-sm md:p-6">
+              <p className="text-xs font-semibold uppercase tracking-[0.16em] text-slate-500">
+                Innkoma úr skjölum
               </p>
-
-              <p className="mt-1 text-xl font-bold text-slate-900">
-                {quotedAnnualPremium !== null
-                  ? formatKr(
-                      quotedAnnualPremium
-                    )
-                  : "Ekki greint"}
-              </p>
-            </div>
-
-            <div className="rounded-xl bg-slate-50 p-4">
-              <p className="text-sm text-slate-500">
-                Hæsta tryggingarfjárhæð
-              </p>
-
-              <p className="mt-1 text-xl font-bold text-slate-900">
-                {highestCoverage !== null
-                  ? formatKr(
-                      highestCoverage
-                    )
-                  : "Ekki greint"}
-              </p>
-            </div>
-
-            <div className="rounded-xl bg-slate-50 p-4">
-              <p className="text-sm text-slate-500">
-                Ökutæki
-              </p>
-
-              <p className="mt-1 text-xl font-bold text-slate-900">
-                {insuranceVehicles.length}
-              </p>
-            </div>
-
-            <div className="rounded-xl bg-slate-50 p-4">
-              <p className="text-sm text-slate-500">
-                Tryggingar
-              </p>
-
-              <p className="mt-1 text-xl font-bold text-slate-900">
-                {insuranceItems.length}
-              </p>
-            </div>
-          </div>
-
-          {insurancePeriod && (
-            <div className="border-b px-5 py-4">
-              <div className="flex items-center justify-between gap-4">
-                <span className="text-sm font-medium text-slate-600">
-                  Vátryggingartímabil
-                </span>
-
-                <span className="text-sm font-semibold text-slate-900">
-                  {insurancePeriod}
-                </span>
-              </div>
-            </div>
-          )}
-
-          <div className="grid gap-6 p-5 lg:grid-cols-2">
-            <div>
-              <h3 className="font-semibold text-slate-900">
-                Það sem kemur fram
-              </h3>
-
-              <div className="mt-3 space-y-3">
-                {insuranceVehicles.length >
-                  0 && (
-                  <div>
-                    <p className="text-sm font-medium text-slate-700">
-                      Ökutæki
-                    </p>
-
-                    <div className="mt-2 flex flex-wrap gap-2">
-                      {insuranceVehicles.map(
-                        (vehicle) => (
-                          <span
-                            key={vehicle.id}
-                            className="rounded-full border bg-white px-3 py-1 text-sm text-slate-700"
-                          >
-                            {vehicle.name}
-                          </span>
-                        )
-                      )}
-                    </div>
-                  </div>
-                )}
-
-                {insuranceProperties.length >
-                  0 && (
-                  <div>
-                    <p className="text-sm font-medium text-slate-700">
-                      Fasteignir
-                    </p>
-
-                    <div className="mt-2 flex flex-wrap gap-2">
-                      {insuranceProperties.map(
-                        (property) => (
-                          <span
-                            key={property.id}
-                            className="rounded-full border bg-white px-3 py-1 text-sm text-slate-700"
-                          >
-                            {property.name}
-                          </span>
-                        )
-                      )}
-                    </div>
-                  </div>
-                )}
-
-                {insuranceItems.length >
-                  0 && (
-                  <div>
-                    <p className="text-sm font-medium text-slate-700">
-                      Greindar tryggingar
-                    </p>
-
-                    <div className="mt-2 space-y-1 text-sm text-slate-600">
-                      {insuranceItems
-                        .slice(0, 10)
-                        .map((item) => (
-                          <p key={item.id}>
-                            • {item.name}
-                          </p>
-                        ))}
-                    </div>
-                  </div>
-                )}
-              </div>
-            </div>
-
-            <div>
-              <h3 className="font-semibold text-slate-900">
-                Áhætta og fjárhæðir
-              </h3>
-
-              <div className="mt-3 space-y-3">
-                {possibleRefund !== null && (
-                  <div className="flex items-start justify-between gap-4 border-b pb-3">
-                    <span className="text-sm text-slate-600">
-                      Möguleg endurgreiðsla
-                    </span>
-
-                    <span className="text-sm font-semibold text-slate-900">
-                      {formatKr(possibleRefund)}
-                    </span>
-                  </div>
-                )}
-
-                {conditionalAnnualPremium !==
-                  null && (
-                  <div className="flex items-start justify-between gap-4 border-b pb-3">
-                    <span className="text-sm text-slate-600">
-                      Mögulegur kostnaður ef endurgreiðsla fæst
-                    </span>
-
-                    <span className="text-sm font-semibold text-slate-900">
-                      {formatKr(
-                        conditionalAnnualPremium
-                      )}
-                    </span>
-                  </div>
-                )}
-
-                {lowestDeductible !==
-                  null && (
-                  <div className="flex items-start justify-between gap-4 border-b pb-3">
-                    <span className="text-sm text-slate-600">
-                      Lægsta eigin áhætta
-                    </span>
-
-                    <span className="text-sm font-semibold text-slate-900">
-                      {formatKr(
-                        lowestDeductible
-                      )}
-                    </span>
-                  </div>
-                )}
-
-                {highestDeductible !==
-                  null && (
-                  <div className="flex items-start justify-between gap-4 border-b pb-3">
-                    <span className="text-sm text-slate-600">
-                      Hæsta eigin áhætta
-                    </span>
-
-                    <span className="text-sm font-semibold text-slate-900">
-                      {formatKr(
-                        highestDeductible
-                      )}
-                    </span>
-                  </div>
-                )}
-
-                <div className="flex items-start justify-between gap-4">
-                  <span className="text-sm text-slate-600">
-                    Greindar staðreyndir úr
-                    skjalinu
-                  </span>
-
-                  <span className="text-sm font-semibold text-slate-900">
-                    {
-                      latestInsurance.facts
-                        .length
-                    }
-                  </span>
+              <div className="mt-2 flex flex-wrap items-start justify-between gap-4">
+                <div>
+                  <h2 className="text-xl font-bold text-slate-950">
+                    Lífeyrir og greiðslur
+                  </h2>
+                  <p className="mt-2 text-3xl font-bold text-slate-950">
+                    {formatKr(pensionIncomeCurrentYear)}
+                  </p>
+                  <p className="mt-1 text-sm text-slate-500">
+                    Greint samtals {currentYear} · brúttó fyrir staðgreiðslu
+                  </p>
+                </div>
+                <div className="rounded-xl bg-slate-50 px-4 py-3 text-right">
+                  <p className="text-xs text-slate-500">Nýjasta tímabil</p>
+                  <p className="mt-1 font-bold text-slate-900">
+                    {latestPensionIncome
+                      ? formatKr(latestPensionIncome.amount)
+                      : "—"}
+                  </p>
+                  <p className="mt-0.5 text-xs text-slate-500">
+                    {latestPensionIncome
+                      ? formatYearMonth(latestPensionIncome.period)
+                      : "Ekki greint"}
+                  </p>
                 </div>
               </div>
 
-              <details className="mt-5 rounded-lg border">
-                <summary className="cursor-pointer p-3 text-sm font-medium text-slate-700">
-                  Sjá nánari
-                  tryggingaupplýsingar
+              <details className="mt-5 rounded-xl border">
+                <summary className="cursor-pointer p-4 text-sm font-semibold text-slate-700">
+                  Sjá nánari greiningu →
                 </summary>
+                <div className="border-t p-4">
+                  <div className="grid gap-3 sm:grid-cols-2">
+                    <div className="rounded-lg bg-slate-50 p-3">
+                      <p className="text-xs text-slate-500">Greind greiðsluskjöl</p>
+                      <p className="mt-1 text-lg font-bold">{pensionIncomeDocumentCount}</p>
+                    </div>
+                    <div className="rounded-lg bg-slate-50 p-3">
+                      <p className="text-xs text-slate-500">Þarfnast staðfestingar</p>
+                      <p className="mt-1 text-lg font-bold">
+                        {pensionIncomeWithoutPeriod + pensionIncomeWithoutConfirmedPayer}
+                      </p>
+                    </div>
+                  </div>
 
-                <div className="divide-y border-t">
-                  {insuranceFactsForDisplay.map(
-                    (fact) => (
-                      <div
-                        key={fact.id}
-                        className="flex items-start justify-between gap-4 p-3 text-sm"
-                      >
-                        <span className="text-slate-600">
-                          {fact.label ||
-                            humanizeCode(
-                              fact.factType
-                            )}
-                        </span>
-
-                        <span className="text-right font-medium text-slate-900">
-                          {formatFactValue(
-                            fact
-                          )}
-                        </span>
-                      </div>
-                    )
+                  {pensionIncomeMonths.length > 0 && (
+                    <div className="mt-4 divide-y rounded-lg border">
+                      {pensionIncomeMonths.slice(0, 12).map((item) => (
+                        <div key={item.period} className="px-4 py-3 text-sm">
+                          <div className="flex items-center justify-between gap-4">
+                            <span className="font-medium text-slate-700">
+                              {formatYearMonth(item.period)}
+                            </span>
+                            <span className="font-semibold text-slate-900">
+                              {formatKr(item.amount)}
+                            </span>
+                          </div>
+                          <div className="mt-2 space-y-1">
+                            {item.payers.map((payer) => (
+                              <div
+                                key={`${item.period}:${payer.name}`}
+                                className="flex items-center justify-between gap-4 text-xs"
+                              >
+                                <span
+                                  className={
+                                    payer.name === "Óstaðfestur greiðandi"
+                                      ? "text-amber-700"
+                                      : "text-slate-500"
+                                  }
+                                >
+                                  {payer.name}
+                                </span>
+                                <span className="font-medium text-slate-600">
+                                  {formatKr(payer.amount)}
+                                </span>
+                              </div>
+                            ))}
+                          </div>
+                        </div>
+                      ))}
+                    </div>
                   )}
                 </div>
               </details>
-            </div>
-          </div>
-        </section>
-      )}
+            </section>
+          )}
 
-      {!hasInsightData ? (
-        <section className="mt-8 rounded-xl border bg-white p-6">
-          <h2 className="text-xl font-bold text-slate-900">
-            Innsýn er að byggjast upp
-          </h2>
-
-          <p className="mt-2 max-w-2xl text-slate-600">
-            Engin semantic Innsýn-gögn hafa
-            verið vistuð fyrir þetta fyrirtæki
-            enn.
-          </p>
-        </section>
-      ) : (
-        <>
-          <section className="mt-8 rounded-xl border bg-white">
-            <div className="border-b p-5">
-              <h2 className="text-xl font-bold text-slate-900">
-                Yfirlit Innsýnar
-              </h2>
-
-              <p className="mt-1 text-sm text-slate-500">
-                Samantekt á því sem GLÖGGT
-                hefur greint í skjölum
-                fyrirtækisins.
+          {latestInsurance && (
+            <section className="rounded-2xl border bg-white p-5 shadow-sm md:p-6">
+              <p className="text-xs font-semibold uppercase tracking-[0.16em] text-slate-500">
+                Eignir og áhætta
               </p>
-            </div>
+              <div className="mt-2 flex flex-wrap items-start justify-between gap-4">
+                <div>
+                  <h2 className="text-xl font-bold text-slate-950">Tryggingar</h2>
+                  <p className="mt-2 text-3xl font-bold text-slate-950">
+  {insurancePolicies.length}{" "}
+  {insurancePolicies.length === 1
+    ? "trygging"
+    : "tryggingar"}
+</p>
 
-            <div className="grid gap-6 p-5 lg:grid-cols-2">
-              <div>
-                <h3 className="font-semibold text-slate-900">
-                  Það sem kemur fram í
-                  skjölunum
-                </h3>
+<p className="mt-1 text-sm text-slate-500">
+  Nettó iðgjaldahreyfingar á yfirliti{" "}
+  <span className="font-semibold text-slate-700">
+    {formatKr(insurancePremiumNetTotal)}
+  </span>
+</p>
+                </div>
+                <span className="rounded-full bg-slate-50 px-3 py-1 text-xs font-medium text-slate-500">
+                  {formatDate(latestInsurance.latestCreatedAt)}
+                </span>
+              </div>
 
-                {detectedAreas.length ===
-                0 ? (
-                  <p className="mt-3 text-sm text-slate-500">
-                    Engin flokkuð fyrirbæri
-                    hafa verið greind enn.
-                  </p>
-                ) : (
-                  <div className="mt-3 flex flex-wrap gap-2">
-                    {detectedAreas.map(
-                      ([type, count]) => (
+              <div className="mt-5 grid grid-cols-3 gap-3">
+                <div className="rounded-lg bg-slate-50 p-3">
+                  <p className="text-xs text-slate-500">Tryggingar</p>
+                  <p className="mt-1 text-lg font-bold">
+  {insurancePolicies.length}
+</p>
+                </div>
+                <div className="rounded-lg bg-slate-50 p-3">
+                  <p className="text-xs text-slate-500">Ökutæki</p>
+                  <p className="mt-1 text-lg font-bold">{insuranceVehicles.length}</p>
+                </div>
+                <div className="rounded-lg bg-slate-50 p-3">
+                  <p className="text-xs text-slate-500">Fasteignir</p>
+                  <p className="mt-1 text-lg font-bold">{insuranceProperties.length}</p>
+                </div>
+              </div>
+
+              <details className="mt-5 rounded-xl border">
+                <summary className="cursor-pointer p-4 text-sm font-semibold text-slate-700">
+                  Sjá nánari greiningu →
+                </summary>
+                <div className="space-y-4 border-t p-4 text-sm">
+                  
+                  {highestCoverage !== null && (
+                    <div className="flex justify-between gap-4 border-b pb-3">
+                      <span className="text-slate-500">Hæsta tryggingarfjárhæð</span>
+                      <span className="font-semibold">{formatKr(highestCoverage)}</span>
+                    </div>
+                  )}
+                  {possibleRefund !== null && (
+                    <div className="flex justify-between gap-4 border-b pb-3">
+                      <span className="text-slate-500">Möguleg endurgreiðsla</span>
+                      <span className="font-semibold">{formatKr(possibleRefund)}</span>
+                    </div>
+                  )}
+                  {conditionalAnnualPremium !== null && (
+                    <div className="flex justify-between gap-4 border-b pb-3">
+                      <span className="text-slate-500">Mögulegur kostnaður eftir endurgreiðslu</span>
+                      <span className="font-semibold">{formatKr(conditionalAnnualPremium)}</span>
+                    </div>
+                  )}
+                  {(lowestDeductible !== null || highestDeductible !== null) && (
+                    <div className="flex justify-between gap-4 border-b pb-3">
+                      <span className="text-slate-500">Eigin áhætta</span>
+                      <span className="text-right font-semibold">
+                        {lowestDeductible !== null ? formatKr(lowestDeductible) : "—"}
+                        {highestDeductible !== null && highestDeductible !== lowestDeductible
+                          ? ` – ${formatKr(highestDeductible)}`
+                          : ""}
+                      </span>
+                    </div>
+                  )}
+
+                  {(insuranceVehicles.length > 0 || insuranceProperties.length > 0) && (
+                    <div>
+                      <p className="font-semibold text-slate-900">Það sem er tryggt</p>
+                      <div className="mt-2 flex flex-wrap gap-2">
+                        {[...insuranceVehicles, ...insuranceProperties].map((entity) => (
+                          <span
+                            key={entity.id}
+                            className="rounded-full border bg-slate-50 px-3 py-1 text-xs text-slate-700"
+                          >
+                            {entity.name}
+                          </span>
+                        ))}
+                      </div>
+                    </div>
+                  )}
+
+                  {insurancePolicies.length > 0 && (
+  <div>
+    <p className="font-semibold text-slate-900">
+      Tryggingar eftir eignum
+    </p>
+
+    <div className="mt-3 space-y-3">
+      {insuranceAssetGroups.map((asset) => (
+  <div
+    key={asset.insuredItem}
+    className="rounded-lg border bg-white p-3"
+  >
+    <div className="flex flex-wrap items-start justify-between gap-3">
+      <div>
+        <p className="font-semibold text-slate-900">
+          {asset.insuredItem}
+        </p>
+
+        <p className="mt-1 text-xs text-slate-500">
+          {asset.policies.length} skírteini
+        </p>
+      </div>
+
+      <p className="font-bold text-slate-950">
+        {formatKr(asset.amount)}
+      </p>
+    </div>
+
+    <div className="mt-3 divide-y border-t">
+      {asset.policies.map((policy) => (
+        <div
+          key={policy.label}
+          className="flex flex-wrap items-start justify-between gap-3 py-3"
+        >
+          <div>
+            <p className="font-medium text-slate-800">
+              {policy.insuranceType ?? "Trygging"}
+            </p>
+
+            {policy.policyNumber && (
+              <p className="mt-1 text-xs text-slate-400">
+                Skírteini {policy.policyNumber}
+              </p>
+            )}
+
+            {(policy.periodStart || policy.periodEnd) && (
+              <p className="mt-1 text-xs text-slate-500">
+                {formatDate(policy.periodStart)} –{" "}
+                {formatDate(policy.periodEnd)}
+              </p>
+            )}
+          </div>
+
+          <p className="font-semibold text-slate-900">
+            {formatKr(policy.amount)}
+          </p>
+        </div>
+      ))}
+    </div>
+  </div>
+))}
+    </div>
+  </div>
+)}
+
+                  <details className="rounded-lg bg-slate-50">
+                    <summary className="cursor-pointer p-3 font-medium text-slate-700">
+                      Sýna allar greindar tryggingaupplýsingar
+                    </summary>
+                    <div className="divide-y border-t">
+                      {insuranceFactsForDisplay.map((fact) => (
+                        <div
+                          key={fact.id}
+                          className="flex items-start justify-between gap-4 p-3"
+                        >
+                          <span className="text-slate-600">
+                            {fact.label || humanizeCode(fact.factType)}
+                          </span>
+                          <span className="text-right font-medium text-slate-900">
+                            {formatFactValue(fact)}
+                          </span>
+                        </div>
+                      ))}
+                    </div>
+                  </details>
+                </div>
+              </details>
+            </section>
+          )}
+        </div>
+
+        {!hasInsightData ? (
+          <section className="mt-6 rounded-2xl border bg-white p-6 shadow-sm">
+            <h2 className="text-xl font-bold text-slate-950">Innsýn er að byggjast upp</h2>
+            <p className="mt-2 max-w-2xl text-slate-600">
+              Engin Innsýn-gögn hafa verið vistuð fyrir þetta fyrirtæki enn.
+            </p>
+          </section>
+        ) : (
+          <section className="mt-6 rounded-2xl border bg-white shadow-sm">
+            <details>
+              <summary className="cursor-pointer p-5 md:p-6">
+                <span className="text-lg font-bold text-slate-950">Frekari Innsýn</span>
+                <span className="ml-3 text-sm font-normal text-slate-500">
+                  {entityCount} fyrirbæri · {factCount} staðreyndir · {financialEvents.length} nýlegir fjárhagsatburðir
+                </span>
+              </summary>
+
+              <div className="space-y-6 border-t p-5 md:p-6">
+                <div className="grid gap-6 lg:grid-cols-2">
+                  <div>
+                    <h3 className="font-semibold text-slate-900">Það sem kemur fram í skjölunum</h3>
+                    <div className="mt-3 flex flex-wrap gap-2">
+                      {detectedAreas.map(([type, count]) => (
                         <span
                           key={type}
                           className="rounded-full border bg-slate-50 px-3 py-2 text-sm text-slate-700"
                         >
-                          {humanizeCode(type)}{" "}
-                          <span className="font-semibold">
-                            {count}
-                          </span>
+                          {humanizeCode(type)} <span className="font-semibold">{count}</span>
                         </span>
-                      )
-                    )}
+                      ))}
+                    </div>
                   </div>
-                )}
-              </div>
 
-              <div>
-                <h3 className="font-semibold text-slate-900">
-                  Nýjustu
-                  lykilupplýsingar
-                </h3>
-
-                {importantFacts.length ===
-                0 ? (
-                  <p className="mt-3 text-sm text-slate-500">
-                    Engar lykilupplýsingar
-                    hafa verið greindar enn.
-                  </p>
-                ) : (
-                  <div className="mt-3 space-y-3">
-                    {importantFacts.map(
-                      (fact) => (
-                        <div
-                          key={fact.id}
-                          className="flex items-start justify-between gap-4"
-                        >
-                          <div>
-                            <p className="text-sm font-medium text-slate-800">
-                              {fact.label ||
-                                humanizeCode(
-                                  fact.factType
-                                )}
-                            </p>
-
-                            {fact.label && (
-                              <p className="mt-0.5 text-xs text-slate-400">
-                                {humanizeCode(
-                                  fact.factType
-                                )}
-                              </p>
-                            )}
-                          </div>
-
-                          <p className="text-right text-sm font-semibold text-slate-900">
-                            {formatFactValue(
-                              fact
-                            )}
-                          </p>
+                  <div>
+                    <h3 className="font-semibold text-slate-900">Nýjustu lykilupplýsingar</h3>
+                    <div className="mt-3 space-y-3">
+                      {importantFacts.map((fact) => (
+                        <div key={fact.id} className="flex items-start justify-between gap-4">
+                          <span className="text-sm text-slate-600">
+                            {fact.label || humanizeCode(fact.factType)}
+                          </span>
+                          <span className="text-right text-sm font-semibold text-slate-900">
+                            {formatFactValue(fact)}
+                          </span>
                         </div>
-                      )
-                    )}
+                      ))}
+                    </div>
                   </div>
-                )}
-              </div>
-            </div>
-          </section>
-
-          <details className="mt-6 rounded-xl border bg-white">
-            <summary className="cursor-pointer p-5 text-lg font-semibold text-slate-900">
-              Það sem GLÖGGT þekkir
-            </summary>
-
-            <div className="border-t">
-              {entities.length === 0 ? (
-                <div className="p-5 text-sm text-slate-500">
-                  Engin Innsýn-fyrirbæri hafa
-                  verið greind enn.
                 </div>
-              ) : (
-                <div className="grid gap-4 p-5 lg:grid-cols-2">
-                  {entities.map(
-                    (entity) => (
-                      <div
-                        key={entity.id}
-                        className="rounded-xl border bg-slate-50/50 p-5"
-                      >
-                        <div className="flex flex-wrap items-start justify-between gap-3">
-                          <div>
-                            <p className="font-semibold text-slate-900">
-                              {
-                                entity.name
-                              }
-                            </p>
 
-                            <p className="mt-1 text-sm text-slate-500">
-                              {humanizeCode(
-                                entity.entityType
-                              )}
+                <details className="rounded-xl border">
+                  <summary className="cursor-pointer p-4 font-semibold text-slate-800">
+                    Það sem GLÖGGT þekkir ({entityCount})
+                  </summary>
+                  <div className="grid gap-3 border-t p-4 lg:grid-cols-2">
+                    {entities.map((entity) => (
+                      <div key={entity.id} className="rounded-lg bg-slate-50 p-4">
+                        <div className="flex items-start justify-between gap-3">
+                          <div>
+                            <p className="font-semibold text-slate-900">{entity.name}</p>
+                            <p className="mt-1 text-xs text-slate-500">
+                              {humanizeCode(entity.entityType)}
                             </p>
                           </div>
-
                           {entity.relationshipStatus && (
-                            <span className="rounded-full bg-white px-3 py-1 text-xs font-medium text-slate-600 ring-1 ring-slate-200">
-                              {humanizeCode(
-                                entity.relationshipStatus
-                              )}
+                            <span className="rounded-full bg-white px-2.5 py-1 text-xs text-slate-500 ring-1 ring-slate-200">
+                              {humanizeCode(entity.relationshipStatus)}
                             </span>
                           )}
                         </div>
-
-                        {entity.identifierValue && (
-                          <p className="mt-3 text-sm text-slate-600">
-                            {entity.identifierType
-                              ? `${humanizeCode(
-                                  entity.identifierType
-                                )}: `
-                              : ""}
-                            {
-                              entity.identifierValue
-                            }
-                          </p>
-                        )}
                       </div>
-                    )
-                  )}
-                </div>
-              )}
-            </div>
-          </details>
+                    ))}
+                  </div>
+                </details>
 
-          <details className="mt-6 rounded-xl border bg-white">
-            <summary className="cursor-pointer p-5 text-lg font-semibold text-slate-900">
-              Nánari staðreyndir úr Innsýn
-            </summary>
-
-            <div className="border-t">
-              {facts.length === 0 ? (
-                <div className="p-5 text-sm text-slate-500">
-                  Engar Innsýn-staðreyndir
-                  hafa verið vistaðar enn.
-                </div>
-              ) : (
-                <div className="divide-y">
-                  {facts.map((fact) => (
-                    <div
-                      key={fact.id}
-                      className="p-5"
-                    >
-                      <div className="flex flex-wrap items-start justify-between gap-3">
-                        <div>
-                          <p className="font-semibold text-slate-900">
-                            {fact.label ||
-                              humanizeCode(
-                                fact.factType
-                              )}
-                          </p>
-
-                          {fact.label && (
-                            <p className="mt-1 text-xs text-slate-500">
-                              {humanizeCode(
-                                fact.factType
-                              )}
+                <details className="rounded-xl border">
+                  <summary className="cursor-pointer p-4 font-semibold text-slate-800">
+                    Nánari staðreyndir ({factCount})
+                  </summary>
+                  <div className="divide-y border-t">
+                    {facts.map((fact) => (
+                      <div key={fact.id} className="p-4">
+                        <div className="flex flex-wrap items-start justify-between gap-3">
+                          <div>
+                            <p className="font-medium text-slate-900">
+                              {fact.label || humanizeCode(fact.factType)}
                             </p>
-                          )}
+                            <p className="mt-1 text-xs text-slate-500">
+                              Heimild: {humanizeCode(fact.source)}
+                              {fact.confidence !== null
+                                ? ` · Öryggi ${Math.round(fact.confidence * 100)}%`
+                                : ""}
+                            </p>
+                          </div>
+                          <p className="font-semibold text-slate-900">{formatFactValue(fact)}</p>
                         </div>
-
-                        <p className="font-semibold text-slate-900">
-                          {formatFactValue(
-                            fact
-                          )}
-                        </p>
                       </div>
+                    ))}
+                  </div>
+                </details>
 
-                      <div className="mt-2 flex flex-wrap gap-x-4 gap-y-1 text-xs text-slate-500">
-                        <span>
-                          Heimild:{" "}
-                          {humanizeCode(
-                            fact.source
-                          )}
-                        </span>
+                <details className="rounded-xl border">
+                  <summary className="cursor-pointer p-4 font-semibold text-slate-800">
+                    Fjárhagsatburðir ({financialEvents.length})
+                  </summary>
+                  <div className="overflow-x-auto border-t">
+                    {financialEvents.length === 0 ? (
+                      <p className="p-4 text-sm text-slate-500">Engir fjárhagsatburðir hafa verið tengdir enn.</p>
+                    ) : (
+                      <table className="w-full text-left text-sm">
+                        <thead className="border-b bg-slate-50 text-slate-500">
+                          <tr>
+                            <th className="px-4 py-3 font-medium">Dagsetning</th>
+                            <th className="px-4 py-3 font-medium">Atburður</th>
+                            <th className="px-4 py-3 font-medium">Staða</th>
+                            <th className="px-4 py-3 text-right font-medium">Upphæð</th>
+                          </tr>
+                        </thead>
+                        <tbody className="divide-y">
+                          {financialEvents.map((event) => (
+                            <tr key={event.id}>
+                              <td className="px-4 py-3 text-slate-500">{formatDate(event.eventDate)}</td>
+                              <td className="px-4 py-3 font-medium text-slate-900">
+                                {event.title || humanizeCode(event.eventType)}
+                              </td>
+                              <td className="px-4 py-3 text-slate-600">{humanizeCode(event.status)}</td>
+                              <td className="px-4 py-3 text-right font-semibold text-slate-900">
+                                {event.amount !== null
+                                  ? event.currency === "ISK"
+                                    ? formatKr(Number(event.amount))
+                                    : `${formatNumber(Number(event.amount), {
+                                        maximumFractionDigits: 2,
+                                      })} ${event.currency}`
+                                  : "—"}
+                              </td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    )}
+                  </div>
+                </details>
 
-                        {fact.confidence !==
-                          null && (
-                          <span>
-                            Öryggi:{" "}
-                            {Math.round(
-                              fact.confidence *
-                                100
-                            )}
-                            %
-                          </span>
-                        )}
-
-                        <span>
-                          {formatDate(
-                            fact.createdAt
-                          )}
-                        </span>
-                      </div>
-                    </div>
-                  ))}
-                </div>
-              )}
-            </div>
-          </details>
-        </>
-      )}
-
-      <section className="mt-6 rounded-xl border bg-white">
-        <div className="border-b p-5">
-          <h2 className="text-xl font-bold text-slate-900">
-            Fjárhagsatburðir
-          </h2>
-
-          <p className="mt-1 text-sm text-slate-500">
-            Atburðir sem GLÖGGT hefur tengt
-            saman úr skjölum, til dæmis kröfur,
-            greiðslur, uppgjör og afborganir.
-          </p>
-        </div>
-
-        {financialEvents.length === 0 ? (
-          <div className="p-5 text-sm text-slate-500">
-            Engir fjárhagsatburðir hafa verið
-            tengdir enn. Innsýn-gögn geta
-            samt þegar verið til í formi
-            fyrirbæra og staðreynda.
-          </div>
-        ) : (
-          <div className="overflow-x-auto">
-            <table className="w-full text-left text-sm">
-              <thead className="border-b bg-slate-50 text-slate-500">
-                <tr>
-                  <th className="px-5 py-3 font-medium">
-                    Dagsetning
-                  </th>
-
-                  <th className="px-5 py-3 font-medium">
-                    Atburður
-                  </th>
-
-                  <th className="px-5 py-3 font-medium">
-                    Tegund
-                  </th>
-
-                  <th className="px-5 py-3 font-medium">
-                    Staða
-                  </th>
-
-                  <th className="px-5 py-3 text-right font-medium">
-                    Upphæð
-                  </th>
-                </tr>
-              </thead>
-
-              <tbody className="divide-y">
-                {financialEvents.map(
-                  (event) => (
-                    <tr key={event.id}>
-                      <td className="px-5 py-4 text-slate-600">
-                        {formatDate(
-                          event.eventDate
-                        )}
-                      </td>
-
-                      <td className="px-5 py-4">
-                        <p className="font-medium text-slate-900">
-                          {event.title ||
-                            "Ónefndur atburður"}
-                        </p>
-
-                        {event.externalReference && (
-                          <p className="mt-1 text-xs text-slate-500">
-                            {
-                              event.externalReference
-                            }
+                <details className="rounded-xl border">
+                  <summary className="cursor-pointer p-4 font-semibold text-slate-800">
+                    Innsýn-vinnsla
+                    {activeProcessingJobs > 0 ? ` · ${activeProcessingJobs} í vinnslu` : ""}
+                  </summary>
+                  <div className="divide-y border-t">
+                    {processingJobs.length === 0 ? (
+                      <p className="p-4 text-sm text-slate-500">Engin Innsýn-vinnsla hefur verið skráð.</p>
+                    ) : (
+                      processingJobs.map((job) => (
+                        <div key={job.id} className="p-4 text-sm">
+                          <div className="flex flex-wrap items-center justify-between gap-3">
+                            <span className="font-semibold text-slate-900">Innsýn #{job.id}</span>
+                            <span className="rounded-full bg-slate-100 px-3 py-1 text-xs text-slate-600">
+                              {humanizeCode(job.status)}
+                            </span>
+                          </div>
+                          <p className="mt-2 text-slate-500">
+                            Lokið {job.completedItems} af {job.totalItems}
+                            {job.failedItems > 0 ? ` · Mistókst ${job.failedItems}` : ""}
+                            {job.processingItems > 0 ? ` · Í vinnslu ${job.processingItems}` : ""}
+                            {job.pendingItems > 0 ? ` · Bíður ${job.pendingItems}` : ""}
                           </p>
-                        )}
-                      </td>
-
-                      <td className="px-5 py-4 text-slate-600">
-                        {humanizeCode(
-                          event.eventType
-                        )}
-                      </td>
-
-                      <td className="px-5 py-4 text-slate-600">
-                        {humanizeCode(
-                          event.status
-                        )}
-                      </td>
-
-                      <td className="px-5 py-4 text-right font-medium text-slate-900">
-                        {event.amount !== null
-                          ? event.currency ===
-                            "ISK"
-                            ? formatKr(
-                                Number(
-                                  event.amount
-                                )
-                              )
-                            : `${formatNumber(
-                                Number(
-                                  event.amount
-                                ),
-                                {
-                                  maximumFractionDigits: 2,
-                                }
-                              )} ${
-                                event.currency
-                              }`
-                          : "—"}
-                      </td>
-                    </tr>
-                  )
-                )}
-              </tbody>
-            </table>
-          </div>
+                        </div>
+                      ))
+                    )}
+                  </div>
+                </details>
+              </div>
+            </details>
+          </section>
         )}
-      </section>
 
-      <div className="mt-6 grid gap-6 xl:grid-cols-2">
-        <details className="rounded-xl border bg-white">
-          <summary className="cursor-pointer p-5 text-lg font-semibold text-slate-900">
-            VSK-yfirlit
-          </summary>
-
-          <div className="border-t p-5">
-            <div className="grid gap-5 sm:grid-cols-3">
-              <div>
-                <p className="text-sm text-slate-500">
-                  Útskattur
-                </p>
-
-                <p className="mt-1 text-xl font-bold">
-                  {formatKr(outputVat)}
-                </p>
-              </div>
-
-              <div>
-                <p className="text-sm text-slate-500">
-                  Innskattur
-                </p>
-
-                <p className="mt-1 text-xl font-bold">
-                  {formatKr(inputVat)}
-                </p>
-              </div>
-
-              <div>
-                <p className="text-sm text-slate-500">
-                  Staða VSK
-                </p>
-
-                <p className="mt-1 text-xl font-bold">
-                  {formatKr(vatBalance)}
-                </p>
-              </div>
-            </div>
-          </div>
-        </details>
-
-        <details className="rounded-xl border bg-white">
-          <summary className="cursor-pointer p-5 text-lg font-semibold text-slate-900">
-            Innsýn-vinnsla
-            {activeProcessingJobs > 0
-              ? ` – ${activeProcessingJobs} í vinnslu`
-              : ""}
-          </summary>
-
-          <div className="border-t">
-            {processingJobs.length === 0 ? (
-              <div className="p-5 text-sm text-slate-500">
-                Engin Innsýn-vinnsla hefur
-                verið skráð.
-              </div>
-            ) : (
-              <div className="divide-y">
-                {processingJobs.map(
-                  (job) => (
-                    <div
-                      key={job.id}
-                      className="p-5"
-                    >
-                      <div className="flex flex-wrap items-center justify-between gap-3">
-                        <div>
-                          <p className="font-medium text-slate-900">
-                            Innsýn #{job.id}
-                          </p>
-
-                          <p className="mt-1 text-xs text-slate-500">
-                            {humanizeCode(
-                              job.jobType
-                            )}{" "}
-                            ·{" "}
-                            {formatDate(
-                              job.createdAt
-                            )}
-                          </p>
-                        </div>
-
-                        <span className="rounded-full bg-slate-100 px-3 py-1 text-xs font-medium text-slate-600">
-                          {humanizeCode(
-                            job.status
-                          )}
-                        </span>
-                      </div>
-
-                      <p className="mt-3 text-sm text-slate-600">
-                        Lokið{" "}
-                        {job.completedItems} af{" "}
-                        {job.totalItems}
-                        {job.failedItems > 0
-                          ? ` · Mistókst ${job.failedItems}`
-                          : ""}
-                        {job.processingItems >
-                        0
-                          ? ` · Í vinnslu ${job.processingItems}`
-                          : ""}
-                        {job.pendingItems > 0
-                          ? ` · Bíður ${job.pendingItems}`
-                          : ""}
-                      </p>
-                    </div>
-                  )
-                )}
-              </div>
-            )}
-          </div>
-        </details>
+        <p className="mt-6 text-center text-xs text-slate-400">
+          Innsýn sýnir stöðu út frá þeim gögnum sem GLÖGGT hefur þegar fengið og unnið.
+        </p>
       </div>
     </div>
   );

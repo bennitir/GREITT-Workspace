@@ -24,6 +24,7 @@ type AccountOption = {
   vatRate: number | null;
   vatAccount: string | null;
   vatRequiresConfirmation: boolean;
+  type: string;
   entryRole: string;
 };
 
@@ -36,10 +37,10 @@ type ManualBookingEditorProps = {
 
 function isVatPostingAccount(account: AccountOption) {
   return (
+    account.type === "VAT_INPUT" ||
+    account.type === "VAT_OUTPUT" ||
     account.entryRole === "VAT_INPUT" ||
-    account.entryRole === "VAT_OUTPUT" ||
-    account.number === "2510" ||
-    account.number === "2520"
+    account.entryRole === "VAT_OUTPUT"
   );
 }
 

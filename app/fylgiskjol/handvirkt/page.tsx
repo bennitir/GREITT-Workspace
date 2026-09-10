@@ -57,6 +57,7 @@ export default async function ManualReceiptPage() {
       vatRate: true,
       vatAccount: true,
       vatRequiresConfirmation: true,
+      type: true,
       entryRole: true,
     },
   });

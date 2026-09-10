@@ -16,6 +16,7 @@ type AccountOption = {
   vatRate: number | null;
   vatAccount: string | null;
   vatRequiresConfirmation: boolean;
+  type: string;
   entryRole: string;
 };
 

@@ -399,6 +399,21 @@ export const defaultAccounts: DefaultAccount[] = [
     "EXPENSE"
   ),
 
+  // Fáir, stöðugir bókhaldslyklar; nákvæm tryggingartegund er varðveitt í Innsýn/skírteinisprófíl.
+  noVatAccount(
+    "4630",
+    "Líf- og persónutryggingar",
+    "OPERATING_EXPENSE",
+    "EXPENSE"
+  ),
+
+  noVatAccount(
+    "4640",
+    "Heimilis- og fasteignatryggingar",
+    "OPERATING_EXPENSE",
+    "EXPENSE"
+  ),
+
   /*
    * Bifreiðar
    *
@@ -439,7 +454,13 @@ export const defaultAccounts: DefaultAccount[] = [
 
   expense24(
     "4750",
-    "Þrif og annar bifreiðakostnaður",
+    "Bílastæði og stöðugjöld",
+    true
+  ),
+
+  expense24(
+    "4760",
+    "Hleðsla rafbíla",
     true
   ),
 

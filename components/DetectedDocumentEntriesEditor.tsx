@@ -1,6 +1,6 @@
 "use client";
 import ApproveDocumentButton from "@/components/ApproveDocumentButton";
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 
 import {
@@ -25,6 +25,7 @@ type Props = {
   accounts: {
     number: string;
     name: string;
+    type: string;
     entryRole: string;
     vatTreatment: string | null;
   }[];
@@ -60,19 +61,18 @@ export default function DetectedDocumentEntriesEditor({
   canEdit,
 }: Props) {
   const router = useRouter();
+  const datePickerRef = useRef<HTMLInputElement>(null);
 
   function isVatPostingAccount(account: {
-    number: string;
+    type: string;
     entryRole: string;
     vatTreatment: string | null;
   }) {
     return (
+      account.type === "VAT_INPUT" ||
+      account.type === "VAT_OUTPUT" ||
       account.entryRole === "VAT_INPUT" ||
-      account.entryRole === "VAT_OUTPUT" ||
-      account.vatTreatment === "INPUT" ||
-      account.vatTreatment === "OUTPUT" ||
-      account.number === "2510" ||
-      account.number === "2520"
+      account.entryRole === "VAT_OUTPUT"
     );
   }
 
@@ -259,31 +259,71 @@ async function handleMarkDuplicate() {
       <div className="grid grid-cols-2 gap-3">
   <label className="text-sm">
     <span className="mb-1 block font-semibold">Dagsetning</span>
-    <input
-  type="text"
-  value={dateInputValue}
-disabled={!canEdit}
-  onChange={(e) => {
-  const value = e.target.value;
+    <div className="flex gap-2">
+      <input
+        type="text"
+        value={dateInputValue}
+        disabled={!canEdit}
+        onChange={(e) => {
+          const value = e.target.value;
 
-  setDateInputValue(value);
-  setHasUnsavedChanges(true);
+          setDateInputValue(value);
+          setHasUnsavedChanges(true);
 
-  const match = value.match(
-    /^(\d{1,2})\.(\d{1,2})\.(\d{4})$/
-  );
+          const match = value.match(
+            /^(\d{1,2})\.(\d{1,2})\.(\d{4})$/
+          );
 
-  if (match) {
-    const [, day, month, year] = match;
+          if (match) {
+            const [, day, month, year] = match;
 
-    setDocumentDate(
-      `${year}-${month.padStart(2, "0")}-${day.padStart(2, "0")}`
-    );
-  }
-}}
-  placeholder="dd.mm.áááá"
-  className="w-full rounded border px-2 py-1"
-/>
+            setDocumentDate(
+              `${year}-${month.padStart(2, "0")}-${day.padStart(2, "0")}`
+            );
+          } else {
+            setDocumentDate("");
+          }
+        }}
+        placeholder="dd.mm.áááá"
+        inputMode="numeric"
+        className="min-w-0 flex-1 rounded border px-2 py-1"
+      />
+
+      <button
+        type="button"
+        disabled={!canEdit}
+        onClick={() => datePickerRef.current?.showPicker()}
+        title="Velja dagsetningu"
+        aria-label="Velja dagsetningu úr dagatali"
+        className="rounded border px-3 py-1 hover:bg-gray-50 disabled:cursor-not-allowed disabled:opacity-50"
+      >
+        📅
+      </button>
+
+      <input
+        ref={datePickerRef}
+        type="date"
+        value={documentDate}
+        tabIndex={-1}
+        aria-hidden="true"
+        onChange={(e) => {
+          const value = e.target.value;
+          setDocumentDate(value);
+
+          if (value) {
+            const [year, month, day] = value.split("-");
+            setDateInputValue(`${day}.${month}.${year}`);
+          } else {
+            setDateInputValue("");
+          }
+
+          setHasUnsavedChanges(true);
+          setMessage("");
+          setError("");
+        }}
+        className="absolute h-0 w-0 opacity-0"
+      />
+    </div>
   </label>
 
   <label className="text-sm">

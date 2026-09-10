@@ -158,6 +158,10 @@ model AiDetectedDocument {
   duplicateVoucherNumber Int?
   merchantKennitala      String?
 
+  // Skipulögð framtíðargreiðsla sem AI les af frumskjalinu.
+  // Þetta er uppbyggð heimild fyrir FinancialEvent; ekki bókunarlínur.
+  paymentSchedule         Json?
+
   disposition       String?
   dispositionReason String?
   disposedAt        DateTime?
@@ -219,6 +223,7 @@ model Account {
   company            Company                    @relation(fields: [companyId], references: [id], onDelete: Cascade)
   insightEntityLinks InsightEntityAccountLink[]
   accountingPatterns AccountingPattern[]
+  financialLiabilityEvents FinancialEvent[] @relation("FinancialEventLiabilityAccount")
 
   @@unique([companyId, number])
   @@index([companyId, isActive])
@@ -699,19 +704,80 @@ model FinancialEvent {
   currency String   @default("ISK")
 
   externalReference String?
+
+  // Staðfestur skuldareikningur fyrir skuldbindinguna.
+  // AI má leggja til reikning í bókunarlínum, en þessi tenging verður fyrst
+  // varanleg þegar bókari merkir skjalið yfirfarið. Greiðslur geta síðan
+  // lækkað sömu skuld án þess að endurbóka kostnaðinn.
+  liabilityAccountId Int?
+
   metadata          Json?
   createdAt         DateTime @default(now())
   updatedAt         DateTime @updatedAt
 
   company       Company                  @relation(fields: [companyId], references: [id], onDelete: Cascade)
+  liabilityAccount Account?               @relation("FinancialEventLiabilityAccount", fields: [liabilityAccountId], references: [id], onDelete: SetNull)
   documentLinks DocumentFinancialEvent[]
   entityLinks   FinancialEventEntity[]
   facts         InsightFact[]
+  scheduleItems FinancialEventScheduleItem[]
+  outgoingRelations FinancialEventRelation[] @relation("FinancialEventRelationFrom")
+  incomingRelations FinancialEventRelation[] @relation("FinancialEventRelationTo")
 
   @@index([companyId, eventType])
   @@index([companyId, eventDate])
   @@index([companyId, status])
   @@index([companyId, externalReference])
+  @@index([companyId, liabilityAccountId])
+}
+
+
+model FinancialEventScheduleItem {
+  id      Int @id @default(autoincrement())
+  eventId Int
+
+  sequence Int
+  dueDate  DateTime
+  amount   Decimal
+  currency String @default("ISK")
+
+  // OPEN, PARTIALLY_PAID, PAID, CANCELLED.
+  status     String  @default("OPEN")
+  paidAmount Decimal @default(0)
+
+  externalReference String?
+  metadata          Json?
+  createdAt         DateTime @default(now())
+  updatedAt         DateTime @updatedAt
+
+  event FinancialEvent @relation(fields: [eventId], references: [id], onDelete: Cascade)
+
+  @@unique([eventId, sequence])
+  @@index([eventId, dueDate])
+  @@index([status, dueDate])
+}
+
+model FinancialEventRelation {
+  id Int @id @default(autoincrement())
+
+  fromEventId Int
+  toEventId   Int
+
+  // Dæmi: INSTALLMENT_OF, PAYS, SETTLES, CORRECTS, SUPPORTS.
+  relationType String
+  status       String @default("CONFIRMED")
+  source       String @default("SYSTEM")
+  confidence   Float?
+  metadata     Json?
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  fromEvent FinancialEvent @relation("FinancialEventRelationFrom", fields: [fromEventId], references: [id], onDelete: Cascade)
+  toEvent   FinancialEvent @relation("FinancialEventRelationTo", fields: [toEventId], references: [id], onDelete: Cascade)
+
+  @@unique([fromEventId, toEventId, relationType])
+  @@index([fromEventId, relationType])
+  @@index([toEventId, relationType])
 }
 
 model DocumentFinancialEvent {

@@ -9,6 +9,12 @@ import {
   retainDetectedDocumentForInsight,
   resolveDetectedDocumentAsSupporting,
   confirmInsightEntityAccountLink,
+  confirmMissingLoanDetails,
+  confirmInsurancePolicyProfile,
+  createAndConfirmInsurancePolicyProfile,
+  rejectIncorrectLoanEntityLink,
+  createAccountForDetectedDocument,
+  createLiabilityAccountForDetectedDocument,
   approveDetectedDocument,
   deleteDetectedDocument,
   deleteReceipt,
@@ -143,13 +149,8 @@ const canEdit = companyAccess.canWrite ?? false;
             entity: {
               include: {
                 accountLinks: {
-                  where: {
-                    role: "LIABILITY_PRINCIPAL",
-                    status: "CONFIRMED",
-                  },
-                  include: {
-                    account: true,
-                  },
+                  where: { status: "CONFIRMED" },
+                  include: { account: true },
                 },
               },
             },
@@ -246,12 +247,14 @@ const getNextUnresolvedDocument = (currentDocumentId: number) =>
 
       {receipt.filePath && (
   <>
-    <Link
-  href={`/fylgiskjol/${receipt.id}/frumskjal`}
+    <a
+      href={originalFileUrl ?? "#"}
+      target="_blank"
+      rel="noopener noreferrer"
       className="ml-2 rounded border px-3 py-2 font-medium text-blue-600 hover:bg-blue-50"
     >
       Opna frumskjal
-    </Link>
+    </a>
 {!receipt.aiDetectedDocuments.some(
   (document) =>
     document.voucherNumber !== null ||
@@ -843,6 +846,238 @@ const getNextUnresolvedDocument = (currentDocumentId: number) =>
                         );
                       })()}
 
+                      {document.documentRole === "REVIEW" &&
+                        document.summary?.includes(
+                          "Lánshöfuðstóll fannst en lánsnúmer vantar eða er óvíst."
+                        ) &&
+                        !document.entityLinks.some(
+                          (link) =>
+                            link.role === "LOAN" &&
+                            link.entity.entityType === "LOAN"
+                        ) && (
+                          <div className="mt-4 rounded border border-amber-300 bg-amber-50 p-4 text-amber-950">
+                            <div className="font-semibold">
+                              Lánsnúmer vantar
+                            </div>
+
+                            <p className="mt-2 text-sm">
+                              GLÖGGT greinir höfuðstól láns í skjalinu en getur
+                              ekki lesið lánsnúmerið með nægri vissu. Skráðu
+                              lánsnúmerið og veldu skuldareikning. GLÖGGT mun
+                              varðveita tenginguna og endurlesa skjalið.
+                            </p>
+
+                            {canBook ? (
+                              <form
+                                action={async (formData) => {
+                                  "use server";
+
+                                  const loanNumber = String(
+                                    formData.get("loanNumber") ?? ""
+                                  ).trim();
+                                  const accountNumber = String(
+                                    formData.get("loanAccountNumber") ?? ""
+                                  ).trim();
+
+                                  const result = await confirmMissingLoanDetails(
+                                    document.id,
+                                    loanNumber,
+                                    accountNumber
+                                  );
+
+                                  const nextDocumentId =
+                                    result.createdDocumentIds[0] ?? null;
+
+                                  redirect(
+                                    nextDocumentId
+                                      ? `/fylgiskjol/${receipt.id}?document=${nextDocumentId}`
+                                      : `/fylgiskjol/${receipt.id}`
+                                  );
+                                }}
+                                className="mt-3 space-y-3"
+                              >
+                                <div>
+                                  <label
+                                    htmlFor={`missing-loan-number-${document.id}`}
+                                    className="block text-sm font-semibold"
+                                  >
+                                    Lánsnúmer
+                                  </label>
+                                  <input
+                                    id={`missing-loan-number-${document.id}`}
+                                    name="loanNumber"
+                                    required
+                                    autoComplete="off"
+                                    className="mt-1 w-full rounded border border-amber-300 bg-white px-3 py-2"
+                                    placeholder="Sláðu inn lánsnúmer"
+                                  />
+                                </div>
+
+                                <div>
+                                  <label
+                                    htmlFor={`missing-loan-account-${document.id}`}
+                                    className="block text-sm font-semibold"
+                                  >
+                                    Skuldareikningur
+                                  </label>
+                                  <select
+                                    id={`missing-loan-account-${document.id}`}
+                                    name="loanAccountNumber"
+                                    required
+                                    defaultValue=""
+                                    className="mt-1 w-full rounded border border-amber-300 bg-white px-3 py-2"
+                                  >
+                                    <option value="" disabled>
+                                      Veldu reikning…
+                                    </option>
+                                    {accounts
+                                      .filter(
+                                        (account) =>
+                                          account.type ===
+                                            "SHORT_TERM_LIABILITY" ||
+                                          account.type ===
+                                            "LONG_TERM_LIABILITY"
+                                      )
+                                      .map((account) => (
+                                        <option
+                                          key={account.number}
+                                          value={account.number}
+                                        >
+                                          {account.number} – {account.name}
+                                        </option>
+                                      ))}
+                                  </select>
+                                </div>
+
+                                <button
+                                  type="submit"
+                                  className="rounded bg-amber-700 px-4 py-2 font-semibold text-white hover:bg-amber-800"
+                                >
+                                  Staðfesta lán og endurlesa
+                                </button>
+                              </form>
+                            ) : (
+                              <p className="mt-3 text-sm">
+                                Notandi með bókunarheimild þarf að staðfesta
+                                lánsnúmer og skuldareikning.
+                              </p>
+                            )}
+                          </div>
+                        )}
+
+                      {document.entityLinks
+                        .filter((link) => link.role === "INSURANCE_POLICY" && link.entity.entityType === "INSURANCE_POLICY")
+                        .map((link) => {
+                          const expenseLink = link.entity.accountLinks.find((item) => item.role === "EXPENSE") ?? null;
+                          const environmentLabel = link.entity.relationshipType === "HOME"
+                            ? "Heimilisrekstur"
+                            : link.entity.relationshipType === "BUSINESS"
+                              ? "Fyrirtækjarekstur"
+                              : link.entity.relationshipType === "OTHER" ? "Annað" : null;
+                          const isConfirmed = link.entity.relationshipStatus === "CONFIRMED" && Boolean(expenseLink);
+                          const insuranceMetadata = link.entity.metadata && typeof link.entity.metadata === "object" && !Array.isArray(link.entity.metadata)
+                            ? link.entity.metadata as Record<string, unknown>
+                            : {};
+                          const insuranceType = typeof insuranceMetadata.insuranceType === "string" ? insuranceMetadata.insuranceType : null;
+                          const insuredItem = typeof insuranceMetadata.insuredItem === "string" ? insuranceMetadata.insuredItem : null;
+                          const lastSeenAmount = typeof insuranceMetadata.lastSeenAmount === "number" ? insuranceMetadata.lastSeenAmount : null;
+                          const normalizedInsuranceType = (insuranceType ?? "").toLocaleLowerCase("is-IS");
+                          const suggestedInsuranceAccount =
+                            normalizedInsuranceType.includes("ökutæk") || normalizedInsuranceType.includes("kaskó") ? "4620" :
+                            normalizedInsuranceType.includes("fjölskyld") || normalizedInsuranceType.includes("líf") || normalizedInsuranceType.includes("persón") ? "4630" :
+                            normalizedInsuranceType.includes("bruna") || normalizedInsuranceType.includes("fasteign") || normalizedInsuranceType.includes("heimil") ? "4640" : "";
+                          return (
+                            <div key={`insurance-policy-${link.entity.id}`} className="mt-4 rounded border border-violet-200 bg-violet-50 p-4">
+                              <div className="font-semibold text-violet-950">Tryggingarskírteini</div>
+                              <p className="mt-1 text-sm text-violet-900"><strong>Skírteini:</strong> {link.entity.identifierValue ?? link.entity.name}</p>
+                              {insuranceType && <p className="mt-1 text-sm text-violet-900"><strong>Tegund:</strong> {insuranceType}</p>}
+                              {insuredItem && insuredItem !== insuranceType && <p className="mt-1 text-xs text-violet-800">{insuredItem}</p>}
+                              {lastSeenAmount !== null && <p className="mt-1 text-sm text-violet-900"><strong>Upphæð:</strong> {lastSeenAmount.toLocaleString("is-IS")} kr.</p>}
+                              {isConfirmed ? (
+                                <div className="mt-3 rounded border border-green-300 bg-green-50 p-3 text-sm text-green-800">
+                                  ✓ Staðfest: <strong>{environmentLabel}</strong> · {expenseLink?.account.number} – {expenseLink?.account.name}
+                                </div>
+                              ) : canBook ? (
+                                <div className="mt-3 space-y-3 rounded border border-violet-200 bg-white p-3">
+                                  <form action={async (formData) => {
+                                    "use server";
+                                    const result = await confirmInsurancePolicyProfile(
+                                      document.id, link.entity.id,
+                                      String(formData.get("insuranceEnvironment") ?? ""),
+                                      String(formData.get("insuranceAccountNumber") ?? "")
+                                    );
+                                    const nextDocumentId = result.createdDocumentIds[0] ?? null;
+                                    redirect(nextDocumentId ? `/fylgiskjol/${receipt.id}?document=${nextDocumentId}` : `/fylgiskjol/${receipt.id}`);
+                                  }} className="grid gap-3 md:grid-cols-2">
+                                    <div>
+                                      <label className="block text-sm font-semibold text-slate-800">Hvert tilheyrir tryggingin?</label>
+                                      <select name="insuranceEnvironment" required defaultValue="" className="mt-1 w-full rounded border border-slate-300 px-3 py-2 text-sm">
+                                        <option value="" disabled>Veldu umhverfi</option>
+                                        <option value="HOME">Heimilisrekstur</option>
+                                        <option value="BUSINESS">Fyrirtækjarekstur</option>
+                                        <option value="OTHER">Annað</option>
+                                      </select>
+                                    </div>
+                                    <div>
+                                      <label className="block text-sm font-semibold text-slate-800">Kostnaðarreikningur</label>
+                                      <select name="insuranceAccountNumber" required defaultValue={suggestedInsuranceAccount} className="mt-1 w-full rounded border border-slate-300 px-3 py-2 text-sm">
+                                        <option value="" disabled>Veldu kostnaðarreikning</option>
+                                        {accounts.filter((account) => account.entryRole === "EXPENSE").map((account) => (
+                                          <option key={account.number} value={account.number}>{account.number} – {account.name}</option>
+                                        ))}
+                                      </select>
+                                    </div>
+                                    <div className="md:col-span-2">
+                                      <button type="submit" className="rounded bg-violet-700 px-4 py-2 font-semibold text-white hover:bg-violet-800">Staðfesta skírteini</button>
+                                    </div>
+                                  </form>
+
+                                  <details className="rounded border border-slate-200 bg-slate-50 p-3">
+                                    <summary className="cursor-pointer text-sm font-semibold text-slate-800">+ Stofna nýjan kostnaðarreikning</summary>
+                                    <form action={async (formData) => {
+                                      "use server";
+                                      const result = await createAndConfirmInsurancePolicyProfile(
+                                        document.id,
+                                        link.entity.id,
+                                        String(formData.get("insuranceEnvironment") ?? ""),
+                                        String(formData.get("newInsuranceAccountNumber") ?? ""),
+                                        String(formData.get("newInsuranceAccountName") ?? "")
+                                      );
+                                      const nextDocumentId = result.createdDocumentIds[0] ?? null;
+                                      redirect(nextDocumentId ? `/fylgiskjol/${receipt.id}?document=${nextDocumentId}` : `/fylgiskjol/${receipt.id}`);
+                                    }} className="mt-3 grid gap-3 md:grid-cols-2">
+                                      <div>
+                                        <label className="block text-sm font-semibold text-slate-800">Hvert tilheyrir tryggingin?</label>
+                                        <select name="insuranceEnvironment" required defaultValue="" className="mt-1 w-full rounded border border-slate-300 px-3 py-2 text-sm">
+                                          <option value="" disabled>Veldu umhverfi</option>
+                                          <option value="HOME">Heimilisrekstur</option>
+                                          <option value="BUSINESS">Fyrirtækjarekstur</option>
+                                          <option value="OTHER">Annað</option>
+                                        </select>
+                                      </div>
+                                      <div className="grid grid-cols-[120px_1fr] gap-2">
+                                        <div>
+                                          <label className="block text-sm font-semibold text-slate-800">Númer</label>
+                                          <input name="newInsuranceAccountNumber" required inputMode="numeric" placeholder="t.d. 4605" className="mt-1 w-full rounded border border-slate-300 px-3 py-2 text-sm" />
+                                        </div>
+                                        <div>
+                                          <label className="block text-sm font-semibold text-slate-800">Heiti</label>
+                                          <input name="newInsuranceAccountName" required placeholder="t.d. Tryggingar heimilis" className="mt-1 w-full rounded border border-slate-300 px-3 py-2 text-sm" />
+                                        </div>
+                                      </div>
+                                      <div className="md:col-span-2">
+                                        <button type="submit" className="rounded bg-slate-800 px-4 py-2 font-semibold text-white hover:bg-slate-900">Stofna lykil, staðfesta skírteini og endurlesa</button>
+                                      </div>
+                                    </form>
+                                  </details>
+                                </div>
+                              ) : (
+                                <p className="mt-3 text-sm text-violet-900">Notandi með bókunarheimild þarf að staðfesta umhverfi og kostnaðarreikning.</p>
+                              )}
+                            </div>
+                          );
+                        })}
+
                       {document.entityLinks
                         .filter(
                           (link) =>
@@ -866,6 +1101,42 @@ const getNextUnresolvedDocument = (currentDocumentId: number) =>
                                 <strong>Lán:</strong>{" "}
                                 {link.entity.identifierValue ?? link.entity.name}
                               </p>
+
+                              {canBook && !confirmedAccount && (
+                                <form
+                                  action={async () => {
+                                    "use server";
+
+                                    const result =
+                                      await rejectIncorrectLoanEntityLink(
+                                        document.id,
+                                        link.entity.id
+                                      );
+
+                                    const nextDocumentId =
+                                      result.createdDocumentIds[0] ?? null;
+
+                                    redirect(
+                                      nextDocumentId
+                                        ? `/fylgiskjol/${receipt.id}?document=${nextDocumentId}`
+                                        : `/fylgiskjol/${receipt.id}`
+                                    );
+                                  }}
+                                  className="mt-3 rounded border border-red-200 bg-red-50 p-3"
+                                >
+                                  <p className="text-sm text-red-900">
+                                    Ef þetta er ekki raunverulegt lánsnúmer má
+                                    aftengja þessa tillögu og láta GLÖGGT lesa
+                                    skjalið aftur með strangari lánsnúmerareglu.
+                                  </p>
+                                  <button
+                                    type="submit"
+                                    className="mt-2 rounded bg-red-700 px-4 py-2 font-semibold text-white hover:bg-red-800"
+                                  >
+                                    Röng lánatenging – aftengja og endurlesa
+                                  </button>
+                                </form>
+                              )}
 
                               {confirmedAccount ? (
                                 <div className="mt-3 rounded border border-green-300 bg-green-50 p-3 text-sm text-green-800">
@@ -943,6 +1214,185 @@ const getNextUnresolvedDocument = (currentDocumentId: number) =>
                             </div>
                           );
                         })}
+
+                      {document.documentRole === "BOOKABLE" &&
+                        document.bookingEntries.length === 0 &&
+                        !document.entityLinks.some(
+                          (link) =>
+                            link.role === "INSURANCE_POLICY" &&
+                            link.entity.entityType === "INSURANCE_POLICY"
+                        ) &&
+                        !document.disposedAt &&
+                        canBook && (
+                          <div className="mt-4 rounded border border-amber-300 bg-amber-50 p-4 text-amber-950">
+                            <div className="font-semibold">Reikningslykil vantar?</div>
+                            <p className="mt-2 text-sm">
+                              Ef GLÖGGT hefur greint færsluna en viðeigandi lykill er ekki til,
+                              getur þú stofnað hann hér. Lykillinn er aðeins stofnaður eftir
+                              þína staðfestingu og skjalið er síðan lesið aftur.
+                            </p>
+                            <form
+                              action={async (formData) => {
+                                "use server";
+                                const result = await createAccountForDetectedDocument(
+                                  document.id,
+                                  {
+                                    number: String(formData.get("newAccountNumber") ?? ""),
+                                    name: String(formData.get("newAccountName") ?? ""),
+                                    category: String(formData.get("newAccountCategory") ?? "") as
+                                      | "REVENUE"
+                                      | "ASSET"
+                                      | "EXPENSE"
+                                      | "LIABILITY",
+                                  }
+                                );
+                                const nextDocumentId = result.createdDocumentIds[0] ?? null;
+                                redirect(
+                                  nextDocumentId
+                                    ? `/fylgiskjol/${receipt.id}?document=${nextDocumentId}`
+                                    : `/fylgiskjol/${receipt.id}`
+                                );
+                              }}
+                              className="mt-3 grid gap-3 md:grid-cols-3"
+                            >
+                              <div>
+                                <label className="block text-sm font-semibold">Númer</label>
+                                <input name="newAccountNumber" required inputMode="numeric"
+                                  placeholder="t.d. 3910"
+                                  className="mt-1 w-full rounded border border-amber-300 bg-white px-3 py-2" />
+                              </div>
+                              <div>
+                                <label className="block text-sm font-semibold">Heiti</label>
+                                <input name="newAccountName" required placeholder="Heiti lykils"
+                                  className="mt-1 w-full rounded border border-amber-300 bg-white px-3 py-2" />
+                              </div>
+                              <div>
+                                <label className="block text-sm font-semibold">Tegund</label>
+                                <select name="newAccountCategory" required defaultValue=""
+                                  className="mt-1 w-full rounded border border-amber-300 bg-white px-3 py-2">
+                                  <option value="" disabled>Veldu tegund…</option>
+                                  <option value="REVENUE">Tekjur</option>
+                                  <option value="ASSET">Eign / krafa</option>
+                                  <option value="EXPENSE">Kostnaður</option>
+                                  <option value="LIABILITY">Skuld</option>
+                                </select>
+                              </div>
+                              <div className="md:col-span-3">
+                                <button type="submit"
+                                  className="rounded bg-amber-700 px-4 py-2 font-semibold text-white hover:bg-amber-800">
+                                  + Stofna nýjan lykil og endurlesa
+                                </button>
+                              </div>
+                            </form>
+                          </div>
+                        )}
+
+                      {document.documentRole === "BOOKABLE" &&
+                        !document.disposedAt &&
+                        canBook &&
+                        (() => {
+                          const schedule =
+                            document.paymentSchedule &&
+                            typeof document.paymentSchedule === "object" &&
+                            !Array.isArray(document.paymentSchedule)
+                              ? (document.paymentSchedule as {
+                                  scheduleType?: string;
+                                  installments?: unknown[];
+                                })
+                              : null;
+
+                          if (!schedule || !Array.isArray(schedule.installments) || schedule.installments.length === 0) {
+                            return null;
+                          }
+
+                          const liabilityAccountNumbers = Array.from(
+                            new Set(
+                              document.bookingEntries
+                                .filter((entry) => Number(entry.credit) > 0 && Number(entry.debit) === 0)
+                                .map((entry) => String(entry.account).trim())
+                                .filter((number) =>
+                                  accounts.some(
+                                    (account) =>
+                                      account.number === number &&
+                                      ["ACCOUNTS_PAYABLE", "SHORT_TERM_LIABILITY", "LONG_TERM_LIABILITY"].includes(account.type)
+                                  )
+                                )
+                            )
+                          );
+
+                          if (liabilityAccountNumbers.length !== 1) return null;
+
+                          const currentLiabilityNumber = liabilityAccountNumbers[0];
+                          const currentLiability = accounts.find(
+                            (account) => account.number === currentLiabilityNumber
+                          );
+
+                          // Þetta eru aðeins breytanlegar upphafstillögur í UI.
+                          // Bókarinn staðfestir bæði númer og heiti áður en lykill er stofnaður.
+                          const isAnnualAssessment = schedule.scheduleType === "ANNUAL_ASSESSMENT";
+                          const suggestedNumber = isAnnualAssessment ? "2090" : "2080";
+                          const suggestedName = isAnnualAssessment
+                            ? "Skuld vegna opinberra gjalda og álagninga"
+                            : "Skuld vegna samningsbundinna greiðsluáætlana";
+
+                          // Ef sértæki lykillinn er þegar til á ekki að bjóða að stofna hann aftur.
+                          if (accounts.some((account) => account.number === suggestedNumber)) {
+                            return null;
+                          }
+
+                          return (
+                            <div className="mt-4 rounded border border-indigo-300 bg-indigo-50 p-4 text-indigo-950">
+                              <div className="font-semibold">Sértækur skuldalykill</div>
+                              <p className="mt-2 text-sm">
+                                Núverandi skuldalína er {currentLiabilityNumber}
+                                {currentLiability?.name ? ` – ${currentLiability.name}` : ""}.
+                                Fyrir greiðsluáætlun getur þú stofnað sértækan skuldalykil og
+                                færa þessa skuldalínu á hann áður en skjalið er merkt yfirfarið.
+                              </p>
+                              <form
+                                action={async (formData) => {
+                                  "use server";
+                                  await createLiabilityAccountForDetectedDocument(document.id, {
+                                    number: String(formData.get("liabilityAccountNumber") ?? ""),
+                                    name: String(formData.get("liabilityAccountName") ?? ""),
+                                  });
+                                  redirect(`/fylgiskjol/${receipt.id}?document=${document.id}`);
+                                }}
+                                className="mt-3 grid gap-3 md:grid-cols-[160px_1fr_auto] md:items-end"
+                              >
+                                <div>
+                                  <label className="block text-sm font-semibold">Númer</label>
+                                  <input
+                                    name="liabilityAccountNumber"
+                                    required
+                                    inputMode="numeric"
+                                    defaultValue={suggestedNumber}
+                                    className="mt-1 w-full rounded border border-indigo-300 bg-white px-3 py-2"
+                                  />
+                                </div>
+                                <div>
+                                  <label className="block text-sm font-semibold">Heiti skuldalykils</label>
+                                  <input
+                                    name="liabilityAccountName"
+                                    required
+                                    defaultValue={suggestedName}
+                                    className="mt-1 w-full rounded border border-indigo-300 bg-white px-3 py-2"
+                                  />
+                                </div>
+                                <button
+                                  type="submit"
+                                  className="rounded bg-indigo-700 px-4 py-2 font-semibold text-white hover:bg-indigo-800"
+                                >
+                                  + Stofna skuldalykil
+                                </button>
+                              </form>
+                              <p className="mt-2 text-xs text-indigo-800">
+                                GLÖGGT stofnar lykilinn aðeins eftir þína staðfestingu og breytir
+                                eingöngu ótvíræðu skuldalínunni. Kostnaðarlínur og greiðsluáætlun haldast óbreyttar.
+                              </p>
+                            </div>
+                          );
+                        })()}
 
                       {document.disposedAt ? (
   <div className="mt-4 rounded border border-slate-300 bg-slate-50 p-4">
