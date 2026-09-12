@@ -193,6 +193,10 @@ export default async function RootLayout({
         })
       : null;
 
+  const userSettings = effectiveActiveUser
+    ? await prisma.userSettings.findUnique({ where: { userId: effectiveActiveUser.id }, select: { interfaceLanguage: true } })
+    : null;
+
   const moduleSettings = activeCompany
     ? await getCompanyModuleSettings(activeCompany.id)
     : {};
@@ -214,7 +218,7 @@ export default async function RootLayout({
 
   return (
     <html
-      lang="is"
+      lang={userSettings?.interfaceLanguage ?? "is"}
       className={`${geistSans.variable} ${geistMono.variable} h-full antialiased`}
     >
       <body className="min-h-full">
@@ -239,6 +243,7 @@ export default async function RootLayout({
                     : null
                 }
                 enabledModuleIds={enabledModuleIds}
+                interfaceLanguage={userSettings?.interfaceLanguage ?? "is"}
               />
             }
             topClock={<TopClock />}

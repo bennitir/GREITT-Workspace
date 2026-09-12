@@ -2,19 +2,24 @@
 import { logoutUser } from "@/app/actions/userActions";
 import { usePathname } from "next/navigation";
 import Link from "next/link";
+import ServiceTimeTracker from "@/components/ServiceTimeTracker";
+import { uiText } from "@/lib/i18n/ui";
 type Props = {
   activeCompanyName: string | null;
   activeUserRole: string | null;
   activeCompanyRole: string | null;
   enabledModuleIds: string[];
+  interfaceLanguage?: string;
 };
 export default function Sidebar({
   activeCompanyName,
   activeUserRole,
   activeCompanyRole,
   enabledModuleIds,
+  interfaceLanguage,
 }: Props) {
   const pathname = usePathname();
+  const t = uiText(interfaceLanguage);
   return (
     <aside className="w-64 h-screen sticky top-0 bg-slate-900 text-white p-6 overflow-y-auto">
       <Link href="/" className="block">
@@ -23,7 +28,7 @@ export default function Sidebar({
   </h1>
 
   <p className="text-slate-400 mt-1">
-    Workspace
+    {t.solutions}
   </p>
 </Link>
 <Link
@@ -31,26 +36,26 @@ export default function Sidebar({
   className="mt-4 block rounded-lg bg-slate-800 p-3 hover:bg-slate-700 transition-colors"
 >
   <p className="text-xs uppercase tracking-wide text-slate-400">
-    Virkt fyrirtæki
+    {t.activeCompany}
   </p>
 
 
 
 
   <p className="mt-1 font-semibold text-white">
-  {activeCompanyName ?? "Ekkert valið"}
+  {activeCompanyName ?? t.noneSelected}
 </p>
 
 {activeCompanyRole && (
   <p className="mt-1 text-sm text-slate-300">
     {activeCompanyRole === "OWNER"
-      ? "Eigandi"
+      ? t.owner
       : activeCompanyRole === "MANAGER"
-        ? "Stjórnandi"
+        ? t.manager
         : activeCompanyRole === "BOOKKEEPER"
-          ? "Bókari"
+          ? t.bookkeeper
           : activeCompanyRole === "VIEWER"
-            ? "Skoðun"
+            ? t.viewer
             : activeCompanyRole}
   </p>
 )}
@@ -61,20 +66,20 @@ export default function Sidebar({
     href="/fyrirtaeki/nytt"
     className="mt-6 block rounded-lg bg-blue-600 px-4 py-3 text-center font-medium text-white hover:bg-blue-700 transition-colors"
   >
-    ➕ Nýtt fyrirtæki
+    {t.newCompany}
   </Link>
 ) : (
   <div className="mt-6 rounded-lg border border-blue-400/30 bg-blue-500/10 p-4">
     <p className="font-semibold text-white">
-      ➕ Bæta við fyrirtæki
+      {t.addCompany}
     </p>
 
     <p className="mt-2 text-sm leading-5 text-slate-300">
-      Ertu með annað félag sem þú vilt hafa í GLÖGGT?
+      {t.addCompanyText}
     </p>
 
     <p className="mt-2 text-sm leading-5 text-blue-300">
-      Hafðu samband við GLÖGGT og við aðstoðum þig við að bæta því við.
+      {t.contactGloggt}
     </p>
   </div>
 )}
@@ -90,7 +95,7 @@ export default function Sidebar({
         : "text-slate-300 hover:bg-slate-800"
     }`}
   >
-    🛠️ Stjórnstöð
+    {t.admin}
   </Link>
 )}
         <Link
@@ -101,7 +106,7 @@ export default function Sidebar({
       : "text-slate-300 hover:bg-slate-800"
   }`}
 >
-  🏠 Heim
+  {t.home}
 </Link>
 
         <Link
@@ -112,7 +117,7 @@ export default function Sidebar({
       : "text-slate-300 hover:bg-slate-800"
   }`}
 >
-  🏢 Fyrirtæki
+  {t.companies}
 </Link>
 
 {enabledModuleIds.includes("sala") && (
@@ -120,7 +125,7 @@ export default function Sidebar({
     href="/sala"
     className={`block rounded-lg px-4 py-3 transition-colors ${pathname.startsWith("/sala") ? "bg-blue-600 text-white" : "text-slate-300 hover:bg-slate-800"}`}
   >
-    🧾 Sala
+    {t.sales}
   </Link>
 )}
 
@@ -129,7 +134,7 @@ export default function Sidebar({
     href="/laun"
     className={`block rounded-lg px-4 py-3 transition-colors ${pathname.startsWith("/laun") ? "bg-blue-600 text-white" : "text-slate-300 hover:bg-slate-800"}`}
   >
-    💰 Laun
+    {t.payroll}
   </Link>
 )}
 
@@ -138,7 +143,7 @@ export default function Sidebar({
     href="/birgdir"
     className={`block rounded-lg px-4 py-3 transition-colors ${pathname.startsWith("/birgdir") ? "bg-blue-600 text-white" : "text-slate-300 hover:bg-slate-800"}`}
   >
-    📦 Birgðir
+    {t.inventory}
   </Link>
 )}
 
@@ -152,7 +157,7 @@ export default function Sidebar({
       : "text-slate-300 hover:bg-slate-800"
   }`}
 >
-📄 Óunnin fylgiskjöl
+{t.pendingDocs}
 </Link>
 )}
 
@@ -165,7 +170,7 @@ export default function Sidebar({
         : "text-slate-300 hover:bg-slate-800"
     }`}
   >
-    📚 Bókuð fylgiskjöl
+    {t.bookedDocs}
   </Link>
 )}
 
@@ -175,7 +180,7 @@ export default function Sidebar({
   href="/banki"
   className="block rounded-lg px-4 py-3 text-slate-300 hover:bg-slate-800"
 >
-  🏦 Banki
+  {t.bank}
 </Link>
 )}
 
@@ -185,7 +190,7 @@ export default function Sidebar({
   href="/vsk"
   className={`block rounded-lg px-4 py-3 transition-colors ${pathname.startsWith("/vsk") ? "bg-blue-600 text-white" : "text-slate-300 hover:bg-slate-800"}`}
 >
-  🧾 VSK og skil
+  {t.vat}
 </Link>
 
 )}
@@ -194,7 +199,7 @@ export default function Sidebar({
   href="/innsyn"
   className="block rounded-lg px-4 py-3 text-slate-300 hover:bg-slate-800"
 >
-  📊 Innsýn
+  {t.insights}
 </Link>
 
 {enabledModuleIds.includes("vinnustundir") && (
@@ -202,7 +207,7 @@ export default function Sidebar({
     href="/vinnustundir"
     className={`block rounded-lg px-4 py-3 transition-colors ${pathname.startsWith("/vinnustundir") ? "bg-blue-600 text-white" : "text-slate-300 hover:bg-slate-800"}`}
   >
-    ⏱ Vinnustundir
+    {t.hours}
   </Link>
 )}
 
@@ -215,18 +220,30 @@ export default function Sidebar({
         : "text-slate-300 hover:bg-slate-800"
     }`}
   >
-    🔧 Verk
+    {t.work}
   </Link>
 )}
 
+        <Link
+          href="/stillingar"
+          className={`block rounded-lg px-4 py-3 transition-colors ${
+            pathname.startsWith("/stillingar")
+              ? "bg-blue-600 text-white"
+              : "text-slate-300 hover:bg-slate-800"
+          }`}
+        >
+          {t.mySettings}
+        </Link>
+
       </nav>
 
+      <ServiceTimeTracker />
       <form action={logoutUser} className="mt-auto pt-6">
   <button
     type="submit"
     className="w-full rounded-lg px-4 py-3 text-left text-slate-300 hover:bg-slate-800 hover:text-white"
   >
-    🚪 Skrá út
+    {t.logout}
   </button>
 </form>
     </aside>

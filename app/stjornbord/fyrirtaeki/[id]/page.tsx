@@ -21,6 +21,8 @@ import {
 import { setActiveCompanyFromAdmin } from "@/app/actions/companyActions";
 import DeleteCompanyButton from "@/components/DeleteCompanyButton";
 import ReactivateCompanyButton from "@/components/ReactivateCompanyButton";
+import { saveCompanyBookkeepingSettings } from "@/app/actions/bookkeepingSettingsActions";
+import { getBookkeepingWorkflowSettings } from "@/lib/core/bookkeeping-workflow";
 
 export default async function CompanyAdminPage({
   params,
@@ -95,6 +97,9 @@ export default async function CompanyAdminPage({
 
   const moduleSettings =
     await getCompanyModuleSettings(company.id);
+
+  const bookkeepingSettings =
+    await getBookkeepingWorkflowSettings(company.id);
 
   const userSearch =
     search.userSearch?.trim() ?? "";
@@ -269,6 +274,111 @@ export default async function CompanyAdminPage({
             );
           })}
         </div>
+      </section>
+
+      <section className="mb-6 rounded-xl border bg-white p-6">
+        <div className="flex flex-wrap items-start justify-between gap-4">
+          <div>
+            <h2 className="text-xl font-bold">Bókhaldsferli</h2>
+            <p className="mt-1 max-w-3xl text-sm text-slate-600">
+              Stillir hvernig fylgiskjöl eru undirbúin og hvaða stjórnskref þurfa að
+              klárast áður en bókun er heimil. AI er aðstoðarlag; þessar stillingar
+              stjórna bókhaldsferlinu sjálfu.
+            </p>
+          </div>
+          <span className="rounded-full bg-slate-100 px-3 py-1 text-xs font-semibold text-slate-600">
+            Fyrirtækjastilling
+          </span>
+        </div>
+
+        <form action={saveCompanyBookkeepingSettings} className="mt-6 space-y-6">
+          <input type="hidden" name="companyId" value={company.id} />
+
+          <div>
+            <label className="block text-sm font-semibold text-slate-800">
+              Vinnuleið við skráningu fylgiskjala
+            </label>
+            <select
+              name="preparationMode"
+              defaultValue={bookkeepingSettings.preparationMode}
+              className="mt-2 w-full max-w-xl rounded-lg border px-3 py-2"
+            >
+              <option value="HYBRID">Blandað – handvirkt og AI</option>
+              <option value="AI">AI-aðstoð sjálfgefin</option>
+              <option value="MANUAL">Handskráning sjálfgefin</option>
+            </select>
+            <p className="mt-1 text-xs text-slate-500">
+              Þetta velur sjálfgefna vinnuleið en tekur ekki ákvörðunarvald af bókara.
+            </p>
+          </div>
+
+          <div>
+            <p className="text-sm font-semibold text-slate-800">
+              Stjórnskref fyrir bókun
+            </p>
+            <div className="mt-3 grid gap-3 lg:grid-cols-3">
+              {[
+                {
+                  name: "requireReviewBeforeBooking",
+                  checked: bookkeepingSettings.requireReviewBeforeBooking,
+                  title: "Yfirferð",
+                  text: "Krefjast yfirferðar áður en bókun er heimil.",
+                },
+                {
+                  name: "requireReconciliationBeforeBooking",
+                  checked: bookkeepingSettings.requireReconciliationBeforeBooking,
+                  title: "Afstemming",
+                  text: "Krefjast afstemmingar, t.d. við bankafærslu, áður en bóka má.",
+                },
+                {
+                  name: "requireApprovalBeforeBooking",
+                  checked: bookkeepingSettings.requireApprovalBeforeBooking,
+                  title: "Samþykki",
+                  text: "Krefjast samþykkis frá heimiluðum notanda áður en bóka má.",
+                },
+              ].map((item) => (
+                <label key={item.name} className="flex gap-3 rounded-lg border p-4">
+                  <input
+                    type="checkbox"
+                    name={item.name}
+                    defaultChecked={item.checked}
+                    className="mt-1 h-4 w-4"
+                  />
+                  <span>
+                    <span className="block font-semibold">{item.title}</span>
+                    <span className="mt-1 block text-sm text-slate-600">{item.text}</span>
+                  </span>
+                </label>
+              ))}
+            </div>
+          </div>
+
+          <div>
+            <label className="block text-sm font-semibold text-slate-800">
+              Þegar öll virk stjórnskref eru kláruð
+            </label>
+            <select
+              name="completionMode"
+              defaultValue={bookkeepingSettings.completionMode}
+              className="mt-2 w-full max-w-xl rounded-lg border px-3 py-2"
+            >
+              <option value="MANUAL_CONFIRMATION">Tilbúið – bókari ýtir á Bóka</option>
+              <option value="AUTO_BOOK">Bóka sjálfkrafa þegar allt er uppfyllt</option>
+            </select>
+          </div>
+
+          <div className="rounded-lg border border-blue-200 bg-blue-50 p-4 text-sm text-blue-900">
+            <strong>Flæðið verður:</strong> undirbúningur → virk stjórnskref → bókun.
+            Ef ekkert stjórnskref er valið er skjalið strax bókunarhæft.
+          </div>
+
+          <button
+            type="submit"
+            className="rounded-lg bg-blue-600 px-4 py-2 font-medium text-white hover:bg-blue-700"
+          >
+            Vista bókhaldsstillingar
+          </button>
+        </form>
       </section>
 
       <section className="mb-6 rounded-xl border bg-white p-6">

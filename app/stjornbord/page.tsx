@@ -240,6 +240,13 @@ export default async function StjornbordPage({
 
         <div className="flex flex-wrap gap-2">
           <Link
+            href="/stjornbord/abendingar"
+            className="rounded-lg bg-violet-600 px-4 py-2 font-medium text-white hover:bg-violet-700"
+          >
+            Ábendingar
+          </Link>
+
+          <Link
             href="/stjornbord/kostnadur"
             className="rounded-lg bg-emerald-600 px-4 py-2 font-medium text-white hover:bg-emerald-700"
           >

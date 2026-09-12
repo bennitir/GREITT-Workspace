@@ -8,6 +8,7 @@ import { getCompanyModuleSettings } from "@/lib/core/company-module-repository";
 import { getEnabledCompanyModules } from "@/lib/core/company-modules";
 import { cookies } from "next/headers";
 import { prisma } from "@/lib/prisma";
+import { uiText } from "@/lib/i18n/ui";
 
 import PageHeader from "@/components/ui/PageHeader";
 import EmptyState from "@/components/ui/EmptyState";
@@ -20,6 +21,12 @@ export default async function FylgiskjolPage() {
   if (!activeUser) {
     redirect("/innskraning");
   }
+
+  const userSettings = await prisma.userSettings.findUnique({
+    where: { userId: activeUser.id },
+    select: { interfaceLanguage: true },
+  });
+  const t = uiText(userSettings?.interfaceLanguage);
 
   const activeCompanyId = cookieStore.get("activeCompanyId")?.value;
 
@@ -119,7 +126,7 @@ export default async function FylgiskjolPage() {
           receiptId: receipt.id,
           documentId: document.id,
           voucherNumber: document.voucherNumber,
-          title: document.merchantName ?? "Óþekkt fylgiskjal",
+          title: document.merchantName ?? t.unknownDocument,
           companyName: receipt.company.name,
           date: document.date,
           amount: document.totalAmount ?? 0,
@@ -176,10 +183,14 @@ export default async function FylgiskjolPage() {
 
       const statusLabel =
         item.statusText === "NEW"
-          ? "ÓYFIRFARIÐ"
+          ? t.statusUnreviewed
           : item.statusText === "NEEDS_ATTENTION"
-            ? "⚠ ÞARF SÉR SKOÐUN"
-            : item.statusText;
+            ? t.statusNeedsAttention
+            : item.statusText === "Yfirfarið"
+              ? t.statusReviewed
+              : item.statusText === "Til yfirferðar"
+                ? t.statusForReview
+                : item.statusText;
 
       return (
         <a
@@ -190,7 +201,7 @@ export default async function FylgiskjolPage() {
           <div className="font-medium">
             {item.date
               ? formatDate(item.date)
-              : "Óþekkt"}
+              : t.unknown}
           </div>
 
           <div className="min-w-0">
@@ -199,8 +210,8 @@ export default async function FylgiskjolPage() {
             </p>
 
             <p className="text-sm text-slate-500">
-              Fylgiskjal:{" "}
-              {item.voucherNumber ?? "EKKERT NÚMER"}
+              {t.voucher}:{" "}
+              {item.voucherNumber ?? t.noVoucher}
             </p>
           </div>
 
@@ -218,7 +229,7 @@ export default async function FylgiskjolPage() {
 
           <div className="text-right">
             <span className="inline-flex items-center gap-2 rounded px-3 py-2 font-medium text-blue-700 transition group-hover:bg-blue-100 group-hover:text-blue-800">
-              Opna
+              {t.open.replace(" →", "")}
               <span aria-hidden="true">→</span>
             </span>
           </div>
@@ -230,8 +241,8 @@ export default async function FylgiskjolPage() {
   return (
     <main className="p-8">
       <PageHeader
-        title="Óunnin fylgiskjöl"
-        description="Fylgiskjöl sem bíða vinnslu, yfirferðar eða bókunar."
+        title={t.pendingTitle}
+        description={t.pendingDescription}
       />
 
       <div className="mb-6 flex flex-wrap items-center gap-3">
@@ -239,14 +250,14 @@ export default async function FylgiskjolPage() {
           href="/fylgiskjol/nytt"
           className="inline-block rounded bg-blue-600 px-4 py-2 font-medium text-white transition hover:bg-blue-700"
         >
-          + Nýtt fylgiskjal
+          {t.newDocument}
         </a>
 
         <a
           href="/fylgiskjol/skjalasafn"
           className="inline-flex items-center gap-2 rounded border border-slate-300 bg-white px-4 py-2 font-medium text-slate-700 transition hover:border-slate-400 hover:bg-slate-50"
         >
-          Skjalasafn
+          {t.archive}
           <span aria-hidden="true">→</span>
         </a>
       </div>
@@ -255,7 +266,7 @@ export default async function FylgiskjolPage() {
         {needsReviewItems.length > 0 && (
           <section>
             <h2 className="mb-3 text-2xl font-bold">
-              Þarf yfirferð
+              {t.needsReview}
             </h2>
 
             <div className="overflow-hidden rounded-lg border">
@@ -267,7 +278,7 @@ export default async function FylgiskjolPage() {
         {reviewedItems.length > 0 && (
           <section>
             <h2 className="mb-3 text-2xl font-bold">
-              Yfirfarið – bíður bókunar
+              {t.reviewedWaiting}
             </h2>
 
             <div className="overflow-hidden rounded-lg border">
@@ -278,8 +289,8 @@ export default async function FylgiskjolPage() {
 
         {displayItems.length === 0 && (
           <EmptyState
-            title="Engin óunnin fylgiskjöl"
-            description="Öll fylgiskjöl hafa verið afgreidd eða bókuð."
+            title={t.noPendingTitle}
+            description={t.noPendingDescription}
           />
         )}
       </div>

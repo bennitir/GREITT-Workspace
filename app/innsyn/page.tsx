@@ -3,6 +3,8 @@ import { formatNumber } from "@/lib/locale";
 import { cookies } from "next/headers";
 import { redirect } from "next/navigation";
 import { prisma } from "@/lib/prisma";
+import { innsynText, innsynCodeLabel, innsynFactLabel, innsynFactValue, innsynUnitLabel, innsynUnconfirmedPayer, innsynInsuranceCount } from "@/lib/i18n/innsyn";
+import { accountDisplayName } from "@/lib/i18n/accounts";
 
 function formatKr(amount: number) {
   return `${formatNumber(amount, {
@@ -20,78 +22,8 @@ function formatDate(date: Date | null) {
   });
 }
 
-function humanizeCode(value: string | null | undefined) {
-  if (!value) return "";
-
-  const translations: Record<string, string> = {
-    PERSON: "Einstaklingur",
-    ORGANIZATION: "Fyrirtæki / stofnun",
-    COMPANY: "Fyrirtæki",
-    VEHICLE: "Ökutæki",
-    PROPERTY: "Fasteign",
-    LOAN: "Lán",
-    CONTRACT: "Samningur",
-    ACCOUNT: "Reikningur",
-    INVOICE: "Reikningur",
-    OFFER: "Tilboð",
-    INSURANCE_OFFER: "Tryggingatilboð",
-    INSURANCE: "Trygging",
-    INSURANCE_POLICY: "Tryggingarskírteini",
-    POLICY: "Tryggingarskírteini",
-    INSURER: "Tryggingafélag",
-
-    ACTIVE: "Virkt",
-    OPEN: "Opið",
-    CLOSED: "Lokað",
-    PENDING: "Bíður",
-    PROCESSING: "Í vinnslu",
-    COMPLETED: "Lokið",
-    COMPLETED_WITH_ERRORS: "Lokið með villum",
-    FAILED: "Mistókst",
-    CANCELLED: "Hætt við",
-    NEEDS_REPROCESS: "Þarf endurvinnslu",
-
-    CONFIRMED: "Staðfest",
-    UNCONFIRMED: "Óstaðfest",
-    PROPOSED: "Tillaga",
-    REJECTED: "Hafnað",
-
-    PRIMARY: "Aðalskjal",
-    SUPPORTING: "Stuðningsskjal",
-    PAYMENT: "Greiðsla",
-    SETTLEMENT: "Uppgjör",
-    CORRECTION: "Leiðrétting",
-
-    PREMIUM: "Iðgjald",
-    FEE: "Gjald",
-    COVERAGE: "Tryggingarfjárhæð",
-    DEDUCTIBLE: "Eigin áhætta",
-    OTHER: "Önnur upplýsing",
-
-    CHARGE: "Krafa",
-    CREDIT: "Kredit",
-    LOAN_INSTALLMENT: "Afborgun láns",
-    ANNUAL_ASSESSMENT: "Ársálagning",
-
-    USER: "Notandi",
-    SYSTEM: "Kerfi",
-    AI: "AI",
-    UPLOAD: "Innlestur",
-  };
-
-  if (translations[value]) {
-    return translations[value];
-  }
-
-  return value
-    .toLowerCase()
-    .split("_")
-    .map((part) =>
-      part.length > 0
-        ? part.charAt(0).toUpperCase() + part.slice(1)
-        : part
-    )
-    .join(" ");
+function humanizeCode(value: string | null | undefined, language: string = "is") {
+  return innsynCodeLabel(value, language);
 }
 
 function formatFactValue(fact: {
@@ -103,7 +35,7 @@ function formatFactValue(fact: {
   currency: string | null;
   periodStart?: Date | null;
   periodEnd?: Date | null;
-}) {
+}, language: string = "is") {
   if (fact.numberValue !== null) {
     const value = Number(fact.numberValue);
 
@@ -116,7 +48,7 @@ function formatFactValue(fact: {
     });
 
     if (fact.unit) {
-      return `${formatted} ${fact.unit}`;
+      return `${formatted} ${innsynUnitLabel(fact.unit, language)}`;
     }
 
     if (fact.currency) {
@@ -127,7 +59,7 @@ function formatFactValue(fact: {
   }
 
   if (fact.textValue) {
-    return fact.textValue;
+    return innsynFactValue(fact.textValue, (fact as { label?: string | null }).label, language);
   }
 
   if (fact.dateValue) {
@@ -135,7 +67,7 @@ function formatFactValue(fact: {
   }
 
   if (fact.booleanValue !== null) {
-    return fact.booleanValue ? "Já" : "Nei";
+    return fact.booleanValue ? (language === "en" ? "Yes" : language === "pl" ? "Tak" : language === "sr" ? "Да" : "Já") : (language === "en" ? "No" : language === "pl" ? "Nie" : language === "sr" ? "Не" : "Nei");
   }
 
   if (fact.periodStart || fact.periodEnd) {
@@ -191,9 +123,9 @@ function yearMonthFromDate(value: Date | null | undefined) {
   return `${year}-${month}`;
 }
 
-function formatYearMonth(value: string | null) {
+function formatYearMonth(value: string | null, language: string = "is") {
   if (!value) {
-    return "Óþekkt tímabil";
+    return language === "en" ? "Unknown period" : language === "pl" ? "Nieznany okres" : language === "sr" ? "Непознат период" : "Óþekkt tímabil";
   }
 
   const [yearText, monthText] = value.split("-");
@@ -209,7 +141,8 @@ function formatYearMonth(value: string | null) {
     return value;
   }
 
-  const monthName = new Intl.DateTimeFormat("is-IS", {
+  const locale = language === "en" ? "en-GB" : language === "pl" ? "pl-PL" : language === "sr" ? "sr-RS" : "is-IS";
+  const monthName = new Intl.DateTimeFormat(locale, {
     month: "long",
   }).format(new Date(year, month - 1, 1));
 
@@ -536,6 +469,13 @@ export default async function InnsynPage() {
     redirect("/innskraning");
   }
 
+  const userSettings = await prisma.userSettings.findUnique({
+    where: { userId: activeUser.id },
+    select: { interfaceLanguage: true },
+  });
+  const interfaceLanguage = userSettings?.interfaceLanguage ?? "is";
+  const t = innsynText(interfaceLanguage);
+
   const activeCompanyId =
     cookieStore.get("activeCompanyId")?.value;
 
@@ -543,11 +483,11 @@ export default async function InnsynPage() {
     return (
       <div className="p-8">
         <h1 className="text-3xl font-bold">
-          Innsýn
+          {t.title}
         </h1>
 
         <p className="mt-4 text-lg text-slate-600">
-          Ekkert fyrirtæki er virkt.
+          {t.noCompany}
         </p>
       </div>
     );
@@ -905,7 +845,10 @@ export default async function InnsynPage() {
   let inputVat = 0;
 
   const accountNameByNumber = new Map(
-    accounts.map((account) => [account.number, account.name])
+    accounts.map((account) => [
+      account.number,
+      accountDisplayName(account.number, account.name, interfaceLanguage),
+    ])
   );
 
   const expenseBreakdown = new Map<
@@ -1045,11 +988,11 @@ export default async function InnsynPage() {
             sourceName:
               receipt.merchantName?.trim() ||
               receipt.description?.trim() ||
-              `Fylgiskjal #${receipt.id}`,
+              `${t.voucher} #${receipt.id}`,
             account: entry.account,
             accountName:
               accountNameByNumber.get(entry.account) ??
-              "Skuldareikningur",
+              t.liabilityAccount,
             loanName: matchedLoan?.name?.trim() || null,
             loanNumber: matchedLoan?.identifierValue?.trim() || null,
             amount: entry.debit - entry.credit,
@@ -1115,7 +1058,7 @@ export default async function InnsynPage() {
           label:
             receipt.merchantName?.trim() ||
             receipt.description?.trim() ||
-            `Fylgiskjal #${receipt.id}`,
+            `${t.voucher} #${receipt.id}`,
           amount,
         };
       })
@@ -1135,7 +1078,11 @@ export default async function InnsynPage() {
       identifierValue: entity.identifierValue,
       confirmedLiabilityAccounts: entity.accountLinks.map((link) => ({
         number: link.account.number,
-        name: link.account.name,
+        name: accountDisplayName(
+          link.account.number,
+          link.account.name,
+          interfaceLanguage
+        ),
       })),
       documentCount: entity.documentLinks.length,
     }))
@@ -2460,13 +2407,13 @@ return {
         <div className="flex flex-wrap items-end justify-between gap-4">
           <div>
             <p className="text-sm font-semibold uppercase tracking-[0.18em] text-slate-500">
-              GLÖGGT Innsýn
+              GLÖGGT {t.title}
             </p>
             <h1 className="mt-1 text-3xl font-bold tracking-tight text-slate-950 md:text-4xl">
               {company.name}
             </h1>
             <p className="mt-2 max-w-2xl text-slate-600">
-              Staðan í dag, byggð á bókhaldi og þeim gögnum sem GLÖGGT þekkir.
+              {t.intro}
             </p>
           </div>
 
@@ -2478,7 +2425,7 @@ return {
         <section className="mt-8 overflow-hidden rounded-2xl border bg-white shadow-sm">
           <div className="grid lg:grid-cols-[1.35fr_1fr]">
             <div className="p-6 md:p-8">
-              <p className="text-sm font-semibold text-slate-500">Staðan í dag</p>
+              <p className="text-sm font-semibold text-slate-500">{t.today}</p>
               <p
                 className={`mt-2 text-4xl font-bold tracking-tight md:text-5xl ${
                   insightBalance >= 0 ? "text-emerald-700" : "text-slate-950"
@@ -2487,36 +2434,36 @@ return {
                 {formatKr(insightBalance)}
               </p>
               <p className="mt-3 text-sm text-slate-600">
-                Innkoma að frádregnum útgjöldum samkvæmt þeim gögnum sem GLÖGGT þekkir.
+                {t.balanceDescription}
               </p>
               <p className="mt-2 text-xs text-slate-400">
-                Samanburður við fyrra ár og áætlun birtist hér þegar samanburðargögn liggja fyrir.
+                {t.comparisonDescription}
               </p>
             </div>
 
             <div className="grid grid-cols-2 border-t bg-slate-50/70 lg:border-l lg:border-t-0">
               <div className="border-r p-5 md:p-6">
                 <a href="#innkoma-greining" className="block rounded-lg focus:outline-none focus:ring-2 focus:ring-slate-300">
-                  <p className="text-sm font-medium text-slate-500">Innkoma</p>
+                  <p className="text-sm font-medium text-slate-500">{t.income}</p>
                   <p className="mt-2 text-2xl font-bold text-slate-950">
                     {formatKr(insightIncome)}
                   </p>
-                  <p className="mt-1 text-xs font-medium text-slate-500">Sjá nánar →</p>
+                  <p className="mt-1 text-xs font-medium text-slate-500">{t.more}</p>
                 </a>
               </div>
               <div className="p-5 md:p-6">
                 <a href="#utgjold-greining" className="block rounded-lg focus:outline-none focus:ring-2 focus:ring-slate-300">
-                  <p className="text-sm font-medium text-slate-500">Útgjöld</p>
+                  <p className="text-sm font-medium text-slate-500">{t.expenses}</p>
                   <p className="mt-2 text-2xl font-bold text-slate-950">
                     {formatKr(insightExpenses)}
                   </p>
-                  <p className="mt-1 text-xs font-medium text-slate-500">Sjá nánar →</p>
+                  <p className="mt-1 text-xs font-medium text-slate-500">{t.more}</p>
                 </a>
               </div>
               <div className="col-span-2 border-t p-5 md:p-6">
                 <div className="flex flex-wrap items-center justify-between gap-3">
                   <div>
-                    <p className="text-sm font-medium text-slate-500">VSK-staða</p>
+                    <p className="text-sm font-medium text-slate-500">{t.vat}</p>
                     <p className="mt-1 text-xl font-bold text-slate-950">
                       {formatKr(vatBalance)}
                     </p>
@@ -2525,7 +2472,7 @@ return {
                     href="/vsk"
                     className="text-sm font-semibold text-slate-700 hover:text-slate-950"
                   >
-                    Sjá VSK →
+                    {t.seeVat}
                   </a>
                 </div>
               </div>
@@ -2537,10 +2484,10 @@ return {
           <div className="flex flex-wrap items-center justify-between gap-3">
             <div>
               <p className="text-xs font-semibold uppercase tracking-[0.16em] text-slate-500">
-                GLÖGGT vekur athygli á
+                {t.attention}
               </p>
               <h2 className="mt-1 text-xl font-bold text-slate-950">
-                Það sem skiptir mestu máli núna
+                {t.important}
               </h2>
             </div>
           </div>
@@ -2554,11 +2501,11 @@ return {
                   }`}
                 />
                 <div>
-                  <p className="font-semibold text-slate-900">Rekstur</p>
+                  <p className="font-semibold text-slate-900">{t.operations}</p>
                   <p className="mt-1 text-sm leading-6 text-slate-600">
                     {insightBalance < 0
-                      ? `Útgjöld eru ${formatKr(Math.abs(insightBalance))} umfram þekkta innkomu.`
-                      : `Þekkt innkoma er ${formatKr(insightBalance)} umfram útgjöld.`}
+                      ? t.operationsNegative(formatKr(Math.abs(insightBalance)))
+                      : t.operationsPositive(formatKr(insightBalance))}
                   </p>
                 </div>
               </div>
@@ -2575,14 +2522,14 @@ return {
                   }`}
                 />
                 <div>
-                  <p className="font-semibold text-slate-900">Gögn úr skjölum</p>
+                  <p className="font-semibold text-slate-900">{t.documentData}</p>
                   <p className="mt-1 text-sm leading-6 text-slate-600">
                     {pensionIncomeWithoutPeriod > 0 ||
                     pensionIncomeWithoutConfirmedPayer > 0
-                      ? `${pensionIncomeWithoutPeriod + pensionIncomeWithoutConfirmedPayer} atriði í lífeyrisgögnum þarfnast nánari staðfestingar.`
+                      ? t.pensionNeedsConfirmation(pensionIncomeWithoutPeriod + pensionIncomeWithoutConfirmedPayer)
                       : hasInsightData
-                        ? "Engin augljós óstaðfest lífeyrisatriði í samantektinni."
-                        : "Innsýn er enn að byggjast upp úr skjölum fyrirtækisins."}
+                        ? t.noUnconfirmedPension
+                        : t.insightsBuilding}
                   </p>
                 </div>
               </div>
@@ -2596,11 +2543,11 @@ return {
                   }`}
                 />
                 <div>
-                  <p className="font-semibold text-slate-900">Innsýn-vinnsla</p>
+                  <p className="font-semibold text-slate-900">{t.processing}</p>
                   <p className="mt-1 text-sm leading-6 text-slate-600">
                     {activeProcessingJobs > 0
-                      ? `${activeProcessingJobs} Innsýn-vinnsla er í gangi.`
-                      : "Engin virk Innsýn-vinnsla bíður núna."}
+                      ? t.processingActive(activeProcessingJobs)
+                      : t.processingIdle}
                   </p>
                 </div>
               </div>
@@ -2610,27 +2557,27 @@ return {
 
         <section id="utgjold-greining" className="mt-6 scroll-mt-6 rounded-2xl border bg-white p-5 shadow-sm md:p-6">
           <p className="text-xs font-semibold uppercase tracking-[0.16em] text-slate-500">
-            Útgjöld
+            {t.expenses}
           </p>
           <div className="mt-2 flex flex-wrap items-end justify-between gap-4">
             <div>
-              <h2 className="text-xl font-bold text-slate-950">Hvað hefur farið út</h2>
+              <h2 className="text-xl font-bold text-slate-950">{t.outgoing}</h2>
               <p className="mt-2 text-3xl font-bold text-slate-950">
                 {formatKr(insightExpenses)}
               </p>
               <p className="mt-1 text-sm text-slate-500">
-                Staðfest útgjöld sem GLÖGGT getur nú tengt við bókaðar færslur.
+                {t.confirmedExpensesDescription}
               </p>
             </div>
             <div className="rounded-xl bg-slate-50 px-4 py-3 text-right">
-              <p className="text-xs text-slate-500">Bókuð útgjöld</p>
+              <p className="text-xs text-slate-500">{t.bookedExpenses}</p>
               <p className="mt-1 font-bold text-slate-900">{formatKr(expenses)}</p>
             </div>
           </div>
 
           <details className="mt-5 rounded-xl border">
             <summary className="cursor-pointer p-4 text-sm font-semibold text-slate-700">
-              Sjá nánari greiningu →
+              {t.detailed}
             </summary>
             <div className="space-y-3 border-t p-4 text-sm">
               {householdPropertyGroups.length > 0 && (
@@ -2639,10 +2586,10 @@ return {
                     <div className="flex items-center justify-between gap-4">
                       <div className="min-w-0">
                         <p className="font-semibold text-slate-900">
-                          Kostnaður heimilis
+                          {t.homeCost}
                         </p>
                         <p className="mt-0.5 text-xs text-slate-500">
-                          Greind gögn um fasteignir úr frumgögnum GLÖGGT
+                          {t.propertyData}
                         </p>
                       </div>
                       <span className="shrink-0 font-bold text-slate-950">
@@ -2653,9 +2600,7 @@ return {
 
                   <div className="space-y-3 border-t bg-white p-3">
                     <p className="text-xs leading-5 text-slate-500">
-                      GLÖGGT hefur greint þessi gögn úr frumgögnum. Þau eru
-                      sýnd til upplýsingar og breyta ekki bókuðum útgjöldum
-                      fyrr en bókun liggur fyrir.
+                      {interfaceLanguage === "en" ? "GLÖGGT identified this information from source documents. It is shown for information and does not change booked expenses until an entry has been booked." : interfaceLanguage === "pl" ? "GLÖGGT rozpoznał te dane w dokumentach źródłowych. Są one prezentowane informacyjnie i nie zmieniają zaksięgowanych wydatków do czasu zaksięgowania zapisu." : interfaceLanguage === "sr" ? "GLÖGGT је препознао ове податке из изворних докумената. Приказани су информативно и не мењају прокњижене расходе док се ставка не прокњижи." : "GLÖGGT hefur greint þessi gögn úr frumgögnum. Þau eru sýnd til upplýsingar og breyta ekki bókuðum útgjöldum fyrr en bókun liggur fyrir."}
                     </p>
 
                     {householdPropertyGroups.map((property) => (
@@ -2800,7 +2745,7 @@ return {
                                         href={`/fylgiskjol/${assessment.receiptId}`}
                                         className="text-xs font-semibold text-slate-600 hover:text-slate-950"
                                       >
-                                        Opna frumskjal →
+                                        {t.actionOpen}
                                       </a>
                                     </div>
                                   )}
@@ -2836,7 +2781,7 @@ return {
                                           : ""}
                                       </p>
                                       <p className="mt-0.5 text-xs text-slate-500">
-                                        Reikningur úr frumgögnum · ekki staðfest greiðsla
+                                        {t.sourceInvoiceUnconfirmed}
                                       </p>
                                     </div>
                                     <span className="font-semibold text-slate-900">
@@ -2866,7 +2811,7 @@ return {
                                         href={`/fylgiskjol/${utility.receiptId}`}
                                         className="text-xs font-semibold text-slate-600 hover:text-slate-950"
                                       >
-                                        Opna frumskjal →
+                                        {t.actionOpen}
                                       </a>
                                     </div>
                                   )}
@@ -2884,15 +2829,15 @@ return {
               {expenseInsightGroups.length > 0 ? (
                 <div className="space-y-3">
                   {expenseInsightGroups.map((group) => (
-                    <details key={group.category} className="overflow-hidden rounded-lg border bg-slate-50/70">
+                    <details key={group.category === "Fjármögnun og lán" ? (interfaceLanguage === "en" ? "Financing and loans" : interfaceLanguage === "pl" ? "Finansowanie i pożyczki" : interfaceLanguage === "sr" ? "Финансирање и кредити" : group.category) : group.category === "Bifreiðar" ? (interfaceLanguage === "en" ? "Vehicles" : interfaceLanguage === "pl" ? "Pojazdy" : interfaceLanguage === "sr" ? "Возила" : group.category) : group.category === "Banki og þjónustugjöld" ? (interfaceLanguage === "en" ? "Bank and service fees" : interfaceLanguage === "pl" ? "Bank i opłaty za usługi" : interfaceLanguage === "sr" ? "Банка и услужне накнаде" : group.category) : group.category === "Önnur útgjöld" ? (interfaceLanguage === "en" ? "Other expenses" : interfaceLanguage === "pl" ? "Pozostałe wydatki" : interfaceLanguage === "sr" ? "Остали расходи" : group.category) : group.category} className="overflow-hidden rounded-lg border bg-slate-50/70">
                       <summary className="cursor-pointer list-none p-3">
                         <div className="flex items-center justify-between gap-4">
                           <div className="min-w-0">
                             <p className="font-semibold text-slate-900">
-                              {group.category}
+                              {group.category === "Fjármögnun og lán" ? (interfaceLanguage === "en" ? "Financing and loans" : interfaceLanguage === "pl" ? "Finansowanie i pożyczki" : interfaceLanguage === "sr" ? "Финансирање и кредити" : group.category) : group.category === "Bifreiðar" ? (interfaceLanguage === "en" ? "Vehicles" : interfaceLanguage === "pl" ? "Pojazdy" : interfaceLanguage === "sr" ? "Возила" : group.category) : group.category === "Banki og þjónustugjöld" ? (interfaceLanguage === "en" ? "Bank and service fees" : interfaceLanguage === "pl" ? "Bank i opłaty za usługi" : interfaceLanguage === "sr" ? "Банка и услужне накнаде" : group.category) : group.category === "Önnur útgjöld" ? (interfaceLanguage === "en" ? "Other expenses" : interfaceLanguage === "pl" ? "Pozostałe wydatki" : interfaceLanguage === "sr" ? "Остали расходи" : group.category) : group.category}
                             </p>
                             <p className="mt-0.5 text-xs text-slate-500">
-                              {group.items.length} {group.items.length === 1 ? "bókhaldsliður" : "bókhaldsliðir"}
+                              {group.items.length} {interfaceLanguage === "en" ? (group.items.length === 1 ? "accounting item" : "accounting items") : interfaceLanguage === "pl" ? (group.items.length === 1 ? "pozycja księgowa" : "pozycje księgowe") : interfaceLanguage === "sr" ? (group.items.length === 1 ? "књиговодствена ставка" : "књиговодствене ставке") : (group.items.length === 1 ? "bókhaldsliður" : "bókhaldsliðir")}
                             </p>
                           </div>
                           <span className="shrink-0 font-bold text-slate-950">
@@ -2905,7 +2850,7 @@ return {
                         {group.category === "Fjármögnun og lán" && knownLoans.length > 0 && (
                           <div className="mb-3 rounded-lg border border-slate-200 bg-slate-50 p-3">
                             <p className="text-xs font-semibold uppercase tracking-[0.12em] text-slate-500">
-                              Lán sem GLÖGGT þekkir
+                              {t.loansKnown}
                             </p>
                             <div className="mt-2 space-y-2">
                               {knownLoans.map((loan) => (
@@ -2924,13 +2869,13 @@ return {
                                     </p>
                                   </div>
                                   <span className="shrink-0 text-xs font-medium text-emerald-700">
-                                    Staðfest tenging
+                                    {t.confirmedLink}
                                   </span>
                                 </div>
                               ))}
                             </div>
                             <p className="mt-2 text-xs leading-5 text-slate-500">
-                              Þessi lánatenging er þekking úr skjölum og staðfestingum. Hún breytir ekki bókuðum útgjöldum fyrr en færsla er bókuð.
+                              {interfaceLanguage === "en" ? "This loan link is knowledge from documents and confirmations. It does not change booked expenses until an entry is booked." : interfaceLanguage === "pl" ? "To powiązanie pożyczki wynika z dokumentów i potwierdzeń. Nie zmienia zaksięgowanych wydatków do czasu zaksięgowania zapisu." : interfaceLanguage === "sr" ? "Ова веза кредита је знање из докумената и потврда. Не мења прокњижене расходе док се ставка не прокњижи." : "Þessi lánatenging er þekking úr skjölum og staðfestingum. Hún breytir ekki bókuðum útgjöldum fyrr en færsla er bókuð."}
                             </p>
                           </div>
                         )}
@@ -2949,26 +2894,26 @@ return {
                                     {item.name}
                                   </p>
                                   <p className="mt-0.5 text-xs text-slate-500">
-                                    Reikningur {item.account}
+                                    {interfaceLanguage === "en" ? "Account" : interfaceLanguage === "pl" ? "Konto" : interfaceLanguage === "sr" ? "Конто" : "Reikningur"} {item.account}
                                   </p>
 
                                   {group.category === "Fjármögnun og lán" && (
                                     <p className="mt-1 text-xs text-slate-500">
                                       {item.linkedEntities.length === 1
-                                        ? `Lán: ${item.linkedEntities[0]}`
+                                        ? `${interfaceLanguage === "en" ? "Loan" : interfaceLanguage === "pl" ? "Pożyczka" : interfaceLanguage === "sr" ? "Кредит" : "Lán"}: ${item.linkedEntities[0]}`
                                         : item.linkedEntities.length > 1
-                                          ? `Möguleg lán: ${item.linkedEntities.join(" · ")}`
-                                          : "Ekki tengt við ákveðið lán"}
+                                          ? `${interfaceLanguage === "en" ? "Possible loans" : interfaceLanguage === "pl" ? "Możliwe pożyczki" : interfaceLanguage === "sr" ? "Могући кредити" : "Möguleg lán"}: ${item.linkedEntities.join(" · ")}`
+                                          : (interfaceLanguage === "en" ? "Not linked to a specific loan" : interfaceLanguage === "pl" ? "Niepowiązane z konkretną pożyczką" : interfaceLanguage === "sr" ? "Није повезано са одређеним кредитом" : "Ekki tengt við ákveðið lán")}
                                     </p>
                                   )}
 
                                   {group.category === "Bifreiðar" && (
                                     <p className="mt-1 text-xs text-slate-500">
                                       {item.linkedEntities.length === 1
-                                        ? `Bifreið: ${item.linkedEntities[0]}`
+                                        ? `${interfaceLanguage === "en" ? "Vehicle" : interfaceLanguage === "pl" ? "Pojazd" : interfaceLanguage === "sr" ? "Возило" : "Bifreið"}: ${item.linkedEntities[0]}`
                                         : item.linkedEntities.length > 1
-                                          ? `Mögulegar bifreiðar: ${item.linkedEntities.join(" · ")}`
-                                          : "Ekki tengt við ákveðna bifreið"}
+                                          ? `${interfaceLanguage === "en" ? "Possible vehicles" : interfaceLanguage === "pl" ? "Możliwe pojazdy" : interfaceLanguage === "sr" ? "Могућа возила" : "Mögulegar bifreiðar"}: ${item.linkedEntities.join(" · ")}`
+                                          : (interfaceLanguage === "en" ? "Not linked to a specific vehicle" : interfaceLanguage === "pl" ? "Niepowiązane z konkretnym pojazdem" : interfaceLanguage === "sr" ? "Није повезано са одређеним возилом" : "Ekki tengt við ákveðna bifreið")}
                                     </p>
                                   )}
                                 </div>
@@ -2981,7 +2926,7 @@ return {
                               {sources.length > 0 && (
                                 <div className="mt-3 space-y-2 border-t border-slate-200 pt-3">
                                   <p className="text-[11px] font-semibold uppercase tracking-[0.12em] text-slate-400">
-                                    Bókað úr fylgiskjali
+                                    {interfaceLanguage === "en" ? "Booked from source document" : interfaceLanguage === "pl" ? "Zaksięgowano z dokumentu źródłowego" : interfaceLanguage === "sr" ? "Прокњижено из изворног документа" : "Bókað úr fylgiskjali"}
                                   </p>
 
                                   {sources.map((source) => (
@@ -2994,7 +2939,7 @@ return {
                                           {source.label}
                                         </p>
                                         <p className="mt-0.5 text-xs text-slate-500">
-                                          {formatDate(source.date)} · Fylgiskjal #{source.id}
+                                          {formatDate(source.date)} · {t.voucher} #{source.id}
                                         </p>
                                       </div>
 
@@ -3006,7 +2951,7 @@ return {
                                           href={`/fylgiskjol/${source.id}`}
                                           className="text-xs font-semibold text-slate-600 hover:text-slate-950"
                                         >
-                                          Opna frumskjal →
+                                          {t.actionOpen}
                                         </a>
                                       </div>
                                     </div>
@@ -3022,17 +2967,17 @@ return {
                 </div>
               ) : (
                 <div className="rounded-lg bg-slate-50 p-3 text-slate-600">
-                  Engin bókuð útgjöld fundust á tímabilinu.
+                  {t.noBooked}
                 </div>
               )}
 
               <div className="flex items-center justify-between gap-4 border-t pt-3">
-                <span className="font-semibold text-slate-700">Samtals bókuð útgjöld</span>
+                <span className="font-semibold text-slate-700">{t.totalBooked}</span>
                 <span className="font-bold text-slate-950">{formatKr(expenses)}</span>
               </div>
 
               <p className="text-xs leading-5 text-slate-500">
-                Flokkarnir hér eru Innsýn-merking ofan á bókhaldið. Reikningslyklar og bókaðar færslur haldast óbreytt. GLÖGGT sýnir aðeins ákveðið lán eða bifreið þegar tengingin finnst í sama upprunaskjali; annars er tengingin skilin eftir óstaðfest.
+                {interfaceLanguage === "en" ? "These categories are an Insights presentation layer on top of the accounting records. Accounts and booked entries remain unchanged. GLÖGGT only shows a specific loan or vehicle when the link is found in the same source document; otherwise the link remains unconfirmed." : interfaceLanguage === "pl" ? "Te kategorie są warstwą prezentacyjną Analiz nad księgowością. Konta i zaksięgowane zapisy pozostają bez zmian. GLÖGGT pokazuje konkretną pożyczkę lub pojazd tylko wtedy, gdy powiązanie znajduje się w tym samym dokumencie źródłowym; w przeciwnym razie pozostaje ono niepotwierdzone." : interfaceLanguage === "sr" ? "Ове категорије су приказни слој Увида изнад књиговодства. Конта и прокњижене ставке остају непромењени. GLÖGGT приказује одређени кредит или возило само када је веза пронађена у истом изворном документу; у супротном веза остаје непотврђена." : "Flokkarnir hér eru Innsýn-merking ofan á bókhaldið. Reikningslyklar og bókaðar færslur haldast óbreytt. GLÖGGT sýnir aðeins ákveðið lán eða bifreið þegar tengingin finnst í sama upprunaskjali; annars er tengingin skilin eftir óstaðfest."}
               </p>
             </div>
           </details>
@@ -3041,31 +2986,31 @@ return {
         {principalRepayments.length > 0 && (
           <section className="mt-6 rounded-2xl border bg-white p-5 shadow-sm md:p-6">
             <p className="text-xs font-semibold uppercase tracking-[0.16em] text-slate-500">
-              Skuldir og afborganir
+              {interfaceLanguage === "en" ? "Liabilities and repayments" : interfaceLanguage === "pl" ? "Zobowiązania i spłaty" : interfaceLanguage === "sr" ? "Обавезе и отплате" : "Skuldir og afborganir"}
             </p>
 
             <div className="mt-2 flex flex-wrap items-end justify-between gap-4">
               <div>
                 <h2 className="text-xl font-bold text-slate-950">
-                  Lækkun höfuðstóls
+                  {t.principal}
                 </h2>
                 <p className="mt-2 text-3xl font-bold text-slate-950">
                   {formatKr(principalRepaymentTotal)}
                 </p>
                 <p className="mt-1 text-sm text-slate-500">
-                  Bókaðar hreyfingar sem lækka skuldir en teljast ekki til rekstrarútgjalda.
+                  {interfaceLanguage === "en" ? "Booked movements that reduce liabilities but are not operating expenses." : interfaceLanguage === "pl" ? "Zaksięgowane operacje zmniejszające zobowiązania, które nie są kosztami operacyjnymi." : interfaceLanguage === "sr" ? "Прокњижене промене које смањују обавезе, али нису пословни расход." : "Bókaðar hreyfingar sem lækka skuldir en teljast ekki til rekstrarútgjalda."}
                 </p>
               </div>
 
               <div className="rounded-xl bg-slate-50 px-4 py-3 text-right">
-                <p className="text-xs text-slate-500">Áhrif á útgjöld</p>
+                <p className="text-xs text-slate-500">{t.expenseImpact}</p>
                 <p className="mt-1 font-bold text-emerald-700">0 kr.</p>
               </div>
             </div>
 
             <details className="mt-5 rounded-xl border">
               <summary className="cursor-pointer p-4 text-sm font-semibold text-slate-700">
-                Sjá afborganir →
+                {t.installments}
               </summary>
 
               <div className="space-y-2 border-t p-4">
@@ -3081,12 +3026,12 @@ return {
                         </p>
                         <p className="mt-0.5 text-xs text-slate-500">
                           {formatDate(item.date)}
-                          {item.loanNumber ? ` · Lán ${item.loanNumber}` : ""}
+                          {item.loanNumber ? ` · ${t.loanShort} ${item.loanNumber}` : ""}
                           {" · "}
                           {item.account} – {item.accountName}
                         </p>
                         <p className="mt-1 text-xs font-medium text-slate-600">
-                          Lækkun skuldar · ekki rekstrarútgjald
+                          {interfaceLanguage === "en" ? "Liability reduction · not an operating expense" : interfaceLanguage === "pl" ? "Zmniejszenie zobowiązania · nie jest kosztem operacyjnym" : interfaceLanguage === "sr" ? "Смањење обавезе · није пословни расход" : "Lækkun skuldar · ekki rekstrarútgjald"}
                         </p>
                       </div>
 
@@ -3098,7 +3043,7 @@ return {
                           href={`/fylgiskjol/${item.receiptId}`}
                           className="text-xs font-semibold text-slate-600 hover:text-slate-950"
                         >
-                          Opna frumskjal →
+                          {t.actionOpen}
                         </a>
                       </div>
                     </div>
@@ -3106,7 +3051,7 @@ return {
                 ))}
 
                 <p className="pt-2 text-xs leading-5 text-slate-500">
-                  Lækkun skuldar breytir efnahag félagsins en er ekki rekstrarútgjald. Vextir, verðbætur og gjöld eru áfram sýnd sérstaklega undir útgjöldum.
+                  {interfaceLanguage === "en" ? "A liability reduction changes the company balance sheet but is not an operating expense. Interest, indexation and fees continue to appear separately under expenses." : interfaceLanguage === "pl" ? "Zmniejszenie zobowiązania zmienia bilans firmy, ale nie jest kosztem operacyjnym. Odsetki, indeksacja i opłaty są nadal prezentowane osobno w kosztach." : interfaceLanguage === "sr" ? "Смањење обавезе мења биланс компаније, али није пословни расход. Камата, индексација и накнаде се и даље приказују посебно међу расходима." : "Lækkun skuldar breytir efnahag félagsins en er ekki rekstrarútgjald. Vextir, verðbætur og gjöld eru áfram sýnd sérstaklega undir útgjöldum."}
                 </p>
               </div>
             </details>
@@ -3117,22 +3062,22 @@ return {
           {pensionIncomeDocumentCount > 0 && (
             <section id="innkoma-greining" className="scroll-mt-6 rounded-2xl border bg-white p-5 shadow-sm md:p-6">
               <p className="text-xs font-semibold uppercase tracking-[0.16em] text-slate-500">
-                Innkoma úr skjölum
+                {t.incomeDocs}
               </p>
               <div className="mt-2 flex flex-wrap items-start justify-between gap-4">
                 <div>
                   <h2 className="text-xl font-bold text-slate-950">
-                    Lífeyrir og greiðslur
+                    {t.pension}
                   </h2>
                   <p className="mt-2 text-3xl font-bold text-slate-950">
                     {formatKr(pensionIncomeCurrentYear)}
                   </p>
                   <p className="mt-1 text-sm text-slate-500">
-                    Greint samtals {currentYear} · brúttó fyrir staðgreiðslu
+                    {interfaceLanguage === "en" ? `Analyzed total ${currentYear} · gross before withholding tax` : interfaceLanguage === "pl" ? `Łącznie przeanalizowano ${currentYear} · brutto przed podatkiem u źródła` : interfaceLanguage === "sr" ? `Укупно анализирано ${currentYear} · бруто пре пореза по одбитку` : `Greint samtals ${currentYear} · brúttó fyrir staðgreiðslu`}
                   </p>
                 </div>
                 <div className="rounded-xl bg-slate-50 px-4 py-3 text-right">
-                  <p className="text-xs text-slate-500">Nýjasta tímabil</p>
+                  <p className="text-xs text-slate-500">{t.latestPeriod}</p>
                   <p className="mt-1 font-bold text-slate-900">
                     {latestPensionIncome
                       ? formatKr(latestPensionIncome.amount)
@@ -3140,7 +3085,7 @@ return {
                   </p>
                   <p className="mt-0.5 text-xs text-slate-500">
                     {latestPensionIncome
-                      ? formatYearMonth(latestPensionIncome.period)
+                      ? formatYearMonth(latestPensionIncome.period, interfaceLanguage)
                       : "Ekki greint"}
                   </p>
                 </div>
@@ -3148,16 +3093,16 @@ return {
 
               <details className="mt-5 rounded-xl border">
                 <summary className="cursor-pointer p-4 text-sm font-semibold text-slate-700">
-                  Sjá nánari greiningu →
+                  {t.detailed}
                 </summary>
                 <div className="border-t p-4">
                   <div className="grid gap-3 sm:grid-cols-2">
                     <div className="rounded-lg bg-slate-50 p-3">
-                      <p className="text-xs text-slate-500">Greind greiðsluskjöl</p>
+                      <p className="text-xs text-slate-500">{t.analyzedPayments}</p>
                       <p className="mt-1 text-lg font-bold">{pensionIncomeDocumentCount}</p>
                     </div>
                     <div className="rounded-lg bg-slate-50 p-3">
-                      <p className="text-xs text-slate-500">Þarfnast staðfestingar</p>
+                      <p className="text-xs text-slate-500">{t.needsConfirmation}</p>
                       <p className="mt-1 text-lg font-bold">
                         {pensionIncomeWithoutPeriod + pensionIncomeWithoutConfirmedPayer}
                       </p>
@@ -3170,7 +3115,7 @@ return {
                         <div key={item.period} className="px-4 py-3 text-sm">
                           <div className="flex items-center justify-between gap-4">
                             <span className="font-medium text-slate-700">
-                              {formatYearMonth(item.period)}
+                              {formatYearMonth(item.period, interfaceLanguage)}
                             </span>
                             <span className="font-semibold text-slate-900">
                               {formatKr(item.amount)}
@@ -3189,7 +3134,7 @@ return {
                                       : "text-slate-500"
                                   }
                                 >
-                                  {payer.name}
+                                  {payer.name === "Óstaðfestur greiðandi" ? innsynUnconfirmedPayer(interfaceLanguage) : payer.name}
                                 </span>
                                 <span className="font-medium text-slate-600">
                                   {formatKr(payer.amount)}
@@ -3209,20 +3154,17 @@ return {
           {latestInsurance && (
             <section className="rounded-2xl border bg-white p-5 shadow-sm md:p-6">
               <p className="text-xs font-semibold uppercase tracking-[0.16em] text-slate-500">
-                Eignir og áhætta
+                {t.assetsRisk}
               </p>
               <div className="mt-2 flex flex-wrap items-start justify-between gap-4">
                 <div>
-                  <h2 className="text-xl font-bold text-slate-950">Tryggingar</h2>
+                  <h2 className="text-xl font-bold text-slate-950">{t.insurance}</h2>
                   <p className="mt-2 text-3xl font-bold text-slate-950">
-  {insurancePolicies.length}{" "}
-  {insurancePolicies.length === 1
-    ? "trygging"
-    : "tryggingar"}
+  {innsynInsuranceCount(insurancePolicies.length, interfaceLanguage)}
 </p>
 
 <p className="mt-1 text-sm text-slate-500">
-  Nettó iðgjaldahreyfingar á yfirliti{" "}
+  {interfaceLanguage === "en" ? "Net premium movements in the overview" : interfaceLanguage === "pl" ? "Zmiany netto składek w zestawieniu" : interfaceLanguage === "sr" ? "Нето кретање премија у прегледу" : "Nettó iðgjaldahreyfingar á yfirliti"}{" "}
   <span className="font-semibold text-slate-700">
     {formatKr(insurancePremiumNetTotal)}
   </span>
@@ -3235,48 +3177,48 @@ return {
 
               <div className="mt-5 grid grid-cols-3 gap-3">
                 <div className="rounded-lg bg-slate-50 p-3">
-                  <p className="text-xs text-slate-500">Tryggingar</p>
+                  <p className="text-xs text-slate-500">{t.insurance}</p>
                   <p className="mt-1 text-lg font-bold">
   {insurancePolicies.length}
 </p>
                 </div>
                 <div className="rounded-lg bg-slate-50 p-3">
-                  <p className="text-xs text-slate-500">Ökutæki</p>
+                  <p className="text-xs text-slate-500">{t.vehicles}</p>
                   <p className="mt-1 text-lg font-bold">{insuranceVehicles.length}</p>
                 </div>
                 <div className="rounded-lg bg-slate-50 p-3">
-                  <p className="text-xs text-slate-500">Fasteignir</p>
+                  <p className="text-xs text-slate-500">{t.properties}</p>
                   <p className="mt-1 text-lg font-bold">{insuranceProperties.length}</p>
                 </div>
               </div>
 
               <details className="mt-5 rounded-xl border">
                 <summary className="cursor-pointer p-4 text-sm font-semibold text-slate-700">
-                  Sjá nánari greiningu →
+                  {t.detailed}
                 </summary>
                 <div className="space-y-4 border-t p-4 text-sm">
                   
                   {highestCoverage !== null && (
                     <div className="flex justify-between gap-4 border-b pb-3">
-                      <span className="text-slate-500">Hæsta tryggingarfjárhæð</span>
+                      <span className="text-slate-500">{t.highestCoverage}</span>
                       <span className="font-semibold">{formatKr(highestCoverage)}</span>
                     </div>
                   )}
                   {possibleRefund !== null && (
                     <div className="flex justify-between gap-4 border-b pb-3">
-                      <span className="text-slate-500">Möguleg endurgreiðsla</span>
+                      <span className="text-slate-500">{t.possibleRefund}</span>
                       <span className="font-semibold">{formatKr(possibleRefund)}</span>
                     </div>
                   )}
                   {conditionalAnnualPremium !== null && (
                     <div className="flex justify-between gap-4 border-b pb-3">
-                      <span className="text-slate-500">Mögulegur kostnaður eftir endurgreiðslu</span>
+                      <span className="text-slate-500">{t.possibleCost}</span>
                       <span className="font-semibold">{formatKr(conditionalAnnualPremium)}</span>
                     </div>
                   )}
                   {(lowestDeductible !== null || highestDeductible !== null) && (
                     <div className="flex justify-between gap-4 border-b pb-3">
-                      <span className="text-slate-500">Eigin áhætta</span>
+                      <span className="text-slate-500">{t.deductible}</span>
                       <span className="text-right font-semibold">
                         {lowestDeductible !== null ? formatKr(lowestDeductible) : "—"}
                         {highestDeductible !== null && highestDeductible !== lowestDeductible
@@ -3288,7 +3230,7 @@ return {
 
                   {(insuranceVehicles.length > 0 || insuranceProperties.length > 0) && (
                     <div>
-                      <p className="font-semibold text-slate-900">Það sem er tryggt</p>
+                      <p className="font-semibold text-slate-900">{t.insured}</p>
                       <div className="mt-2 flex flex-wrap gap-2">
                         {[...insuranceVehicles, ...insuranceProperties].map((entity) => (
                           <span
@@ -3369,7 +3311,7 @@ return {
 
                   <details className="rounded-lg bg-slate-50">
                     <summary className="cursor-pointer p-3 font-medium text-slate-700">
-                      Sýna allar greindar tryggingaupplýsingar
+                      {t.showAllInsurance}
                     </summary>
                     <div className="divide-y border-t">
                       {insuranceFactsForDisplay.map((fact) => (
@@ -3378,10 +3320,10 @@ return {
                           className="flex items-start justify-between gap-4 p-3"
                         >
                           <span className="text-slate-600">
-                            {fact.label || humanizeCode(fact.factType)}
+                            {fact.label ? innsynFactLabel(fact.label, interfaceLanguage) : humanizeCode(fact.factType, interfaceLanguage)}
                           </span>
                           <span className="text-right font-medium text-slate-900">
-                            {formatFactValue(fact)}
+                            {formatFactValue(fact, interfaceLanguage)}
                           </span>
                         </div>
                       ))}
@@ -3395,47 +3337,47 @@ return {
 
         {!hasInsightData ? (
           <section className="mt-6 rounded-2xl border bg-white p-6 shadow-sm">
-            <h2 className="text-xl font-bold text-slate-950">Innsýn er að byggjast upp</h2>
+            <h2 className="text-xl font-bold text-slate-950">{t.building}</h2>
             <p className="mt-2 max-w-2xl text-slate-600">
-              Engin Innsýn-gögn hafa verið vistuð fyrir þetta fyrirtæki enn.
+              {t.noInsightData}
             </p>
           </section>
         ) : (
           <section className="mt-6 rounded-2xl border bg-white shadow-sm">
             <details>
               <summary className="cursor-pointer p-5 md:p-6">
-                <span className="text-lg font-bold text-slate-950">Frekari Innsýn</span>
+                <span className="text-lg font-bold text-slate-950">{t.further}</span>
                 <span className="ml-3 text-sm font-normal text-slate-500">
-                  {entityCount} fyrirbæri · {factCount} staðreyndir · {financialEvents.length} nýlegir fjárhagsatburðir
+                  {entityCount} {t.entitiesWord} · {factCount} {t.factsWord} · {financialEvents.length} {t.recentEventsWord}
                 </span>
               </summary>
 
               <div className="space-y-6 border-t p-5 md:p-6">
                 <div className="grid gap-6 lg:grid-cols-2">
                   <div>
-                    <h3 className="font-semibold text-slate-900">Það sem kemur fram í skjölunum</h3>
+                    <h3 className="font-semibold text-slate-900">{t.docsContain}</h3>
                     <div className="mt-3 flex flex-wrap gap-2">
                       {detectedAreas.map(([type, count]) => (
                         <span
                           key={type}
                           className="rounded-full border bg-slate-50 px-3 py-2 text-sm text-slate-700"
                         >
-                          {humanizeCode(type)} <span className="font-semibold">{count}</span>
+                          {humanizeCode(type, interfaceLanguage)} <span className="font-semibold">{count}</span>
                         </span>
                       ))}
                     </div>
                   </div>
 
                   <div>
-                    <h3 className="font-semibold text-slate-900">Nýjustu lykilupplýsingar</h3>
+                    <h3 className="font-semibold text-slate-900">{t.latestFacts}</h3>
                     <div className="mt-3 space-y-3">
                       {importantFacts.map((fact) => (
                         <div key={fact.id} className="flex items-start justify-between gap-4">
                           <span className="text-sm text-slate-600">
-                            {fact.label || humanizeCode(fact.factType)}
+                            {fact.label ? innsynFactLabel(fact.label, interfaceLanguage) : humanizeCode(fact.factType, interfaceLanguage)}
                           </span>
                           <span className="text-right text-sm font-semibold text-slate-900">
-                            {formatFactValue(fact)}
+                            {formatFactValue(fact, interfaceLanguage)}
                           </span>
                         </div>
                       ))}
@@ -3445,7 +3387,7 @@ return {
 
                 <details className="rounded-xl border">
                   <summary className="cursor-pointer p-4 font-semibold text-slate-800">
-                    Það sem GLÖGGT þekkir ({entityCount})
+                    {t.knownItems} ({entityCount})
                   </summary>
                   <div className="grid gap-3 border-t p-4 lg:grid-cols-2">
                     {entities.map((entity) => (
@@ -3454,12 +3396,12 @@ return {
                           <div>
                             <p className="font-semibold text-slate-900">{entity.name}</p>
                             <p className="mt-1 text-xs text-slate-500">
-                              {humanizeCode(entity.entityType)}
+                              {humanizeCode(entity.entityType, interfaceLanguage)}
                             </p>
                           </div>
                           {entity.relationshipStatus && (
                             <span className="rounded-full bg-white px-2.5 py-1 text-xs text-slate-500 ring-1 ring-slate-200">
-                              {humanizeCode(entity.relationshipStatus)}
+                              {humanizeCode(entity.relationshipStatus, interfaceLanguage)}
                             </span>
                           )}
                         </div>
@@ -3470,7 +3412,7 @@ return {
 
                 <details className="rounded-xl border">
                   <summary className="cursor-pointer p-4 font-semibold text-slate-800">
-                    Nánari staðreyndir ({factCount})
+                    {t.moreFacts} ({factCount})
                   </summary>
                   <div className="divide-y border-t">
                     {facts.map((fact) => (
@@ -3478,16 +3420,16 @@ return {
                         <div className="flex flex-wrap items-start justify-between gap-3">
                           <div>
                             <p className="font-medium text-slate-900">
-                              {fact.label || humanizeCode(fact.factType)}
+                              {fact.label ? innsynFactLabel(fact.label, interfaceLanguage) : humanizeCode(fact.factType, interfaceLanguage)}
                             </p>
                             <p className="mt-1 text-xs text-slate-500">
-                              Heimild: {humanizeCode(fact.source)}
+                              {t.source}: {humanizeCode(fact.source, interfaceLanguage)}
                               {fact.confidence !== null
-                                ? ` · Öryggi ${Math.round(fact.confidence * 100)}%`
+                                ? ` · ${t.confidence} ${Math.round(fact.confidence * 100)}%`
                                 : ""}
                             </p>
                           </div>
-                          <p className="font-semibold text-slate-900">{formatFactValue(fact)}</p>
+                          <p className="font-semibold text-slate-900">{formatFactValue(fact, interfaceLanguage)}</p>
                         </div>
                       </div>
                     ))}
@@ -3496,19 +3438,19 @@ return {
 
                 <details className="rounded-xl border">
                   <summary className="cursor-pointer p-4 font-semibold text-slate-800">
-                    Fjárhagsatburðir ({financialEvents.length})
+                    {t.financialEvents} ({financialEvents.length})
                   </summary>
                   <div className="overflow-x-auto border-t">
                     {financialEvents.length === 0 ? (
-                      <p className="p-4 text-sm text-slate-500">Engir fjárhagsatburðir hafa verið tengdir enn.</p>
+                      <p className="p-4 text-sm text-slate-500">{t.noEvents}</p>
                     ) : (
                       <table className="w-full text-left text-sm">
                         <thead className="border-b bg-slate-50 text-slate-500">
                           <tr>
-                            <th className="px-4 py-3 font-medium">Dagsetning</th>
-                            <th className="px-4 py-3 font-medium">Atburður</th>
-                            <th className="px-4 py-3 font-medium">Staða</th>
-                            <th className="px-4 py-3 text-right font-medium">Upphæð</th>
+                            <th className="px-4 py-3 font-medium">{t.date}</th>
+                            <th className="px-4 py-3 font-medium">{t.event}</th>
+                            <th className="px-4 py-3 font-medium">{t.status}</th>
+                            <th className="px-4 py-3 text-right font-medium">{t.amount}</th>
                           </tr>
                         </thead>
                         <tbody className="divide-y">
@@ -3516,9 +3458,9 @@ return {
                             <tr key={event.id}>
                               <td className="px-4 py-3 text-slate-500">{formatDate(event.eventDate)}</td>
                               <td className="px-4 py-3 font-medium text-slate-900">
-                                {event.title || humanizeCode(event.eventType)}
+                                {event.title || humanizeCode(event.eventType, interfaceLanguage)}
                               </td>
-                              <td className="px-4 py-3 text-slate-600">{humanizeCode(event.status)}</td>
+                              <td className="px-4 py-3 text-slate-600">{humanizeCode(event.status, interfaceLanguage)}</td>
                               <td className="px-4 py-3 text-right font-semibold text-slate-900">
                                 {event.amount !== null
                                   ? event.currency === "ISK"
@@ -3538,26 +3480,26 @@ return {
 
                 <details className="rounded-xl border">
                   <summary className="cursor-pointer p-4 font-semibold text-slate-800">
-                    Innsýn-vinnsla
-                    {activeProcessingJobs > 0 ? ` · ${activeProcessingJobs} í vinnslu` : ""}
+                    {t.processing}
+                    {activeProcessingJobs > 0 ? ` · ${activeProcessingJobs} ${t.inProgress}` : ""}
                   </summary>
                   <div className="divide-y border-t">
                     {processingJobs.length === 0 ? (
-                      <p className="p-4 text-sm text-slate-500">Engin Innsýn-vinnsla hefur verið skráð.</p>
+                      <p className="p-4 text-sm text-slate-500">{t.noProcessing}</p>
                     ) : (
                       processingJobs.map((job) => (
                         <div key={job.id} className="p-4 text-sm">
                           <div className="flex flex-wrap items-center justify-between gap-3">
                             <span className="font-semibold text-slate-900">Innsýn #{job.id}</span>
                             <span className="rounded-full bg-slate-100 px-3 py-1 text-xs text-slate-600">
-                              {humanizeCode(job.status)}
+                              {humanizeCode(job.status, interfaceLanguage)}
                             </span>
                           </div>
                           <p className="mt-2 text-slate-500">
-                            Lokið {job.completedItems} af {job.totalItems}
-                            {job.failedItems > 0 ? ` · Mistókst ${job.failedItems}` : ""}
-                            {job.processingItems > 0 ? ` · Í vinnslu ${job.processingItems}` : ""}
-                            {job.pendingItems > 0 ? ` · Bíður ${job.pendingItems}` : ""}
+                            {interfaceLanguage === "en" ? "Completed" : interfaceLanguage === "pl" ? "Ukończono" : interfaceLanguage === "sr" ? "Завршено" : "Lokið"} {job.completedItems} {interfaceLanguage === "en" ? "of" : interfaceLanguage === "pl" ? "z" : interfaceLanguage === "sr" ? "од" : "af"} {job.totalItems}
+                            {job.failedItems > 0 ? ` · ${interfaceLanguage === "en" ? "Failed" : interfaceLanguage === "pl" ? "Niepowodzenie" : interfaceLanguage === "sr" ? "Неуспело" : "Mistókst"} ${job.failedItems}` : ""}
+                            {job.processingItems > 0 ? ` · ${interfaceLanguage === "en" ? "Processing" : interfaceLanguage === "pl" ? "W trakcie" : interfaceLanguage === "sr" ? "У обради" : "Í vinnslu"} ${job.processingItems}` : ""}
+                            {job.pendingItems > 0 ? ` · ${interfaceLanguage === "en" ? "Pending" : interfaceLanguage === "pl" ? "Oczekuje" : interfaceLanguage === "sr" ? "На чекању" : "Bíður"} ${job.pendingItems}` : ""}
                           </p>
                         </div>
                       ))
@@ -3570,7 +3512,7 @@ return {
         )}
 
         <p className="mt-6 text-center text-xs text-slate-400">
-          Innsýn sýnir stöðu út frá þeim gögnum sem GLÖGGT hefur þegar fengið og unnið.
+          {interfaceLanguage === "en" ? "Insights show the position based on data GLÖGGT has already received and processed." : interfaceLanguage === "pl" ? "Analizy pokazują stan na podstawie danych, które GLÖGGT już otrzymał i przetworzył." : interfaceLanguage === "sr" ? "Увид приказује стање на основу података које је GLÖGGT већ примио и обрадио." : "Innsýn sýnir stöðu út frá þeim gögnum sem GLÖGGT hefur þegar fengið og unnið."}
         </p>
       </div>
     </div>

@@ -6,6 +6,7 @@ import {
   analyzeReceiptWithAI,
   reviewDetectedDocument,
   markDetectedDocumentOutsideBusiness,
+  confirmDetectedDocumentEnvironment,
   retainDetectedDocumentForInsight,
   resolveDetectedDocumentAsSupporting,
   confirmInsightEntityAccountLink,
@@ -23,6 +24,8 @@ import {
   repairDeleteLegacyReceipt,
 } from "@/app/actions/receiptActions";
 import DetectedDocumentEntriesEditor from "@/components/DetectedDocumentEntriesEditor";
+import { submitSuggestion } from "@/app/actions/suggestionActions";
+import TraceDetails from "./TraceDetails";
 
 import { prisma } from "@/lib/prisma";
 import Link from "next/link";
@@ -163,6 +166,152 @@ const canEdit = companyAccess.canWrite ?? false;
 if (!receipt) {
   notFound();
 }
+
+// Rekjanleiki: lesum það sem GLÖGGT hefur þegar varðveitt.
+// Engin saga er búin til eða giskuð afturvirkt.
+const [receiptAuditEvents, receiptAiUsage] = await Promise.all([
+  prisma.auditEvent.findMany({
+    where: {
+      companyId: receipt.companyId,
+      OR: [
+        { entityType: "Receipt", entityId: receipt.id },
+        { parentEntityType: "Receipt", parentEntityId: receipt.id },
+        {
+          parentEntityType: { in: ["AiDetectedDocument", "AI_DETECTED_DOCUMENT"] },
+          parentEntityId: { in: receipt.aiDetectedDocuments.map((item) => item.id) },
+        },
+      ],
+    },
+    include: {
+      user: { select: { name: true } },
+    },
+    orderBy: { createdAt: "asc" },
+  }),
+  prisma.aiUsage.findMany({
+    where: { receiptId: receipt.id },
+    orderBy: { createdAt: "asc" },
+    select: {
+      id: true,
+      action: true,
+      model: true,
+      success: true,
+      errorMessage: true,
+      createdAt: true,
+    },
+  }),
+]);
+
+
+const traceUserIds = Array.from(new Set(receipt.aiDetectedDocuments.flatMap((document) =>
+  [document.environmentConfirmedById, document.disposedById].filter((value): value is number => value !== null)
+)));
+const traceUsers = traceUserIds.length ? await prisma.user.findMany({
+  where: { id: { in: traceUserIds } },
+  select: { id: true, name: true },
+}) : [];
+const traceUserNameById = new Map(traceUsers.map((user) => [user.id, user.name]));
+
+const auditActionLabels: Record<string, string> = {
+  CONFIRM_DOCUMENT_ENVIRONMENT: "Staðfesti að skjalið tilheyri þessu umhverfi",
+  APPROVE_DETECTED_DOCUMENT: "Samþykkti og bókaði fylgiskjal",
+  REVIEW_DETECTED_DOCUMENT: "Merkti fylgiskjal yfirfarið",
+  DISPOSE_DETECTED_DOCUMENT: "Afgreiddi skjal án bókunar",
+};
+
+const receiptTraceItems: Array<{
+  at: Date;
+  title: string;
+  detail?: string | null;
+  actor?: string | null;
+}> = [];
+
+for (const usage of receiptAiUsage) {
+  if (usage.action === "RECEIPT_ANALYSIS") {
+    receiptTraceItems.push({
+      at: usage.createdAt,
+      title: usage.success ? "Fylgiskjal lesið með AI" : "AI-lestur mistókst",
+      detail: usage.success
+        ? `Greining keyrð með ${usage.model}.`
+        : usage.errorMessage,
+      actor: "GLÖGGT AI",
+    });
+  }
+}
+
+for (const document of receipt.aiDetectedDocuments) {
+  if (document.classifiedAt) {
+    receiptTraceItems.push({
+      at: document.classifiedAt,
+      title: "Skjal flokkað",
+      detail: [document.documentType, document.documentRole].filter(Boolean).join(" · "),
+      actor: document.classificationSource === "AI" ? "GLÖGGT AI" : "GLÖGGT",
+    });
+  }
+
+  if (document.environmentConfirmedAt) {
+    receiptTraceItems.push({
+      at: document.environmentConfirmedAt,
+      title: "Staðfest að skjalið tilheyri þessu umhverfi",
+      detail: document.environmentConfirmationReason,
+      actor: document.environmentConfirmedById ? traceUserNameById.get(document.environmentConfirmedById) ?? "Notandi ekki skráður" : "Notandi ekki skráður",
+    });
+  }
+
+  for (const item of document.insightProcessingItems) {
+    const at = item.completedAt ?? item.startedAt ?? item.createdAt;
+    receiptTraceItems.push({
+      at,
+      title:
+        item.status === "COMPLETED"
+          ? "Innsýn-vinnslu lokið"
+          : item.status === "FAILED"
+            ? "Innsýn-vinnsla mistókst"
+            : `Innsýn-vinnsla: ${item.status}`,
+      detail: item.errorMessage ?? `Vinnsluútgáfa ${item.job.processingVersion}`,
+      actor: "GLÖGGT Innsýn",
+    });
+  }
+
+  if (document.reviewedAt) {
+    receiptTraceItems.push({
+      at: document.reviewedAt,
+      title: "Fylgiskjal merkt yfirfarið",
+      detail: "Staðfest yfirferð samkvæmt varðveittri stöðu skjalsins.",
+      actor: "Notandi ekki skráður",
+    });
+  }
+
+  if (document.disposedAt) {
+    receiptTraceItems.push({
+      at: document.disposedAt,
+      title: "Skjal afgreitt án bókunar",
+      detail: document.dispositionReason,
+      actor: document.disposedById ? traceUserNameById.get(document.disposedById) ?? "Notandi ekki skráður" : "Notandi ekki skráður",
+    });
+  }
+
+  if (document.approvedAt) {
+    receiptTraceItems.push({
+      at: document.approvedAt,
+      title: document.voucherNumber
+        ? `Fylgiskjal bókað nr. ${document.voucherNumber}`
+        : "Fylgiskjal samþykkt til bókunar",
+      actor: "Notandi ekki skráður",
+    });
+  }
+}
+
+for (const event of receiptAuditEvents) {
+  receiptTraceItems.push({
+    at: event.createdAt,
+    title: auditActionLabels[event.action] ?? event.description ?? "Kerfisaðgerð",
+    detail: auditActionLabels[event.action] ? event.description : null,
+    actor: event.user?.name ?? (event.source === "AI" ? "GLÖGGT AI" : "GLÖGGT"),
+  });
+}
+
+receiptTraceItems.sort((a, b) => a.at.getTime() - b.at.getTime());
+
 let originalFileUrl = receipt.filePath ?? null;
 
 if (receipt.storagePath) {
@@ -255,6 +404,36 @@ const getNextUnresolvedDocument = (currentDocumentId: number) =>
     >
       Opna frumskjal
     </a>
+
+    <TraceDetails summary={`Rekjanleiki (${receiptTraceItems.length})`}>
+      <div className="fixed left-1/2 top-20 z-50 max-h-[calc(100vh-7rem)] w-[min(58rem,calc(100vw-2rem))] -translate-x-1/2 overflow-y-auto rounded-xl border border-slate-300 bg-white p-6 shadow-2xl">
+        <div className="flex items-start justify-between gap-4">
+          <div>
+            <div className="text-xl font-semibold text-slate-900">Rekjanleiki fylgiskjals</div>
+            <p className="mt-1 text-sm text-slate-600">
+              Hvað var gert, hvenær og hver framkvæmdi aðgerðina. Eldri saga sem GLÖGGT varðveitti ekki er ekki búin til eftir á.
+            </p>
+          </div>
+          <span className="shrink-0 text-sm text-slate-500">Smelltu utan rammans eða aftur á Rekjanleika til að loka</span>
+        </div>
+        {receiptTraceItems.length === 0 ? (
+          <p className="mt-5 text-base text-slate-600">Enginn varðveittur rekjanleiki fannst fyrir þetta fylgiskjal.</p>
+        ) : (
+          <ol className="mt-6 space-y-5 border-l-2 border-slate-200 pl-6 pr-2">
+            {receiptTraceItems.map((item, index) => (
+              <li key={`${item.at.toISOString()}-${index}`} className="relative text-base">
+                <span className="absolute -left-[1.95rem] top-2 h-3 w-3 rounded-full border-2 border-white bg-slate-500" />
+                <div className="font-semibold text-slate-900">{item.title}</div>
+                <div className="mt-1 text-sm text-slate-600">
+                  {item.at.toLocaleString("is-IS", { hour12: false })}{item.actor ? ` · ${item.actor}` : ""}
+                </div>
+                {item.detail && <div className="mt-2 whitespace-pre-wrap leading-6 text-slate-700">{item.detail}</div>}
+              </li>
+            ))}
+          </ol>
+        )}
+      </div>
+    </TraceDetails>
 {!receipt.aiDetectedDocuments.some(
   (document) =>
     document.voucherNumber !== null ||
@@ -1502,7 +1681,20 @@ const getNextUnresolvedDocument = (currentDocumentId: number) =>
 ) : (
  
      <>               
-                        {document.documentRole === "BOOKABLE" && (
+                        {document.documentRole === "BOOKABLE" &&
+                          document.environmentReviewRequired &&
+                          !document.environmentConfirmedAt && (
+                            <div className="mt-3 rounded border border-amber-300 bg-amber-50 p-3 text-sm text-amber-950">
+                              <p className="font-semibold">Bókun bíður staðfestingar á umhverfi</p>
+                              <p className="mt-1">
+                                {document.environmentReviewReason ??
+                                  "Staðfesta þarf að skjalið tilheyri þessu bókhaldsumhverfi áður en bókunartillagan er samþykkt."}
+                              </p>
+                            </div>
+                          )}
+
+                        {document.documentRole === "BOOKABLE" &&
+                          (!document.environmentReviewRequired || document.environmentConfirmedAt) && (
                         <form
                           action={async () => {
                             "use server";
@@ -1646,6 +1838,71 @@ const getNextUnresolvedDocument = (currentDocumentId: number) =>
                           </form>
                         )}
 
+                        {canBook &&
+                          !document.environmentConfirmedAt &&
+                          (document.environmentReviewRequired ||
+                            (document.documentRole === "REVIEW" &&
+                              document.documentType === "ACCOUNTING_DOCUMENT")) && (
+                            <form
+                              action={async (formData) => {
+                                "use server";
+                                const reason = String(
+                                  formData.get("environmentConfirmationReason") ?? ""
+                                ).trim();
+                                await confirmDetectedDocumentEnvironment(
+                                  document.id,
+                                  reason
+                                );
+                              }}
+                              className="mt-3 rounded border border-green-200 bg-green-50 p-3"
+                            >
+                              <p className="text-sm font-semibold text-green-900">
+                                Skjalið tilheyrir þessu umhverfi
+                              </p>
+                              <p className="mt-1 text-sm text-green-800">
+                                Notaðu þetta þegar viðvörunin er rétt að skoða en skjalið tilheyrir engu að síður þessu bókhaldsumhverfi. Staðfestingin kennir GLÖGGT ekki bókunarreikninga.
+                              </p>
+                              {document.environmentReviewReason && (
+                                <p className="mt-2 rounded border border-green-200 bg-white p-2 text-sm text-green-900">
+                                  <strong>Ástæða skoðunar:</strong> {document.environmentReviewReason}
+                                </p>
+                              )}
+                              <textarea
+                                name="environmentConfirmationReason"
+                                required
+                                rows={2}
+                                placeholder="T.d. reikningur er skráður á maka en varðar sameiginlegan kostnað þessa umhverfis."
+                                className="mt-2 w-full rounded border border-gray-300 bg-white px-3 py-2 text-sm"
+                              />
+                              <button
+                                type="submit"
+                                className="mt-2 rounded bg-green-600 px-4 py-2 font-semibold text-white hover:bg-green-700"
+                              >
+                                Staðfesta að skjalið tilheyri þessu umhverfi
+                              </button>
+                            </form>
+                          )}
+
+                        {document.environmentConfirmedAt && (
+                          <div className="mt-3 rounded border border-green-200 bg-green-50 p-3 text-sm text-green-900">
+                            <p className="font-semibold">✓ Staðfest að skjalið tilheyri þessu umhverfi</p>
+                            {document.environmentConfirmationReason && (
+                              <p className="mt-1">{document.environmentConfirmationReason}</p>
+                            )}
+                          </div>
+                        )}
+
+                        {document.environmentConfirmedAt &&
+                          document.documentRole === "REVIEW" &&
+                          document.bookingEntries.length === 0 && (
+                            <div className="mt-3 rounded border border-amber-300 bg-amber-50 p-3 text-sm text-amber-950">
+                              <p className="font-semibold">Eldri greining þarf eina endurlesningu</p>
+                              <p className="mt-1">
+                                Þetta skjal var lesið áður en umhverfisstaðfesting var aðskilin frá bókunargreiningu. Gamla greiningin bjó því ekki til bókunarlínur. Næsti lestur mun geta varðveitt bókunartillöguna og haldið umhverfisstaðfestingu sem sérstakri hindrun.
+                              </p>
+                            </div>
+                          )}
+
                         {canBook && document.documentRole !== "INSIGHT_SOURCE" && document.documentRole !== "SUPPORTING" && (
                           <form
                             action={async (formData) => {
@@ -1721,6 +1978,46 @@ const getNextUnresolvedDocument = (currentDocumentId: number) =>
                             </button>
                           </form>
                         )}
+
+                        <form
+                          action={async (formData) => {
+                            "use server";
+                            const text = String(formData.get("suggestionText") ?? "").trim();
+                            await submitSuggestion({
+                              companyId: receipt.companyId,
+                              entityType: "AI_DETECTED_DOCUMENT",
+                              entityId: document.id,
+                              category: "WORKFLOW",
+                              text,
+                            });
+                          }}
+                          className="mt-3 rounded border border-violet-200 bg-violet-50 p-3"
+                        >
+                          <div className="flex items-center justify-between gap-3">
+                            <div>
+                              <p className="font-semibold text-violet-900">Ábending</p>
+                              <p className="text-sm text-violet-800">
+                                Hugbúnaður í þróun — ábendingar eru vel þegnar. Við metum kosti, galla og áhrif á vinnuflæði áður en ábending leiðir til breytingar.
+                              </p>
+                            </div>
+                          </div>
+                          <textarea
+                            name="suggestionText"
+                            required
+                            rows={2}
+                            placeholder="Hvað mætti GLÖGGT gera betur hér?"
+                            className="mt-2 w-full rounded border border-violet-300 bg-white px-3 py-2 text-sm"
+                          />
+                          <p className="mt-1 text-xs text-violet-700">
+                            Textinn þinn er varðveittur sem ábending og samhengi — ekki sem stafsetningar- eða málfarsþjálfunargagn.
+                          </p>
+                          <button
+                            type="submit"
+                            className="mt-2 rounded bg-violet-700 px-4 py-2 font-semibold text-white hover:bg-violet-800"
+                          >
+                            Senda ábendingu
+                          </button>
+                        </form>
 
                         {document.documentRole !== "INSIGHT_SOURCE" &&
                           document.documentRole !== "SUPPORTING" && (

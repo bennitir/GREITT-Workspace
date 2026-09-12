@@ -7,6 +7,7 @@ import {
   getCompanyAccess,
   getEffectiveUser,
 } from "@/lib/core/access-control";
+import { uiText } from "@/lib/i18n/ui";
 
 async function chooseMobileCompany(formData: FormData) {
   "use server";
@@ -47,6 +48,9 @@ const veljaFyrirtaeki = params.velja === "1";
   if (!user) {
   redirect("/innskraning?next=/mobile");
 }
+
+  const userSettings = await prisma.userSettings.findUnique({ where: { userId: user.id }, select: { interfaceLanguage: true } });
+  const t = uiText(userSettings?.interfaceLanguage);
 
   const cookieStore = await cookies();
   const activeCompanyId = Number(
@@ -106,22 +110,22 @@ const veljaFyrirtaeki = params.velja === "1";
             </p>
 
             <h1 className="mt-2 text-3xl font-bold text-slate-950">
-              Veldu fyrirtæki
+              {t.chooseCompany}
             </h1>
 
             <p className="mt-2 text-base text-slate-600">
-              Veldu fyrirtækið sem þú ætlar að vinna með.
+              {t.chooseCompanyHelp}
             </p>
           </header>
 
           {companies.length === 0 ? (
             <div className="mt-8 rounded-2xl border border-amber-200 bg-amber-50 p-5">
               <p className="font-bold text-amber-900">
-                Engin fyrirtæki tiltæk
+                {t.noCompanies}
               </p>
 
               <p className="mt-2 text-sm text-amber-800">
-                Þú ert ekki með virkan aðgang að neinu fyrirtæki.
+                {t.noCompaniesHelp}
               </p>
             </div>
           ) : (
@@ -171,7 +175,7 @@ const veljaFyrirtaeki = params.velja === "1";
               </p>
 
               <h1 className="mt-1 text-2xl font-bold text-slate-950">
-                Góðan daginn
+                {t.goodDay}
               </h1>
             </div>
 
@@ -179,13 +183,13 @@ const veljaFyrirtaeki = params.velja === "1";
               href="/mobile?velja=1"
               className="rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm font-semibold text-slate-700 shadow-sm"
             >
-              Skipta
+              {t.switchCompany}
             </Link>
           </div>
 
           <div className="mt-4 rounded-2xl bg-slate-100 p-4">
             <p className="text-xs font-semibold uppercase tracking-wide text-slate-500">
-              Virkt fyrirtæki
+              {t.activeCompany}
             </p>
 
             <p className="mt-1 text-lg font-bold text-slate-950">
@@ -200,17 +204,17 @@ const veljaFyrirtaeki = params.velja === "1";
           </div>
 
           <p className="mt-4 text-slate-600">
-            Veldu hvað þú vilt gera.
+            {t.chooseAction}
           </p>
         </header>
 
         <section className="mt-6 grid grid-cols-2 gap-3">
           <button className="rounded-2xl border bg-white p-5 text-left shadow-sm">
             <div className="text-lg font-bold">
-              Innsýn
+              {t.insights.replace("📊 ", "")}
             </div>
             <div className="mt-1 text-sm text-slate-500">
-              Yfirlit
+              {t.overview}
             </div>
           </button>
 
@@ -219,43 +223,48 @@ const veljaFyrirtaeki = params.velja === "1";
   className="rounded-2xl border bg-white p-5 text-left shadow-sm"
 >
   <div className="text-lg font-bold">
-    Verk
+    {t.work.replace("🔧 ", "")}
   </div>
 
   <div className="mt-1 text-sm text-slate-500">
-    Verkefni
+    {t.tasks}
   </div>
 </Link>
 
           <button className="rounded-2xl border bg-white p-5 text-left shadow-sm">
             <div className="text-lg font-bold">
-              Tími
+              {t.time}
             </div>
             <div className="mt-1 text-sm text-slate-500">
-              Vinnustundir
+              {t.workHours}
             </div>
           </button>
 
           <button className="rounded-2xl border bg-white p-5 text-left shadow-sm">
             <div className="text-lg font-bold">
-              Birgðir
+              {t.inventory.replace("📦 ", "")}
             </div>
             <div className="mt-1 text-sm text-slate-500">
-              Birgðastaða
+              {t.stock}
             </div>
           </button>
         </section>
+
+        <Link href="/mobile/stillingar" className="mt-4 block rounded-2xl border bg-white p-5 text-left shadow-sm">
+          <div className="text-lg font-bold">⚙️ {t.settings}</div>
+          <div className="mt-1 text-sm text-slate-500">{t.interfaceLanguage} · {t.timeTracking}</div>
+        </Link>
 
         <Link
           href="/mobile/myndataka"
           className="mt-4 block w-full rounded-2xl bg-blue-600 p-5 text-left text-white shadow-sm"
         >
           <div className="text-xl font-bold">
-            Taka mynd af fylgiskjali
+            {t.takePhoto}
           </div>
 
           <div className="mt-1 text-sm text-blue-100">
-            Senda reikning eða kvittun í GLÖGGT
+            {t.sendReceipt}
           </div>
         </Link>
       </div>

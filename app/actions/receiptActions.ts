@@ -450,6 +450,241 @@ filePath: uploaded?.filePath ?? null,
   };
 }
 
+
+export async function prepareExistingReceiptManually(
+  receiptId: number,
+  documentId: number | null,
+  formData: FormData,
+  bookingEntries: {
+    account: string;
+    text: string;
+    debit: number;
+    credit: number;
+  }[],
+) {
+  const companyId = await requireActiveCompanyWriteAccess();
+  const user = await getEffectiveUser();
+
+  if (!user) {
+    throw new Error("Innskráning er nauðsynleg.");
+  }
+
+  if (bookingEntries.length === 0) {
+    throw new Error("Engar bókunarlínur eru skráðar.");
+  }
+
+  const rawDate = String(formData.get("date") || "").trim();
+  const dateMatch = rawDate.match(/^(\d{2})\.(\d{2})\.(\d{4})$/);
+
+  if (!dateMatch) {
+    throw new Error("Dagsetning verður að vera á forminu dd.mm.áááá.");
+  }
+
+  const [, day, month, year] = dateMatch;
+  const parsedDate = new Date(
+    Number(year),
+    Number(month) - 1,
+    Number(day),
+  );
+
+  const rawAmount = String(formData.get("amount") || "").trim();
+  const amount = Number(rawAmount);
+
+  if (rawAmount === "" || !Number.isFinite(amount)) {
+    throw new Error("Upphæð verður að vera gild tala.");
+  }
+
+  const debitTotal = bookingEntries.reduce(
+    (sum, entry) => sum + Number(entry.debit || 0),
+    0,
+  );
+  const creditTotal = bookingEntries.reduce(
+    (sum, entry) => sum + Number(entry.credit || 0),
+    0,
+  );
+
+  if (Math.abs(debitTotal - creditTotal) > 0.005) {
+    throw new Error("Debet og kredit verða að stemma áður en sent er í yfirferð.");
+  }
+
+  const receipt = await prisma.receipt.findFirst({
+    where: {
+      id: receiptId,
+      companyId,
+      status: { not: "APPROVED" },
+    },
+    include: {
+      aiDetectedDocuments: true,
+    },
+  });
+
+  if (!receipt) {
+    throw new Error("Óunnið fylgiskjal fannst ekki í þessu umhverfi.");
+  }
+
+  const requestedDocument =
+    documentId == null
+      ? null
+      : receipt.aiDetectedDocuments.find(
+          (document) => document.id === documentId,
+        );
+
+  if (documentId != null && !requestedDocument) {
+    throw new Error("Valinn hluti fylgiskjalsins fannst ekki.");
+  }
+
+  if (
+    requestedDocument &&
+    (requestedDocument.approvedAt ||
+      requestedDocument.voucherNumber != null ||
+      requestedDocument.disposedAt ||
+      requestedDocument.disposition)
+  ) {
+    throw new Error("Þessi hluti fylgiskjalsins hefur þegar verið afgreiddur.");
+  }
+
+  const description =
+    String(formData.get("description") || "").trim() ||
+    "Handvirkt undirbúið fylgiskjal";
+  const merchantName =
+    String(formData.get("merchantName") || "").trim() || null;
+  const merchantKennitala =
+    String(formData.get("merchantKennitala") || "").trim() || null;
+  const receiptNumber =
+    String(formData.get("receiptNumber") || "").trim() || null;
+
+  const preparedDocumentId = await prisma.$transaction(async (tx) => {
+    await tx.receipt.update({
+      where: { id: receipt.id },
+      data: requestedDocument
+        ? {
+            // Receipt can contain multiple detected documents. Keep shared
+            // receipt-level accounting metadata untouched when preparing one
+            // existing document manually; only reset the container workflow
+            // status so the selected document can continue to review.
+            status: "NEW",
+          }
+        : {
+            date: parsedDate,
+            description,
+            amount,
+            merchantName,
+            merchantKennitala,
+            receiptNumber,
+            status: "NEW",
+          },
+    });
+
+    let targetDocumentId: number;
+
+    if (requestedDocument) {
+      await tx.aiDetectedDocumentEntry.deleteMany({
+        where: { documentId: requestedDocument.id },
+      });
+
+      await tx.aiDetectedDocument.update({
+        where: { id: requestedDocument.id },
+        data: {
+          merchantName,
+          merchantKennitala,
+          date: parsedDate,
+          receiptNumber,
+          totalAmount: amount,
+          summary: description,
+          documentType: "ACCOUNTING_DOCUMENT",
+          documentRole: "BOOKABLE",
+          classificationConfidence: null,
+          classificationSource: "MANUAL",
+          classifiedAt: new Date(),
+          reviewedAt: null,
+          environmentReviewRequired: false,
+          environmentReviewReason: null,
+          bookingEntries: {
+            create: bookingEntries.map((entry) => ({
+              account: entry.account,
+              text: entry.text,
+              debit: entry.debit,
+              credit: entry.credit,
+            })),
+          },
+        },
+      });
+
+      targetDocumentId = requestedDocument.id;
+    } else {
+      const createdDocument = await tx.aiDetectedDocument.create({
+        data: {
+          receiptId: receipt.id,
+          merchantName,
+          merchantKennitala,
+          date: parsedDate,
+          receiptNumber,
+          totalAmount: amount,
+          summary: description,
+          documentType: "ACCOUNTING_DOCUMENT",
+          documentRole: "BOOKABLE",
+          classificationConfidence: null,
+          classificationSource: "MANUAL",
+          classifiedAt: new Date(),
+          environmentReviewRequired: false,
+          environmentReviewReason: null,
+          bookingEntries: {
+            create: bookingEntries.map((entry) => ({
+              account: entry.account,
+              text: entry.text,
+              debit: entry.debit,
+              credit: entry.credit,
+            })),
+          },
+        },
+      });
+
+      targetDocumentId = createdDocument.id;
+    }
+
+    await tx.auditEvent.create({
+      data: {
+        companyId,
+        userId: user.id,
+        entityType: "AiDetectedDocument",
+        entityId: targetDocumentId,
+        parentEntityType: "Receipt",
+        parentEntityId: receipt.id,
+        action: "PREPARE_RECEIPT_MANUALLY",
+        source: "USER",
+        description: "Fylgiskjal undirbúið handvirkt og sent í yfirferð.",
+        metadata: {
+          receiptId: receipt.id,
+          documentId: targetDocumentId,
+          preparationMethod: "MANUAL",
+          aiRequired: false,
+          merchantName,
+          receiptNumber,
+          documentDate: parsedDate.toISOString(),
+          totalAmount: amount,
+          bookingEntries: bookingEntries.map((entry) => ({
+            account: entry.account,
+            text: entry.text,
+            debit: entry.debit,
+            credit: entry.credit,
+          })),
+        },
+      },
+    });
+
+    return targetDocumentId;
+  });
+
+  revalidatePath(`/fylgiskjol/${receipt.id}`);
+  revalidatePath("/fylgiskjol");
+  revalidatePath("/fylgiskjol/handvirkt");
+
+  return {
+    receiptId: receipt.id,
+    documentId: preparedDocumentId,
+  };
+}
+
 export async function addReceiptEntries(receiptId: number) {
   await requireActiveCompanyWriteAccess();
   const existingEntries = await prisma.receiptEntry.count({
@@ -942,7 +1177,9 @@ Mjög mikilvægt:
 - Núll í heildarupphæð þýðir EKKI sjálfkrafa að ekkert sé að bóka. Leiðrétting eða skuldajöfnun með raunverulegum debet- og kreditliðum (t.d. +900/-900 eða leiðrétting eldri réttinda) getur verið BOOKABLE þótt nettó sé 0. Varðveittu undirliðina og láttu bókun stemma.
 - Þegar frumskjal sýnir aðskilda gjaldaliði/undirliði með eigin heiti og fjárhæð skal varðveita HVERN slíkan lið sem sjálfstæða bookingEntry-línu. Ekki leggja saman eða gleypa einn merkingarlega aðskildan frumskjalslið inn í annan, jafnvel þótt fleiri en einn liður endi á sama bókhaldslykli. Ef tveir liðir fara á sama lykil má endurtaka sama accountNumber á tveimur bookingEntries. Heiti/lýsing bookingEntry skal varðveita merkingu frumskjalsliðsins eins nákvæmlega og hægt er.
 - CREDIT_NOTE eða annað leiðréttingarskjal getur verið BOOKABLE þótt það vísi til fyrri tímabila. Bóka skal fjárhagslega leiðréttingu eftir efni skjalsins og forðast að breyta henni í nýjar tekjur/gjöld ef hún er bakfærsla eða leiðrétting fyrri atburðar.
-- Ekki búa til bookingEntries fyrir SUPPORTING, INSIGHT_SOURCE eða REVIEW.
+- Ekki búa til bookingEntries fyrir SUPPORTING eða INSIGHT_SOURCE.
+- REVIEW á aðeins að stöðva bókun þegar bókhaldslegt eðli/tengsl skjalsins eru sjálf óviss. Ef eina ástæðan fyrir skoðun er að nafn/kennitala móttakanda eða kaupanda passar ekki við bókhaldsumhverfið, en skjalið er annars fullnægjandi sjálfstætt bókhaldsskjal, skal HALDA documentRole = BOOKABLE, búa til venjulegar bookingEntries og setja environmentReviewRequired = true. Þá stöðvar GLÖGGT staðfestingu bókara á umhverfinu án þess að kasta bókunartillögunni.
+- environmentReviewRequired skal aðeins vera true þegar sérstök staðfesting þarf á því að halda að skjalið tilheyri þessu bókhaldsumhverfi, t.d. vegna annars nafns/kennitala á reikningi. environmentReviewReason skal þá útskýra hlutlaust hvað þarf að staðfesta. Annars skal environmentReviewRequired = false og environmentReviewReason = null.
 - Sama fjárhæð, dagsetning og útgefandi sanna ekki að tvö skjöl séu tvítekin. Sterk auðkenni eins og reikningsnúmer, skráningarnúmer ökutækis, fasteignanúmer, lánsnúmer eða tilvísun skipta meira máli.
 - PAYMENT_NOTICE skal EKKI sjálfkrafa vera hvorki BOOKABLE né SUPPORTING. Meta þarf hvaða fjárhagsatburð skjalið sannar og hvort skjalið innihaldi sjálft nægar upplýsingar til bókunar.
 - PAYMENT_NOTICE MÁ vera BOOKABLE þegar það er sjálft fullnægjandi bókunarheimild fyrir raunverulegri skuldbindingu eða greiðslu og inniheldur nauðsynlega sundurliðun. Dæmi: afborgunartilkynning láns með skýru lánsnúmeri og sundurliðun í höfuðstól, vexti og kostnað getur verið BOOKABLE, ef ekki þarf annað frumskjal til að ákvarða bókunina.
@@ -1286,6 +1523,14 @@ Ef dagsetning eða ártal er ólæsilegt eða óvíst skal skila date sem null.
                     type: "number",
                   },
 
+                  environmentReviewRequired: {
+                    type: "boolean",
+                  },
+
+                  environmentReviewReason: {
+                    type: ["string", "null"],
+                  },
+
                   loanInfo: {
                     type: ["object", "null"],
                     properties: {
@@ -1428,6 +1673,8 @@ Ef dagsetning eða ártal er ólæsilegt eða óvíst skal skila date sem null.
                   "documentType",
                   "documentRole",
                   "classificationConfidence",
+                  "environmentReviewRequired",
+                  "environmentReviewReason",
                   "loanInfo",
                   "insuranceInfo",
                   "insurancePolicies",
@@ -1660,6 +1907,25 @@ const createdDocumentIds: number[] = [];
       });
     }
 
+    // Varðveitum staðfesta umhverfisákvörðun við endurlestur sama frumskjals.
+    // AI má endurmeta bókunina, en notandinn á ekki að þurfa að staðfesta
+    // sama nafn-/kennitalafrávik aftur ef skjalið auðkennist ótvírætt.
+    const priorEnvironmentConfirmations = await tx.aiDetectedDocument.findMany({
+      where: {
+        receiptId,
+        environmentConfirmedAt: { not: null },
+      },
+      select: {
+        merchantName: true,
+        date: true,
+        receiptNumber: true,
+        totalAmount: true,
+        environmentConfirmedAt: true,
+        environmentConfirmedById: true,
+        environmentConfirmationReason: true,
+      },
+    });
+
     await tx.aiDetectedDocument.deleteMany({
       where: {
         receiptId,
@@ -1753,6 +2019,38 @@ if (hasInvalidDate) {
   );
 }
 
+        const normalizedMerchantName = String(document.merchantName ?? "")
+          .trim()
+          .toLocaleLowerCase("is-IS");
+        const priorEnvironmentConfirmation =
+          document.environmentReviewRequired === true
+            ? priorEnvironmentConfirmations.find((prior) => {
+                const sameReceiptNumber =
+                  Boolean(document.receiptNumber) &&
+                  Boolean(prior.receiptNumber) &&
+                  String(prior.receiptNumber).trim() ===
+                    String(document.receiptNumber).trim();
+
+                if (sameReceiptNumber) return true;
+
+                const priorMerchantName = String(prior.merchantName ?? "")
+                  .trim()
+                  .toLocaleLowerCase("is-IS");
+                const sameMerchant =
+                  Boolean(normalizedMerchantName) &&
+                  normalizedMerchantName === priorMerchantName;
+                const sameAmount =
+                  Number(prior.totalAmount ?? Number.NaN) ===
+                  Number(document.totalAmount ?? Number.NaN);
+                const sameDate =
+                  Boolean(parsedDocumentDate) &&
+                  Boolean(prior.date) &&
+                  parsedDocumentDate!.getTime() === prior.date!.getTime();
+
+                return sameMerchant && sameAmount && sameDate;
+              })
+            : null;
+
         const createdDocument =
           await tx.aiDetectedDocument.create({
             data: {
@@ -1783,6 +2081,23 @@ if (hasInvalidDate) {
                 document.classificationConfidence,
 
               classificationSource: "AI",
+
+              environmentReviewRequired:
+                document.environmentReviewRequired === true,
+
+              environmentReviewReason:
+                document.environmentReviewRequired === true &&
+                typeof document.environmentReviewReason === "string" &&
+                document.environmentReviewReason.trim()
+                  ? document.environmentReviewReason.trim()
+                  : null,
+
+              environmentConfirmedAt:
+                priorEnvironmentConfirmation?.environmentConfirmedAt ?? null,
+              environmentConfirmedById:
+                priorEnvironmentConfirmation?.environmentConfirmedById ?? null,
+              environmentConfirmationReason:
+                priorEnvironmentConfirmation?.environmentConfirmationReason ?? null,
 
               paymentSchedule:
                 document.paymentSchedule && typeof document.paymentSchedule === "object"
@@ -3228,11 +3543,13 @@ async function materializeReviewedPaymentSchedule(
 
     // Staðfest frumskjal með uppbyggðri greiðsluáætlun verður nú varanleg
     // FinancialEvent-skuldbinding með gjalddögum. Þetta bókar ekkert aftur.
-    await materializeReviewedPaymentSchedule(tx, {
-      companyId: document.receipt.companyId,
-      receiptId: document.receiptId,
-      document,
-    });
+    if (document.classificationSource !== "MANUAL") {
+      await materializeReviewedPaymentSchedule(tx, {
+        companyId: document.receipt.companyId,
+        receiptId: document.receiptId,
+        document,
+      });
+    }
 
     // „Merkja yfirfarið“ er staðfest bókaraval. Vista reikningsvalið strax
     // í AccountingPattern svo næsta sambærilega skjal geti endurnýtt ALLA
@@ -3259,6 +3576,92 @@ async function materializeReviewedPaymentSchedule(
   revalidatePath(`/fylgiskjol/${document.receiptId}`);
   revalidatePath("/fylgiskjol");
   revalidatePath("/");
+}
+
+
+export async function confirmDetectedDocumentEnvironment(
+  documentId: number,
+  reason: string
+) {
+  const document = await prisma.aiDetectedDocument.findUnique({
+    where: { id: documentId },
+    include: { receipt: true },
+  });
+
+  if (!document) {
+    throw new Error("Greint fylgiskjal fannst ekki.");
+  }
+
+  await requireCompanyBookAccess(document.receipt.companyId);
+
+  const user = await getEffectiveUser();
+  if (!user) {
+    throw new Error("Innskráning er nauðsynleg.");
+  }
+
+  if (document.disposedAt || document.disposition) {
+    throw new Error("Þetta fylgiskjal hefur þegar verið endanlega afgreitt.");
+  }
+
+  const isLegacyEnvironmentReview =
+    document.documentRole === "REVIEW" &&
+    document.documentType === "ACCOUNTING_DOCUMENT";
+
+  if (!document.environmentReviewRequired && !isLegacyEnvironmentReview) {
+    throw new Error("Þetta skjal bíður ekki staðfestingar á bókhaldsumhverfi.");
+  }
+
+  const cleanReason = reason.trim();
+  if (cleanReason.length < 3) {
+    throw new Error("Skrá þarf stutta skýringu á því hvers vegna skjalið tilheyrir þessu umhverfi.");
+  }
+
+  const confirmedAt = new Date();
+
+  await prisma.$transaction(async (tx) => {
+    await tx.aiDetectedDocument.update({
+      where: { id: document.id },
+      data: {
+        environmentConfirmedAt: confirmedAt,
+        environmentConfirmedById: user.id,
+        environmentConfirmationReason: cleanReason,
+      },
+    });
+
+    await tx.auditEvent.create({
+      data: {
+        companyId: document.receipt.companyId,
+        userId: user.id,
+        entityType: "Receipt",
+        entityId: document.receiptId,
+        action: "CONFIRM_DOCUMENT_ENVIRONMENT",
+        parentEntityType: "AiDetectedDocument",
+        parentEntityId: document.id,
+        source: "USER",
+        description: "Staðfest að fylgiskjal tilheyri þessu umhverfi þrátt fyrir viðvörun.",
+        afterData: {
+          environmentConfirmedAt: confirmedAt.toISOString(),
+          environmentConfirmedById: user.id,
+          environmentConfirmationReason: cleanReason,
+        },
+        metadata: {
+          detectedDocumentId: document.id,
+          receiptId: document.receiptId,
+          merchantName: document.merchantName,
+          receiptNumber: document.receiptNumber,
+          documentDate: document.date?.toISOString() ?? null,
+          totalAmount: document.totalAmount,
+          reason: cleanReason,
+          environmentReviewRequired: document.environmentReviewRequired,
+          environmentReviewReason: document.environmentReviewReason,
+          learningEffect: "NONE",
+        },
+      },
+    });
+  });
+
+  revalidatePath(`/fylgiskjol/${document.receiptId}`);
+  revalidatePath("/fylgiskjol");
 }
 
 export async function markDetectedDocumentOutsideBusiness(

@@ -6,6 +6,7 @@ import { getEnabledCompanyModules } from "@/lib/core/company-modules";
 import { cookies } from "next/headers";
 import { prisma } from "@/lib/prisma";
 import Link from "next/link";
+import { uiText } from "@/lib/i18n/ui";
 
 import PageHeader from "@/components/ui/PageHeader";
 import EmptyState from "@/components/ui/EmptyState";
@@ -39,6 +40,12 @@ export default async function SkjalasafnPage({
   if (!activeUser) {
     redirect("/innskraning");
   }
+
+  const userSettings = await prisma.userSettings.findUnique({
+    where: { userId: activeUser.id },
+    select: { interfaceLanguage: true },
+  });
+  const t = uiText(userSettings?.interfaceLanguage);
 
   const activeCompanyId = cookieStore.get("activeCompanyId")?.value;
 
@@ -138,42 +145,42 @@ export default async function SkjalasafnPage({
         }
 
         let archiveStatus: ArchiveStatus = "FINALIZED";
-        let statusLabel = "Afgreitt";
+        let statusLabel: string = t.finalized;
         let statusClass = "text-slate-700";
         let detail: string | null =
           document.dispositionReason ?? null;
 
         if (isBooked) {
           archiveStatus = "BOOKED";
-          statusLabel = "Bókað";
+          statusLabel = t.bookedStatus;
           statusClass = "text-green-700";
 
           if (document.voucherNumber !== null) {
-            detail = `Fylgiskjal nr. ${document.voucherNumber}`;
+            detail = `${t.voucherNumber} ${document.voucherNumber}`;
           }
         } else {
           switch (document.disposition) {
             case "SUPPORTING_RESOLVED":
               archiveStatus = "SUPPORTING";
-              statusLabel = "Stuðningsskjal";
+              statusLabel = t.supportingStatus;
               statusClass = "text-blue-700";
               break;
 
             case "INSIGHT_ONLY":
               archiveStatus = "INSIGHT";
-              statusLabel = "Innsýn";
+              statusLabel = t.insightFilter;
               statusClass = "text-violet-700";
               break;
 
             case "OUTSIDE_BUSINESS":
               archiveStatus = "OUTSIDE_BUSINESS";
-              statusLabel = "Utan bókhalds";
+              statusLabel = t.outsideBusinessStatus;
               statusClass = "text-slate-600";
               break;
 
             default:
               archiveStatus = "FINALIZED";
-              statusLabel = "Afgreitt";
+              statusLabel = t.finalized;
               statusClass = "text-slate-700";
               break;
           }
@@ -188,7 +195,7 @@ export default async function SkjalasafnPage({
             document.merchantName ??
             receipt.merchantName ??
             receipt.description ??
-            "Óþekkt fylgiskjal",
+            t.unknownDocument,
           merchantKennitala:
             document.merchantKennitala ??
             receipt.merchantKennitala ??
@@ -229,7 +236,7 @@ export default async function SkjalasafnPage({
         title:
           receipt.merchantName ??
           receipt.description ??
-          "Óþekkt fylgiskjal",
+          t.unknownDocument,
         merchantKennitala:
           receipt.merchantKennitala ?? null,
         companyName: receipt.company.name,
@@ -245,7 +252,7 @@ export default async function SkjalasafnPage({
         statusClass: "text-green-700",
         detail:
           receipt.voucherNumber !== null
-            ? `Fylgiskjal nr. ${receipt.voucherNumber}`
+            ? `${t.voucherNumber} ${receipt.voucherNumber}`
             : null,
         bookingAccounts: receipt.entries.map(
           (entry) => entry.account,
@@ -379,8 +386,8 @@ export default async function SkjalasafnPage({
   return (
     <main className="p-8">
       <PageHeader
-        title="Skjalasafn"
-        description="Bókuð og afgreidd skjöl fyrirtækisins á einum stað."
+        title={t.archiveTitle}
+        description={t.archiveDescription}
       />
 
       <div className="mb-6 flex flex-wrap items-center gap-3">
@@ -389,7 +396,7 @@ export default async function SkjalasafnPage({
           className="inline-flex items-center gap-2 rounded border border-slate-300 bg-white px-4 py-2 font-medium text-slate-700 transition hover:border-slate-400 hover:bg-slate-50"
         >
           <span aria-hidden="true">←</span>
-          Óunnin fylgiskjöl
+          {t.backPending}
         </Link>
       </div>
 
@@ -402,7 +409,7 @@ export default async function SkjalasafnPage({
               : "border-slate-300 bg-white text-slate-700 hover:bg-slate-50"
           }`}
         >
-          Öll skjöl ({archiveItems.length})
+          {t.allDocuments} ({archiveItems.length})
         </Link>
 
         <Link
@@ -413,7 +420,7 @@ export default async function SkjalasafnPage({
               : "border-slate-300 bg-white text-slate-700 hover:bg-slate-50"
           }`}
         >
-          Bókuð ({bookedCount})
+          {t.bookedFilter} ({bookedCount})
         </Link>
 
         <Link
@@ -424,7 +431,7 @@ export default async function SkjalasafnPage({
               : "border-slate-300 bg-white text-slate-700 hover:bg-slate-50"
           }`}
         >
-          Stuðningsskjöl ({supportingCount})
+          {t.supportingDocuments} ({supportingCount})
         </Link>
 
         <Link
@@ -435,7 +442,7 @@ export default async function SkjalasafnPage({
               : "border-slate-300 bg-white text-slate-700 hover:bg-slate-50"
           }`}
         >
-          Innsýn ({insightCount})
+          {t.insightFilter} ({insightCount})
         </Link>
 
         <Link
@@ -446,7 +453,7 @@ export default async function SkjalasafnPage({
               : "border-slate-300 bg-white text-slate-700 hover:bg-slate-50"
           }`}
         >
-          Utan bókhalds ({outsideBusinessCount})
+          {t.outsideAccounting} ({outsideBusinessCount})
         </Link>
       </div>
 
@@ -459,21 +466,21 @@ export default async function SkjalasafnPage({
 
         <label className="block">
           <span className="mb-1 block font-semibold">
-            Leita í skjalasafni
+            {t.searchArchive}
           </span>
 
           <input
             type="text"
             name="q"
             defaultValue={q ?? ""}
-            placeholder="Nr., seljandi, kt. eða lykill"
+            placeholder={t.searchPlaceholder}
             className="w-72 rounded border px-3 py-2"
           />
         </label>
 
         <label className="block">
           <span className="mb-1 block font-semibold">
-            Raða eftir
+            {t.sortBy}
           </span>
 
           <select
@@ -482,19 +489,19 @@ export default async function SkjalasafnPage({
             className="rounded border px-3 py-2"
           >
             <option value="date-desc">
-              Dagsetning – nýjasta fyrst
+              {t.dateNewest}
             </option>
 
             <option value="date-asc">
-              Dagsetning – elsta fyrst
+              {t.dateOldest}
             </option>
 
             <option value="voucher-desc">
-              Fylgiskjal – nýjasta fyrst
+              {t.voucherNewest}
             </option>
 
             <option value="voucher-asc">
-              Fylgiskjal – elsta fyrst
+              {t.voucherOldest}
             </option>
           </select>
         </label>
@@ -503,7 +510,7 @@ export default async function SkjalasafnPage({
           type="submit"
           className="rounded bg-blue-600 px-4 py-2 font-medium text-white hover:bg-blue-700"
         >
-          Leita
+          {t.search}
         </button>
 
         {(q || sort || statusOption !== "all") && (
@@ -511,18 +518,18 @@ export default async function SkjalasafnPage({
             href="/fylgiskjol/skjalasafn"
             className="rounded border px-4 py-2 hover:bg-slate-50"
           >
-            Hreinsa
+            {t.clear}
           </Link>
         )}
       </form>
 
       {filteredItems.length === 0 ? (
         <EmptyState
-          title="Engin skjöl fundust"
+          title={t.noDocumentsFound}
           description={
             archiveItems.length === 0
-              ? "Skjalasafnið er enn tómt."
-              : "Engin skjöl passa við valda leit eða síu."
+              ? t.archiveEmpty
+              : t.noSearchMatches
           }
         />
       ) : (
@@ -531,31 +538,31 @@ export default async function SkjalasafnPage({
             <thead className="bg-slate-50">
               <tr>
                 <th className="border-b p-3">
-                  Dagsetning
+                  {t.date}
                 </th>
 
                 <th className="border-b p-3">
-                  Skjal
+                  {t.document}
                 </th>
 
                 <th className="border-b p-3">
-                  Kennitala
+                  {t.kennitala}
                 </th>
 
                 <th className="border-b p-3 text-right">
-                  Upphæð
+                  {t.amount}
                 </th>
 
                 <th className="border-b p-3">
-                  Staða
+                  {t.status}
                 </th>
 
                 <th className="border-b p-3">
-                  Bókun
+                  {t.booking}
                 </th>
 
                 <th className="border-b p-3 text-right">
-                  Aðgerð
+                  {t.action}
                 </th>
               </tr>
             </thead>
@@ -626,7 +633,7 @@ export default async function SkjalasafnPage({
                         href={href}
                         className="flex items-center justify-end gap-2 p-3 font-medium text-blue-700 group-hover:underline"
                       >
-                        Opna
+                        {t.open.replace(" →", "")}
                         <span aria-hidden="true">→</span>
                       </Link>
                     </td>
