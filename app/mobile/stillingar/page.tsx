@@ -26,7 +26,7 @@ export default async function MobileSettingsPage({ searchParams }: { searchParam
       <input type="hidden" name="aiExplanationDetail" value={settings?.aiExplanationDetail ?? "NORMAL"} />
       <div className="rounded-2xl border bg-slate-50 p-4"><h2 className="font-bold">{t.timeTracking}</h2><p className="mt-1 text-sm text-slate-600">{t.timeTrackingHelp}</p>
         <label className="mt-4 block space-y-2"><span className="font-semibold">{t.timeMode}</span><select name="timeTrackingMode" defaultValue={settings?.timeTrackingMode ?? "OFF"} className="w-full rounded-xl border bg-white p-3"><option value="OFF">{o.mode.OFF}</option><option value="MANUAL">{o.mode.MANUAL}</option><option value="AUTO">{o.mode.AUTO}</option><option value="AUTO_PROMPT">{o.mode.AUTO_PROMPT}</option></select></label>
-        <label className="mt-4 block space-y-2"><span className="font-semibold">{t.idleAfter}</span><select name="timeTrackingIdleMinutes" defaultValue={settings?.timeTrackingIdleMinutes ?? 10} className="w-full rounded-xl border bg-white p-3">{[5,10,15,30].map(v => <option key={v} value={v}>{v} {o.minute}</option>)}</select></label>
+        <label className="mt-4 block space-y-2"><span className="font-semibold">{t.idleAfter}</span><select name="timeTrackingIdleMinutes" defaultValue={settings?.timeTrackingIdleMinutes ?? 10} className="w-full rounded-xl border bg-white p-3">{[1,5,10,15,30].map(v => <option key={v} value={v}>{v} {o.minute}</option>)}</select></label>
       </div>
       <input type="hidden" name="autoOpenNextDocument" value={settings?.autoOpenNextDocument ? "on" : ""} />
       <input type="hidden" name="showHelpText" value={settings?.showHelpText ? "on" : ""} />

@@ -4,11 +4,15 @@ import { cookies } from "next/headers";
 import { revalidatePath } from "next/cache";
 import { prisma } from "@/lib/prisma";
 
-async function context() {
+async function context(requestedCompanyId?: number) {
   const store = await cookies();
   const token = store.get("sessionToken")?.value;
-  const companyId = Number(store.get("activeCompanyId")?.value);
-  if (!token || !Number.isInteger(companyId)) throw new Error("Virkt fyrirtæki eða innskráning vantar.");
+  const cookieCompanyId = Number(store.get("activeCompanyId")?.value);
+  const companyId = requestedCompanyId ?? cookieCompanyId;
+
+  if (!token || !Number.isInteger(companyId) || companyId < 1) {
+    throw new Error("Virkt fyrirtæki eða innskráning vantar.");
+  }
 
   const session = await prisma.session.findUnique({
     where: { token },
@@ -29,7 +33,7 @@ async function context() {
 }
 
 export async function getMyTimeTrackingSettings() {
-  const { userId } = await context();
+  const { userId, companyId } = await context();
   const settings = await prisma.userSettings.findUnique({ where: { userId } });
 
   const now = new Date();
@@ -46,15 +50,17 @@ export async function getMyTimeTrackingSettings() {
     idleMinutes: settings?.timeTrackingIdleMinutes ?? 10,
     todaySeconds: today._sum.durationSeconds ?? 0,
     interfaceLanguage: settings?.interfaceLanguage ?? "is",
+    companyId,
   };
 }
 
 export async function recordAutomaticServiceTime(input: {
+  companyId?: number;
   startedAt: string;
   endedAt: string;
   module?: string;
 }) {
-  const { userId, companyId } = await context();
+  const { userId, companyId } = await context(input.companyId);
   const settings = await prisma.userSettings.findUnique({ where: { userId } });
   if (!settings || !["AUTO", "AUTO_PROMPT"].includes(settings.timeTrackingMode)) return;
 

@@ -34,7 +34,7 @@ export async function saveMySettings(formData: FormData) {
   const timeTrackingMode = String(formData.get("timeTrackingMode") ?? "OFF");
   const timeTrackingIdleMinutes = Number(formData.get("timeTrackingIdleMinutes") ?? 10);
   if (!TIME_MODES.has(timeTrackingMode)) throw new Error("Ógild tímaskráningarstilling.");
-  if (![5, 10, 15, 30].includes(timeTrackingIdleMinutes)) throw new Error("Ógildur biðtími.");
+  if (![1, 5, 10, 15, 30].includes(timeTrackingIdleMinutes)) throw new Error("Ógildur biðtími.");
 
   const data = {
     interfaceLanguage,

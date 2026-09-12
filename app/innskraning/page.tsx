@@ -7,7 +7,7 @@ export default async function InnskraningPage({
   searchParams: Promise<{ next?: string }>;
 }) {
   const params = await searchParams;
-  const next = params.next === "/mobile" ? "/mobile" : "";
+  const next = params.next?.startsWith("/mobile") ? "/mobile" : "";
   return (
     <main className="flex min-h-screen bg-slate-100">
       {/* Vinstri GLÖGGT rammi */}

@@ -76,10 +76,16 @@ export async function changeRequiredPassword(formData: FormData) {
     }),
   ]);
 
+  const postPasswordChangePath =
+    cookieStore.get("postPasswordChangePath")?.value === "/mobile"
+      ? "/mobile"
+      : "/";
+
   cookieStore.delete("activeCompanyId");
   cookieStore.delete("activeUserId");
+  cookieStore.delete("postPasswordChangePath");
 
-  redirect("/");
+  redirect(postPasswordChangePath);
 }
 
 export async function requestPasswordReset(formData: FormData) {

@@ -517,11 +517,8 @@ export async function loginUser(
     .trim()
     .toLowerCase();
 
-  const next =
-    String(formData.get("next") ?? "") ===
-    "/mobile"
-      ? "/mobile"
-      : "";
+  const requestedNext = String(formData.get("next") ?? "");
+  const next = requestedNext.startsWith("/mobile") ? "/mobile" : "";
 
   const password = String(
     formData.get("password") || ""
@@ -600,8 +597,21 @@ export async function loginUser(
   cookieStore.delete("activeCompanyId");
 
   if (user.mustChangePassword) {
+    if (next === "/mobile") {
+      cookieStore.set("postPasswordChangePath", "/mobile", {
+        httpOnly: true,
+        sameSite: "lax",
+        path: "/",
+        secure: process.env.NODE_ENV === "production",
+      });
+    } else {
+      cookieStore.delete("postPasswordChangePath");
+    }
+
     redirect("/skipta-lykilordi");
   }
+
+  cookieStore.delete("postPasswordChangePath");
 
   if (next === "/mobile") {
     redirect("/mobile");

@@ -32,7 +32,12 @@ export default async function SkiptaLykilordiPage() {
   }
 
   if (!session.user.mustChangePassword) {
-    redirect("/");
+    const postPasswordChangePath =
+      cookieStore.get("postPasswordChangePath")?.value === "/mobile"
+        ? "/mobile"
+        : "/";
+    cookieStore.delete("postPasswordChangePath");
+    redirect(postPasswordChangePath);
   }
 
   return (
