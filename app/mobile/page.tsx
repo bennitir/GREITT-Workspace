@@ -8,7 +8,7 @@ import {
   getEffectiveUser,
 } from "@/lib/core/access-control";
 import { uiText } from "@/lib/i18n/ui";
-import { logoutUser } from "@/app/actions/userActions";
+import { logoutMobileUser } from "@/app/actions/userActions";
 
 async function chooseMobileCompany(formData: FormData) {
   "use server";
@@ -111,7 +111,7 @@ const veljaFyrirtaeki = params.velja === "1";
                 GLÖGGT MOBILE
               </p>
 
-              <form action={logoutUser}>
+              <form action={logoutMobileUser}>
                 <button
                   type="submit"
                   className="rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm font-semibold text-slate-700 shadow-sm"
@@ -199,7 +199,7 @@ const veljaFyrirtaeki = params.velja === "1";
                 {t.switchCompany}
               </Link>
 
-              <form action={logoutUser}>
+              <form action={logoutMobileUser}>
                 <button
                   type="submit"
                   className="rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm font-semibold text-slate-700 shadow-sm"

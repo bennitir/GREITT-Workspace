@@ -640,3 +640,25 @@ export async function logoutUser() {
 
   redirect("/innskraning");
 }
+
+export async function logoutMobileUser() {
+  const cookieStore = await cookies();
+
+  const sessionToken =
+    cookieStore.get("sessionToken")?.value;
+
+  if (sessionToken) {
+    await prisma.session.deleteMany({
+      where: {
+        token: sessionToken,
+      },
+    });
+  }
+
+  cookieStore.delete("sessionToken");
+  cookieStore.delete("activeCompanyId");
+  cookieStore.delete("activeUserId");
+  cookieStore.delete("postPasswordChangePath");
+
+  redirect("/innskraning?next=/mobile");
+}
