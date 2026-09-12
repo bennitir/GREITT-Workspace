@@ -511,6 +511,8 @@ export async function searchCompaniesForUser(
 export async function loginUser(
   formData: FormData
 ) {
+  const cookieStore = await cookies();
+
   const email = String(
     formData.get("email") || ""
   )
@@ -518,7 +520,14 @@ export async function loginUser(
     .toLowerCase();
 
   const requestedNext = String(formData.get("next") ?? "");
-  const next = requestedNext.startsWith("/mobile") ? "/mobile" : "";
+  const rememberedDestination =
+    cookieStore.get("loginDestination")?.value;
+
+  const next =
+    requestedNext.startsWith("/mobile") ||
+    rememberedDestination === "/mobile"
+      ? "/mobile"
+      : "";
 
   const password = String(
     formData.get("password") || ""
@@ -583,8 +592,6 @@ export async function loginUser(
     },
   });
 
-  const cookieStore = await cookies();
-
   cookieStore.set("sessionToken", token, {
     httpOnly: true,
     sameSite: "lax",
@@ -608,10 +615,12 @@ export async function loginUser(
       cookieStore.delete("postPasswordChangePath");
     }
 
+    cookieStore.delete("loginDestination");
     redirect("/skipta-lykilordi");
   }
 
   cookieStore.delete("postPasswordChangePath");
+  cookieStore.delete("loginDestination");
 
   if (next === "/mobile") {
     redirect("/mobile");
@@ -637,6 +646,7 @@ export async function logoutUser() {
   cookieStore.delete("sessionToken");
   cookieStore.delete("activeCompanyId");
   cookieStore.delete("activeUserId");
+  cookieStore.delete("loginDestination");
 
   redirect("/innskraning");
 }
@@ -659,6 +669,17 @@ export async function logoutMobileUser() {
   cookieStore.delete("activeCompanyId");
   cookieStore.delete("activeUserId");
   cookieStore.delete("postPasswordChangePath");
+
+  // Mobile-uppruninn er geymdur einnig í cookie.
+  // Þannig treystum við ekki eingöngu á ?next=/mobile
+  // í gegnum allt innskráningarflæðið.
+  cookieStore.set("loginDestination", "/mobile", {
+    httpOnly: true,
+    sameSite: "lax",
+    path: "/",
+    secure: process.env.NODE_ENV === "production",
+    maxAge: 60 * 15,
+  });
 
   redirect("/innskraning?next=/mobile");
 }
