@@ -1,6 +1,8 @@
 import { cookies } from "next/headers";
 import { prisma } from "@/lib/prisma";
 import Link from "next/link";
+import { bankAnalysisLanguage } from "@/app/banki/_lib/i18n/analysis-text";
+import { annualAnalysisText } from "@/app/banki/_lib/i18n/annual-analysis-text";
 
 export default async function BankiPage() {
   const cookieStore = await cookies();
@@ -18,6 +20,11 @@ export default async function BankiPage() {
   }
 
   const companyId = Number(activeCompanyId);
+
+  const token = cookieStore.get("sessionToken")?.value;
+  const session = token ? await prisma.session.findUnique({ where: { token }, select: { userId: true } }) : null;
+  const userSettings = session ? await prisma.userSettings.findUnique({ where: { userId: session.userId }, select: { interfaceLanguage: true } }) : null;
+  const annualText = annualAnalysisText(bankAnalysisLanguage(userSettings?.interfaceLanguage));
 
   const company = await prisma.company.findUnique({
     where: {
@@ -63,6 +70,21 @@ export default async function BankiPage() {
           Bankareikningar þessa fyrirtækis
         </p>
 
+        <div className="mt-6 flex flex-wrap gap-3">
+          <Link
+            href="/banki/tengja"
+            className="inline-block rounded-lg bg-blue-600 px-4 py-2 font-medium text-white"
+          >
+            + Bæta við bankareikningi
+          </Link>
+          <Link
+            href="/banki/arsgreining"
+            className="inline-block rounded-lg border border-blue-600 px-4 py-2 font-medium text-blue-700"
+          >
+            {annualText.link}
+          </Link>
+        </div>
+
         <div className="mt-6 space-y-4">
           {bankAccounts.length === 0 ? (
             <div className="rounded-lg border bg-gray-50 p-4">
@@ -76,11 +98,11 @@ export default async function BankiPage() {
   className="block rounded-lg border bg-gray-50 p-4 hover:bg-gray-100"
 >
   <p className="text-lg font-semibold">
-    {account.bankName}
+    {account.name}
   </p>
 
   <p className="mt-2">
-    <strong>Reikningsnúmer:</strong>{" "}
+    <strong>{account.bankName} · Reikningsnúmer:</strong>{" "}
     {account.accountNumber ?? "Ekki skráð"}
   </p>
 
@@ -91,13 +113,6 @@ export default async function BankiPage() {
 </Link>
             ))
           )}
-
-          <Link
-            href="/banki/tengja"
-            className="inline-block rounded-lg bg-blue-600 px-4 py-2 font-medium text-white"
-          >
-            + Tengja bankareikning
-          </Link>
         </div>
       </div>
     </main>

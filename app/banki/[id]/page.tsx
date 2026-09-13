@@ -1,3 +1,4 @@
+import { formatIsk } from "@/app/banki/_lib/formatting/numbers";
 import { formatDate } from "@/lib/locale";
 import Link from "next/link";
 import { notFound } from "next/navigation";
@@ -47,12 +48,12 @@ export default async function BankareikningurPage({ params }: Props) {
   return (
     <main className="p-8">
       <h1 className="text-2xl font-bold">
-        🏦 {account.bankName}
+        🏦 {account.name}
       </h1>
 
       <div className="mt-6 max-w-4xl rounded-lg border p-6">
         <p>
-          <strong>Reikningsnúmer:</strong>{" "}
+          <strong>{account.bankName} · Reikningsnúmer:</strong>{" "}
           {account.accountNumber ?? "Ekki skráð"}
         </p>
 
@@ -82,6 +83,13 @@ export default async function BankareikningurPage({ params }: Props) {
   📥 Flytja inn bankayfirlit
 </Link>
 
+<Link
+  href={`/banki/${account.id}/greining`}
+  className="ml-3 mt-6 inline-block rounded-lg border border-blue-600 px-4 py-2 font-medium text-blue-600"
+>
+  🔎 Greina færslur
+</Link>
+
         <h2 className="mt-8 text-xl font-semibold">
           Bankafærslur
         </h2>
@@ -106,7 +114,7 @@ export default async function BankareikningurPage({ params }: Props) {
                 </p>
 
                 <p className="mt-1 font-semibold">
-                  {transaction.amount.toString()} kr.
+                  {formatIsk(transaction.amount.toNumber())}
                 </p>
               </div>
             ))}

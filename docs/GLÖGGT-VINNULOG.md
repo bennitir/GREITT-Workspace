@@ -326,3 +326,131 @@ Kerfið þarf einnig að geta fundið:
 - bókaða GLÖGGT-færslu sem vantar samsvarandi bankahreyfingu.
 
 ---
+Já. Ég er búinn að ganga frá dagbók dagsins þannig að við getum byrjað nýtt spjall án þess að missa þráðinn.
+
+GLÖGGT – vinnudagbók 13. september 2026
+
+Stærsti áfangi dagsins var Banki → Ársgreining 2025. Við færðum greininguna áfram frá einfaldri flokkun yfir í rekjanlegra kerfi þar sem grunnreglan er „gögn fyrst, AI síðan“. Bankagögn, mótaðilar, kennitölur, textar, upprunareikningar, endurtekningar og staðfest þekking eiga að gera eins mikið og hægt er áður en AI þarf að túlka eitthvað.
+
+Við byggðum upp tvívíða greiningu þar sem GLÖGGT skilur nú á milli greiðslueðlis og tilgangsvísbendingar. Þannig getur færsla t.d. verið millifærsla eða kostnaðarstyrkur að greiðslueðli en samt tengst bifreið að tilgangi. Vissa og rökstuðningur fylgja hvorri vídd. Samantekt og rannsóknartafla nota sömu greiningarniðurstöðu svo þær eigi ekki lengur að segja sitt hvora söguna.
+
+Við löguðum einnig stóra kortafærsluvandann. Almenn lýsing á debetkortafærslu má ekki sameina óskylda söluaðila í einn mótaðila. Kennitala og raunverulegur söluaðili fá nú forgang en kortaendingin varðveitist sem upplýsingar um greiðslumiðil. Langtímamódelið er bankareikningur → kort → korthafi → söluaðili → færsla → fylgiskjal/bókun, án þess að GLÖGGT giski á korthafa út frá innkaupahegðun.
+
+Við aðgreindum m.a. Laun, Launatengd gjöld og Greiðslur til einstaklinga. Síðasti flokkurinn kemur í stað þess að kalla óstaðfestar greiðslur „verktakagreiðslur“. Bankinn má sjá vísbendingar um laun, en Launakerfið á síðar að staðfesta raunverulega launagreiðslu. Bankinn verður þá afstemmingar- og staðfestingarlag.
+
+Við unnum mikið í rekstrarflokkun: húsnæði, veitur, fjarskipti, hugbúnaður, tryggingar, bifreiðar, ferðir, veitingar, matvöruinnkaup, skrifstofukostnaður, íþróttir/mót, sjoppa/endursala og veislur/viðburðahald. Endurgreiðslur, styrkir, framlög, kostnaðarstyrkir og bankagjöld eru jafnframt aðgreind eftir greiðslueðli svo þau skekki ekki venjulegan rekstrarkostnað.
+
+Mótakostnaður þróaðist sérstaklega mikið. Mótareikningur er nú sterk vísbending um móta-/íþróttatilgang og GLÖGGT nýtir einnig samhengi eins og mót, iðkendur, fararstjóra, aldursflokka og staðfestingargjöld. Þetta náði mörgum færslum sem voru augljósar fyrir okkur en höfðu áður setið í óflokkuðu.
+
+Við staðfestum síðan raunverulegt rekstrarsamhengi ýmissa mótaðila. Iðnmark og Ís-spor eru sjoppa/endursala; Nói-Síríus og Kólus eru líkleg sjoppu-/endursöluinnkaup. Kim Jong/Kim Yong Wings, Dominos Norðurhelli og Nings Hlíðasmára eru veitingar, og Löður er bifreiðarkostnaður. Penninn/A4 er að öllum líkindum skrifstofukostnaður.
+
+Við fundum líka sérstakt mynstur í Riddaranum, Norðanfiski, Blómabúðinni Burkna, Vínbúðinni Álrúnu, Tertugalleríi og Blómabúð Mögdu. Þetta er veislu-/viðburðakostnaður og líklegt að a.m.k. hluti hans tengist lokahófi í lok tímabils. GLÖGGT á þó ekki að fullyrða „lokahóf“ nema dagsetningar og annað samhengi styrki þá niðurstöðu. Síðar getur Innsýn tengt slíkar færslur saman sem mögulegan sameiginlegan viðburð.
+
+Við festum líka mikilvæga merkingarreglu: „Innheimt“ segir hvernig krafa var greidd en ekki hvað var verið að greiða fyrir. GLÖGGT má því ekki flokka alla innheimtukröfuna eftir innheimtuaðilanum. Skýr innheimtukostnaður má hins vegar fara sérstaklega í gjaldaflokk. Sama hugsun var notuð á eldsneytisstyrki: þeir eru ekki sjálfkrafa bein eldsneytiskaup.
+
+Nákvæm byrjunarstaða næsta spjalls
+
+Síðasti afhenti breytingapakkinn var gloggt-app-stadfest-veitingar-sjoppa-bifreid-20260913.zip.
+
+Næsta reglulota er þegar ákveðin en ekki komin inn: Altis ehf., S Direct Lindir og Icetransport ehf. → Íþróttabúnaður; Emobi á Íslandi ehf. → Síma-/fjarskiptabúnaður frekar en fjarskiptaþjónusta; Te & Kaffi Borgartúni, Serrano Dalshrauni og Lemon Hjallahrauni → Veitingar.
+
+Þar byrjum við næst. Ég hef líka varðveitt þessa lokastöðu sérstaklega svo nýja spjallið eigi að geta tekið við hér.
+
+## 13. september 2026 – Ársgreining banka, flokkun og brú að ársreikningi
+
+Stór vinnudagur í Banka / Ársgreiningu með raunverulegum gögnum frá árinu 2025.
+
+### Helstu áfangar dagsins
+
+- Ársgreining banka þróuð áfram samkvæmt „gögn fyrst, AI síðan“.
+- Unnið með 10 bankareikninga og 1.314 bankafærslur.
+- Heildarinnborganir í gagnasafni: 57.147.322 kr.
+- Heildarútborganir í gagnasafni: 57.954.519 kr.
+- Nettó peningaflæði: -807.197 kr.
+- AI-kostnaður Ársgreiningarinnar hélt áfram að vera 0 kr. þrátt fyrir umfangsmikla greiningarvinnu.
+
+### Útgjaldagreining
+
+- Mótaðilasamsvörun og deterministic flokkun styrkt.
+- Fjöldi þekktra rekstrarflokka staðfestur úr bankagögnum.
+- Greiðslueðli og tilgangur færslu áfram meðhöndluð sem aðskildar víddir.
+- Marteinn Ægisson:
+  - 11 eldsneytisgreiðslur.
+  - 20.000 kr. hver.
+  - Samtals 220.000 kr.
+  - Greiðslueðli getur áfram verið kostnaðarstyrkur en tilgangur er bifreiðakostnaður.
+- Óflokkað útstreymi komið niður í 1.525.811 kr.
+- Ákveðið að ekki skuli þvinga óvissar færslur í kostnaðarflokka eingöngu til að tæma óflokkaðan lista.
+
+### Tengdar einingar / deildir
+
+Sérstök meðferð sett inn fyrir fjárflæði milli tengdra eininga/deilda svo það birtist ekki sem venjulegur óþekktur rekstrarkostnaður.
+
+Úr óflokkuðu útstreymi fóru m.a.:
+
+- Knattspyrnudeild Þróttar Vogum: 3.771.663 kr.
+- Ungmennafélagið Þróttur: 2.058.923 kr.
+
+Samtals: 5.830.586 kr.
+
+Mikilvæg hönnunarniðurstaða:
+Kostnaðartegund, kostnaðarstaður/deild og fjárflæði milli tengdra eininga eiga að vera aðskildar víddir.
+
+### Styrkjaflæði og ársreikningur
+
+Rannsókn á Sveitarfélaginu Vogum sýndi sterkan rekjanleika:
+
+- 13.415.000 kr. komu inn á styrkjareikning.
+- Tvær greiðslur, 75.000 + 75.000 kr., samtals 150.000 kr., tengdust 150.000 kr. áframgreiðslu til Knattspyrnudeildar Þróttar Vogum.
+- 13.415.000 - 150.000 = 13.265.000 kr.
+- Sú fjárhæð samsvarar nákvæmlega línunni „Sveitarfélagið Vogar“ í ársreikningi 2025.
+
+Þetta er notað sem rekjanleg vísbending og staðfestingarpróf, ekki sem regla sem neyðir bankagreiningu til að passa ársreikning.
+
+### Samantekt Ársgreiningar
+
+Nýr flipi:
+Banki → Ársgreining → Samantekt
+
+Samantektin sýnir nú m.a.:
+
+- heildarinnborganir,
+- heildarútborganir,
+- líklega veltu / greiðsluuppgjör,
+- óflokkað útstreymi,
+- tekjuhlið,
+- gjaldahlið,
+- rekstrarkostnað eftir eðli.
+
+Ákveðið að ítarleg „Brú að ársreikningi“ verði sérstakt undirlag/undirsýn undir Samantekt fremur en að gera aðalsamantektina of langa.
+
+### Innsýn og bakfærsla
+
+Í prófunarfélaginu fannst eitt bókað fylgiskjal:
+
+- Pítan, 4.450 kr.
+- Upprunaleg bókun: 4910 / 1510.
+
+Gerð var handvirk spegil-/kreditfærsla:
+
+- 1510 Debet 4.450 kr.
+- 4910 Kredit 4.450 kr.
+
+Eftir bakfærsluna sýndi Innsýn rétt:
+
+- Staðan í dag: 0 kr.
+- Innkoma: 0 kr.
+- Útgjöld: 0 kr.
+- Bókuð útgjöld: 0 kr.
+
+Þetta staðfesti að Innsýn les nettó bókhaldsáhrif debet/kredit en ekki einfaldlega fjölda eða brúttóupphæð bókaðra fylgiskjala.
+
+Næsta hönnunarverk:
+Almenn „Bakfæra bókun“ virkni sem býr til spegilfærslu, tengir hana frumfærslunni og varðveitir ástæðu, notanda og tíma.
+
+### Næstu skref
+
+- Halda áfram með Brú að ársreikningi.
+- Sýna Greint úr gögnum / Ársreikningur / Frávik.
+- Halda áfram að byggja rekjanleika milli bankagagna, fylgiskjala, bókhalds og ársreiknings.
+- Ekki elta óflokkaðar bankafærslur þar sem fylgiskjal eða önnur gögn eiga að veita svarið.

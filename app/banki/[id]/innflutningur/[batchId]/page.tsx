@@ -5,7 +5,7 @@ import {
 import { cookies } from "next/headers";
 import { notFound } from "next/navigation";
 import { prisma } from "@/lib/prisma";
-import { confirmBankImport } from "@/app/banki/actions";
+import { cancelBankImport, confirmBankImport } from "@/app/banki/actions";
 
 type Props = {
   params: Promise<{
@@ -34,7 +34,7 @@ export default async function BankImportPreviewPage({ params }: Props) {
       id: importBatchId,
       companyId: activeCompanyId,
       bankAccountId,
-      sourceType: "BANK_XLSX",
+      sourceType: "BANK_STATEMENT_XLSX",
     },
     include: {
       rows: {
@@ -50,7 +50,8 @@ export default async function BankImportPreviewPage({ params }: Props) {
     notFound();
   }
 
-  const validRows = batch.rows.filter((row) => row.status !== "ERROR");
+  const newRows = batch.rows.filter((row) => row.status === "NEW");
+  const duplicateRows = batch.rows.filter((row) => row.status === "DUPLICATE");
   const errorRows = batch.rows.filter((row) => row.status === "ERROR");
 
   return (
@@ -61,7 +62,7 @@ export default async function BankImportPreviewPage({ params }: Props) {
 
       <div className="mt-6 max-w-6xl rounded-lg border p-6">
         <h2 className="text-xl font-semibold">
-          {batch.bankAccount.bankName}
+          {batch.bankAccount.name} · {batch.bankAccount.bankName}
         </h2>
 
         <p className="mt-1 text-gray-600">
@@ -78,7 +79,11 @@ export default async function BankImportPreviewPage({ params }: Props) {
           </p>
 
           <p className="mt-1">
-            <strong>Í lagi:</strong> {validRows.length}
+            <strong>Til innflutnings:</strong> {newRows.length}
+          </p>
+
+          <p className="mt-1">
+            <strong>Þegar innflutt:</strong> {duplicateRows.length}
           </p>
 
           <p className="mt-1">
@@ -86,20 +91,35 @@ export default async function BankImportPreviewPage({ params }: Props) {
           </p>
         </div>
 
-        <form action={confirmBankImport} className="mt-6">
-  <input
-    type="hidden"
-    name="batchId"
-    value={batch.id}
-  />
+        <div className="mt-6 flex flex-wrap gap-3">
+          {newRows.length > 0 && (
+            <form action={confirmBankImport}>
+              <input type="hidden" name="batchId" value={batch.id} />
+              <button
+                type="submit"
+                className="rounded-lg bg-green-600 px-4 py-2 font-medium text-white"
+              >
+                ✅ Staðfesta innflutning ({newRows.length})
+              </button>
+            </form>
+          )}
 
-  <button
-    type="submit"
-    className="rounded-lg bg-green-600 px-4 py-2 font-medium text-white"
-  >
-    ✅ Staðfesta innflutning
-  </button>
-</form>
+          <form action={cancelBankImport}>
+            <input type="hidden" name="batchId" value={batch.id} />
+            <button
+              type="submit"
+              className="rounded-lg border px-4 py-2 font-medium"
+            >
+              ← Hætta við innflutning
+            </button>
+          </form>
+        </div>
+
+        {newRows.length === 0 && duplicateRows.length > 0 && errorRows.length === 0 && (
+          <p className="mt-4 rounded-lg bg-amber-50 p-4 text-amber-900">
+            Allar færslurnar í þessari skrá hafa þegar verið fluttar inn. Engar nýjar bankafærslur verða stofnaðar.
+          </p>
+        )}
 
         <div className="mt-6 overflow-x-auto">
           <table className="w-full border-collapse text-left">
@@ -126,9 +146,7 @@ export default async function BankImportPreviewPage({ params }: Props) {
   return (
                 <tr key={row.id} className="border-b">
                   <td className="p-2">{row.rowNumber}</td>
-{row.date
-  ? formatDate(row.date)
-  : "—"}
+                  <td className="p-2">{row.date ? formatDate(row.date) : "—"}</td>
 
                   <td className="p-2">{row.text ?? "—"}</td>
                   <td className="p-2">{raw.counterpartyKennitala || "—"}</td>
@@ -150,7 +168,9 @@ export default async function BankImportPreviewPage({ params }: Props) {
                   <td className="p-2">
                     {row.status === "ERROR"
                       ? `🔴 ${row.errorMessage ?? "Villa"}`
-                      : "🟢 Tilbúið"}
+                      : row.status === "DUPLICATE"
+                        ? "🟠 Þegar innflutt"
+                        : "🟢 Tilbúið"}
                   </td>
                 </tr>
               );

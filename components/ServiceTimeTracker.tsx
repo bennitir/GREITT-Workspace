@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
+import { createPortal } from "react-dom";
 import { usePathname } from "next/navigation";
 import {
   getMyTimeTrackingSettings,
@@ -27,23 +28,41 @@ function formatElapsed(totalSeconds: number) {
   return `${String(hours).padStart(2, "0")}:${String(minutes).padStart(2, "0")}:${String(seconds).padStart(2, "0")}`;
 }
 
+function formatIdleMinutes(totalSeconds: number) {
+  return Math.max(1, Math.round(totalSeconds / 60));
+}
+
 type TrackingConfig = {
   mode: string;
   idleMinutes: number;
   todaySeconds: number;
   interfaceLanguage: string;
+  companyId: number;
+};
+
+type PendingIdle = {
+  companyId: number;
+  module: string;
+  startedAt: number;
+  endedAt: number;
+  durationSeconds: number;
 };
 
 export default function ServiceTimeTracker() {
   const pathname = usePathname();
   const [cfg, setCfg] = useState<TrackingConfig | null>(null);
   const [elapsedSeconds, setElapsedSeconds] = useState(0);
+  const [pendingIdle, setPendingIdle] = useState<PendingIdle | null>(null);
+  const [idleSaving, setIdleSaving] = useState(false);
 
   const currentModule = useRef(moduleFromPath(pathname));
+  const segmentModule = useRef(moduleFromPath(pathname));
+  const segmentCompanyId = useRef<number | null>(null);
   const segmentStart = useRef<number | null>(null);
   const lastActivity = useRef(Date.now());
   const persistedSeconds = useRef(0);
   const saving = useRef(false);
+  const pendingIdleRef = useRef<PendingIdle | null>(null);
 
   useEffect(() => {
     currentModule.current = moduleFromPath(pathname);
@@ -57,12 +76,22 @@ export default function ServiceTimeTracker() {
           idleMinutes: Number.isFinite(value.idleMinutes) ? value.idleMinutes : 10,
           todaySeconds: Number.isFinite(value.todaySeconds) ? value.todaySeconds : 0,
           interfaceLanguage: value.interfaceLanguage ?? "is",
+          companyId: value.companyId,
         };
         persistedSeconds.current = normalized.todaySeconds;
+        segmentCompanyId.current = normalized.companyId;
         setElapsedSeconds(normalized.todaySeconds);
         setCfg(normalized);
       })
-      .catch(() => setCfg({ mode: "OFF", idleMinutes: 10, todaySeconds: 0, interfaceLanguage: "is" }));
+      .catch(() =>
+        setCfg({
+          mode: "OFF",
+          idleMinutes: 10,
+          todaySeconds: 0,
+          interfaceLanguage: "is",
+          companyId: 0,
+        })
+      );
   }, []);
 
   // Mikilvægt: þessi effect fer EKKI eftir pathname. Route-skipti mega ekki
@@ -76,6 +105,8 @@ export default function ServiceTimeTracker() {
     const startSegment = (now: number) => {
       segmentStart.current = now;
       lastActivity.current = now;
+      segmentModule.current = currentModule.current;
+      segmentCompanyId.current = cfg.companyId;
     };
 
     const persist = async () => {
@@ -87,12 +118,16 @@ export default function ServiceTimeTracker() {
       const durationSeconds = Math.floor((ended - started) / 1000);
       if (durationSeconds < 1) return;
 
+      const companyId = segmentCompanyId.current ?? cfg.companyId;
+      const module = segmentModule.current;
+
       saving.current = true;
       try {
         const result = await recordAutomaticServiceTime({
+          companyId,
           startedAt: new Date(started).toISOString(),
           endedAt: new Date(ended).toISOString(),
-          module: currentModule.current,
+          module,
         });
 
         if (result?.recorded) {
@@ -109,8 +144,39 @@ export default function ServiceTimeTracker() {
     const onActivity = () => {
       const now = Date.now();
       const gap = now - lastActivity.current;
-      if (segmentStart.current === null || gap >= idleMs) startSegment(now);
-      else lastActivity.current = now;
+
+      if (segmentStart.current === null) {
+        startSegment(now);
+        return;
+      }
+
+      if (gap >= idleMs) {
+        const idleStartedAt = lastActivity.current + idleMs;
+        const idleDurationSeconds = Math.floor((now - idleStartedAt) / 1000);
+
+        void persist();
+
+        if (
+          cfg.mode === "AUTO_PROMPT" &&
+          idleDurationSeconds >= 1 &&
+          pendingIdleRef.current === null
+        ) {
+          const pending: PendingIdle = {
+            companyId: segmentCompanyId.current ?? cfg.companyId,
+            module: segmentModule.current,
+            startedAt: idleStartedAt,
+            endedAt: now,
+            durationSeconds: idleDurationSeconds,
+          };
+          pendingIdleRef.current = pending;
+          setPendingIdle(pending);
+        }
+
+        startSegment(now);
+        return;
+      }
+
+      lastActivity.current = now;
     };
 
     const onVisibilityChange = () => {
@@ -175,12 +241,83 @@ export default function ServiceTimeTracker() {
     return module;
   })();
 
+  const clearPendingIdle = () => {
+    pendingIdleRef.current = null;
+    setPendingIdle(null);
+  };
+
+  const excludeIdle = () => {
+    if (idleSaving) return;
+    clearPendingIdle();
+  };
+
+  const includeIdle = async () => {
+    if (!pendingIdle || idleSaving) return;
+
+    setIdleSaving(true);
+    try {
+      const result = await recordAutomaticServiceTime({
+        companyId: pendingIdle.companyId,
+        startedAt: new Date(pendingIdle.startedAt).toISOString(),
+        endedAt: new Date(pendingIdle.endedAt).toISOString(),
+        module: pendingIdle.module,
+      });
+
+      if (result?.recorded) {
+        persistedSeconds.current += result.durationSeconds;
+        setElapsedSeconds((value) => value + result.durationSeconds);
+        clearPendingIdle();
+      }
+    } catch {
+      // Halda spurningunni opinni svo notandi geti reynt aftur.
+    } finally {
+      setIdleSaving(false);
+    }
+  };
+
+  const idlePrompt = pendingIdle && typeof document !== "undefined"
+    ? createPortal(
+        <div
+          className="fixed z-[100] w-[min(24rem,calc(100vw-2rem))] rounded-xl border border-amber-400/50 bg-slate-900 p-4 text-sm text-slate-100 shadow-2xl"
+          style={{ bottom: "12rem", left: "11rem" }}
+        >
+          <div className="font-semibold">⏸ {t.idlePromptTitle}</div>
+          <div className="mt-1.5 text-slate-300">
+            {t.idlePromptText.replace("{minutes}", String(formatIdleMinutes(pendingIdle.durationSeconds)))}
+          </div>
+          <div className="mt-4 flex flex-wrap gap-2">
+            <button
+              type="button"
+              onClick={() => void includeIdle()}
+              disabled={idleSaving}
+              className="rounded-md bg-white px-3 py-2 font-medium text-slate-900 disabled:opacity-50"
+            >
+              {idleSaving ? t.idleSaving : t.idleInclude}
+            </button>
+            <button
+              type="button"
+              onClick={excludeIdle}
+              disabled={idleSaving}
+              className="rounded-md border border-white/70 bg-slate-800 px-3 py-2 font-medium text-white disabled:opacity-50"
+            >
+              {t.idleExclude}
+            </button>
+          </div>
+        </div>,
+        document.body
+      )
+    : null;
+
   return (
-    <div className="mt-3 rounded-lg bg-slate-800 px-3 py-2 text-xs text-slate-200">
-      <div className="font-medium">⏱ {t.trackerActive}</div>
-      <div className="mt-1 font-mono tabular-nums text-slate-300">
-        {moduleLabel} · {formatElapsed(elapsedSeconds)}
+    <>
+      {idlePrompt}
+
+      <div className="mt-3 rounded-lg bg-slate-800 px-3 py-2 text-xs text-slate-200">
+        <div className="font-medium">⏱ {t.trackerActive}</div>
+        <div className="mt-1 font-mono tabular-nums text-slate-300">
+          {moduleLabel} · {formatElapsed(elapsedSeconds)}
+        </div>
       </div>
-    </div>
+    </>
   );
 }
