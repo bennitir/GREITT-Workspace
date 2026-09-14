@@ -1,4 +1,8 @@
 import {
+  formatDate,
+  formatNumber,
+} from "@/lib/locale";
+import {
   validateImportBatch,
   postImportBatch,
 } from "@/app/actions/importActions";
@@ -128,16 +132,16 @@ const canImport = isBalanced && missingAccounts.length === 0;
             <td className="p-2">{row.voucherNumber ?? ""}</td>
             <td className="p-2">
               {row.date
-                ? row.date.toLocaleDateString("is-IS")
-                : ""}
+  ? formatDate(row.date)
+  : ""}
             </td>
             <td className="p-2">{row.account ?? ""}</td>
             <td className="p-2">{row.text ?? ""}</td>
             <td className="p-2 text-right">
-              {row.debit.toLocaleString("is-IS")}
+              {formatNumber(row.debit)}
             </td>
             <td className="p-2 text-right">
-              {row.credit.toLocaleString("is-IS")}
+              {formatNumber(row.credit)}
             </td>
           </tr>
         ))}
@@ -149,12 +153,12 @@ const canImport = isBalanced && missingAccounts.length === 0;
   <div className="flex flex-wrap gap-6">
     <p>
       <strong>Debet samtals:</strong>{" "}
-      {totalDebit.toLocaleString("is-IS")} kr.
+      {formatNumber(totalDebit)} kr.
     </p>
 
     <p>
       <strong>Kredit samtals:</strong>{" "}
-      {totalCredit.toLocaleString("is-IS")} kr.
+      {formatNumber(totalCredit)} kr.
     </p>
   </div>
 

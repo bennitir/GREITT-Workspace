@@ -5,6 +5,8 @@ import { redirect } from "next/navigation";
 import { prisma } from "@/lib/prisma";
 import { innsynText, innsynCodeLabel, innsynFactLabel, innsynFactValue, innsynUnitLabel, innsynUnconfirmedPayer, innsynInsuranceCount } from "@/lib/i18n/innsyn";
 import { accountDisplayName } from "@/lib/i18n/accounts";
+import { buildAnnualBankAnalysis } from "@/app/banki/_lib/analysis/annual";
+import { buildAnnualStatement } from "@/app/banki/_lib/analysis/annual-statement";
 
 function formatKr(amount: number) {
   return `${formatNumber(amount, {
@@ -802,6 +804,101 @@ export default async function InnsynPage() {
   if (!company) {
     redirect("/fyrirtaeki");
   }
+
+  // Bankaársuppgjör er sjálfstætt gagnalag í Innsýn. Það breytir ekki
+  // núverandi Innsýn-tölum heldur sýnir hvað bankagögnin styðja sjálf.
+  const insightBankAccounts = await prisma.bankAccount.findMany({
+    where: { companyId, isActive: true },
+    select: { id: true, name: true },
+    orderBy: { id: "asc" },
+  });
+  const insightBankAccountIds = insightBankAccounts.map((account) => account.id);
+  const insightBankAccountById = new Map(
+    insightBankAccounts.map((account) => [account.id, account.name])
+  );
+  const insightBankTransactions = insightBankAccountIds.length
+    ? await prisma.bankTransaction.findMany({
+        where: { bankAccountId: { in: insightBankAccountIds } },
+        orderBy: [{ date: "asc" }, { id: "asc" }],
+      })
+    : [];
+  const insightBankYears = Array.from(
+    new Set(insightBankTransactions.map((item) => item.date.getFullYear()))
+  ).sort((a, b) => b - a);
+  const insightBankYear = insightBankYears[0] ?? null;
+  const insightAnnualStatement = insightBankYear
+    ? buildAnnualStatement(
+        buildAnnualBankAnalysis(
+          insightBankTransactions
+            .filter((item) => item.date.getFullYear() === insightBankYear)
+            .map((item) => ({
+              id: item.id,
+              bankAccountId: item.bankAccountId,
+              bankAccountName: insightBankAccountById.get(item.bankAccountId) ?? null,
+              date: item.date,
+              text: item.text,
+              amount: Number(item.amount),
+              sourceRawData: item.sourceRawData,
+            }))
+        )
+      )
+    : null;
+
+  const annualInsightEvidence = insightAnnualStatement
+    ? (() => {
+        const excluded = [...insightAnnualStatement.excludedFlows]
+          .filter((row) => Math.abs(row.amount) > 0.005)
+          .sort((a, b) => Math.abs(b.amount) - Math.abs(a.amount));
+        const confirmedIncomeShare = insightAnnualStatement.grossInflows > 0
+          ? (insightAnnualStatement.operatingRevenue / insightAnnualStatement.grossInflows) * 100
+          : 0;
+        const classifiedExpenseShare = insightAnnualStatement.grossOutflows > 0
+          ? (insightAnnualStatement.operatingExpenses / insightAnnualStatement.grossOutflows) * 100
+          : 0;
+        return { excluded, largestUnresolved: excluded[0] ?? null, confirmedIncomeShare, classifiedExpenseShare };
+      })()
+    : null;
+
+  const annualResearchHref = (key: string) => {
+    const base = `/banki/arsgreining?year=${insightBankYear}`;
+    const routes: Record<string, string> = {
+      internalTransfers: `${base}&view=flows&researchFocus=internalTransfers#innri-millifaerslur`,
+      grantRelatedInflows: `${base}&view=income&incomeCategory=GRANT_CONTRIBUTION&researchFocus=grantRelatedInflows#innsyn-rannsokn`,
+      unknownInflows: `${base}&view=income&incomeCategory=UNKNOWN&researchFocus=unknownInflows#innsyn-rannsokn`,
+      refundInflows: `${base}&view=income&incomeCategory=REFUND&researchFocus=refundInflows#innsyn-rannsokn`,
+      loanInflows: `${base}&view=income&incomeCategory=LOAN_CAPITAL&researchFocus=loanInflows#innsyn-rannsokn`,
+      otherInflows: `${base}&view=income&incomeCategory=OTHER&researchFocus=otherInflows#innsyn-rannsokn`,
+      unknownOutflows: `${base}&view=expenses&expenseCategory=UNKNOWN&expenseSort=amount-desc&researchFocus=unknownOutflows#innsyn-rannsokn`,
+      personPayments: `${base}&view=expenses&expenseCategory=PERSON_PAYMENT&expenseSort=amount-desc&researchFocus=personPayments#innsyn-rannsokn`,
+      relatedEntityFlows: `${base}&view=expenses&expenseCategory=RELATED_ENTITY_FLOW&expenseSort=amount-desc&researchFocus=relatedEntityFlows#innsyn-rannsokn`,
+      assetInvestments: `${base}&view=expenses&expenseCategory=ASSET_INVESTMENT&expenseSort=amount-desc&researchFocus=assetInvestments#innsyn-rannsokn`,
+      loanOutflows: `${base}&view=expenses&expenseCategory=LOAN_CAPITAL&expenseSort=amount-desc&researchFocus=loanOutflows#innsyn-rannsokn`,
+      refundOutflows: `${base}&view=expenses&expenseCategory=REFUND&expenseSort=amount-desc&researchFocus=refundOutflows#innsyn-rannsokn`,
+      cashWithdrawals: `${base}&view=expenses&expenseCategory=CASH_WITHDRAWAL&expenseSort=amount-desc&researchFocus=cashWithdrawals#innsyn-rannsokn`,
+      otherOutflows: `${base}&view=expenses&expenseCategory=OTHER&expenseSort=amount-desc&researchFocus=otherOutflows#innsyn-rannsokn`,
+    };
+    return routes[key] ?? `${base}&view=overview`;
+  };
+
+  const annualExcludedLabel = (key: string) => {
+    const labels: Record<string, string> = {
+      internalTransfers: "Líklegar innri millifærslur",
+      grantRelatedInflows: "Styrkjatengt innstreymi – bíður bókhaldslegrar staðfestingar",
+      unknownInflows: "Óflokkað innstreymi",
+      loanInflows: "Lánsfé inn",
+      refundInflows: "Endurgreiðslur inn",
+      otherInflows: "Annað innstreymi",
+      unknownOutflows: "Óflokkað útstreymi",
+      personPayments: "Greiðslur til einstaklinga án staðfestrar rekstrarflokkunar",
+      relatedEntityFlows: "Tengdir aðilar / millifærsluflæði",
+      assetInvestments: "Eignafjárfestingar",
+      loanOutflows: "Lánsfé út",
+      refundOutflows: "Endurgreiðslur út",
+      cashWithdrawals: "Reiðufjárúttektir",
+      otherOutflows: "Annað útstreymi",
+    };
+    return labels[key] ?? key;
+  };
 
   const revenueAccounts = new Set(
     accounts
@@ -2421,6 +2518,79 @@ return {
             {currentYear}
           </div>
         </div>
+
+        {insightAnnualStatement && insightBankYear && (
+          <section className="mt-8 rounded-2xl border border-amber-200 bg-amber-50/60 p-5 shadow-sm md:p-6">
+            <div className="flex flex-wrap items-start justify-between gap-4">
+              <div>
+                <p className="text-sm font-semibold uppercase tracking-[0.16em] text-amber-800">
+                  {interfaceLanguage === "en" ? "Annual close from bank data" : interfaceLanguage === "pl" ? "Roczne zamknięcie z danych bankowych" : interfaceLanguage === "sr" ? "Годишњи обрачун из банковних података" : "Ársuppgjör úr bankagögnum"}
+                </p>
+                <h2 className="mt-1 text-xl font-bold text-slate-950">{insightBankYear}</h2>
+                <p className="mt-2 max-w-3xl text-sm leading-6 text-slate-600">
+                  {interfaceLanguage === "en"
+                    ? "This is a research view from the annual bank analysis. Unconfirmed flows are not turned into accounting facts and these figures do not replace the existing Insights data."
+                    : interfaceLanguage === "pl"
+                      ? "To widok badawczy z rocznej analizy bankowej. Niepotwierdzone przepływy nie są zamieniane na fakty księgowe, a te liczby nie zastępują dotychczasowych danych Analiz."
+                      : interfaceLanguage === "sr"
+                        ? "Ово је истраживачки приказ из годишње анализе банке. Непотврђени токови се не претварају у књиговодствене чињенице и ови бројеви не замењују постојеће податке Увида."
+                        : "Þetta er rannsóknarsýn úr ársgreiningu bankans. Óstaðfest flæði verða ekki að bókhaldsstaðreyndum og þessar tölur koma ekki í stað núverandi gagna Innsýnar."}
+                </p>
+              </div>
+              <a href={`/banki/arsreikningur?year=${insightBankYear}`} className="rounded-lg border border-amber-300 bg-white px-4 py-2 text-sm font-semibold text-slate-700 hover:bg-amber-50">
+                {interfaceLanguage === "en" ? "Open working paper" : interfaceLanguage === "pl" ? "Otwórz arkusz roboczy" : interfaceLanguage === "sr" ? "Отвори радни лист" : "Opna vinnuskjal"}
+              </a>
+            </div>
+
+            <div className="mt-5 grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
+              <div className="rounded-xl border bg-white p-4"><p className="text-xs font-medium text-slate-500">{interfaceLanguage === "en" ? "Classified operating income" : "Flokkaðar rekstrartekjur"}</p><p className="mt-1 text-xl font-bold">{formatKr(insightAnnualStatement.operatingRevenue)}</p></div>
+              <div className="rounded-xl border bg-white p-4"><p className="text-xs font-medium text-slate-500">{interfaceLanguage === "en" ? "Classified operating expenses" : "Flokkuð rekstrargjöld"}</p><p className="mt-1 text-xl font-bold">{formatKr(insightAnnualStatement.operatingExpenses)}</p></div>
+              <div className="rounded-xl border bg-white p-4"><p className="text-xs font-medium text-slate-500">{interfaceLanguage === "en" ? "Result from classified data" : "Niðurstaða úr flokkuðum gögnum"}</p><p className="mt-1 text-xl font-bold">{formatKr(insightAnnualStatement.resultFromClassifiedData)}</p></div>
+              <div className="rounded-xl border bg-white p-4"><p className="text-xs font-medium text-slate-500">{interfaceLanguage === "en" ? "Net cash movement" : "Nettóhreyfing handbærs fjár"}</p><p className="mt-1 text-xl font-bold">{formatKr(insightAnnualStatement.netCashFlow)}</p></div>
+            </div>
+
+            {annualInsightEvidence && (
+              <div className="mt-4 grid gap-4 lg:grid-cols-[1.05fr_1fr]">
+                <div className="rounded-xl border bg-white p-4">
+                  <p className="text-sm font-semibold text-slate-900">Hvað gögnin segja núna</p>
+                  <div className="mt-3 space-y-3 text-sm leading-6 text-slate-600">
+                    <p><span className="font-semibold text-slate-900">{annualInsightEvidence.confirmedIncomeShare.toLocaleString("is-IS", { maximumFractionDigits: 1 })}%</span> af heildarinnstreymi er nú komið inn sem flokkaðar rekstrartekjur. Það sem eftir stendur er ekki sjálfkrafa tekjufært.</p>
+                    <p><span className="font-semibold text-slate-900">{annualInsightEvidence.classifiedExpenseShare.toLocaleString("is-IS", { maximumFractionDigits: 1 })}%</span> af heildarútstreymi er komið inn sem flokkuð rekstrargjöld. Önnur útflæði halda rannsóknarstöðu sinni.</p>
+                    <p>Niðurstaða úr flokkuðum gögnum er <span className="font-semibold text-slate-900">{formatKr(insightAnnualStatement.resultFromClassifiedData)}</span>, en nettó bankahreyfing ársins er <span className="font-semibold text-slate-900">{formatKr(insightAnnualStatement.netCashFlow)}</span>. Þessar tölur svara ólíkum spurningum og eru ekki jafnaðar saman með ágiskun.</p>
+                  </div>
+                </div>
+                <div className="rounded-xl border bg-white p-4">
+                  <p className="text-sm font-semibold text-slate-900">Stærstu rannsóknaratriðin</p>
+                  <p className="mt-1 text-xs leading-5 text-slate-500">Forgangsröðun eftir fjárhæð. Þetta eru rannsóknaratriði, ekki bókhaldslegar niðurstöður.</p>
+                  <div className="mt-3 divide-y">
+                    {annualInsightEvidence.excluded.slice(0, 4).map((row, index) => (
+                      <a key={row.key} href={annualResearchHref(row.key)} className="flex items-center justify-between gap-4 py-3 text-sm hover:bg-slate-50">
+                        <span className="text-slate-600"><span className="mr-2 font-semibold text-slate-400">{index + 1}.</span>{annualExcludedLabel(row.key)}</span>
+                        <span className="shrink-0 font-semibold tabular-nums text-slate-900">{formatKr(row.amount)}</span>
+                      </a>
+                    ))}
+                  </div>
+                </div>
+              </div>
+            )}
+
+            <details className="mt-4 rounded-xl border bg-white">
+              <summary className="cursor-pointer px-4 py-3 text-sm font-semibold text-slate-800">Flæði sem bíða staðfestingar</summary>
+              <div className="divide-y border-t">
+                {insightAnnualStatement.excludedFlows.filter((row) => Math.abs(row.amount) > 0.005).map((row) => (
+                  <a
+                    key={row.key}
+                    href={annualResearchHref(row.key)}
+                    className="flex items-center justify-between gap-4 px-4 py-3 text-sm hover:bg-slate-50"
+                  >
+                    <span className="text-slate-600">{annualExcludedLabel(row.key)}</span>
+                    <span className="font-semibold tabular-nums text-slate-900">{formatKr(row.amount)}</span>
+                  </a>
+                ))}
+              </div>
+            </details>
+          </section>
+        )}
 
         <section className="mt-8 overflow-hidden rounded-2xl border bg-white shadow-sm">
           <div className="grid lg:grid-cols-[1.35fr_1fr]">

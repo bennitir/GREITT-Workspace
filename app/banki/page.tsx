@@ -3,6 +3,7 @@ import { prisma } from "@/lib/prisma";
 import Link from "next/link";
 import { bankAnalysisLanguage } from "@/app/banki/_lib/i18n/analysis-text";
 import { annualAnalysisText } from "@/app/banki/_lib/i18n/annual-analysis-text";
+import { annualStatementText } from "@/app/banki/_lib/i18n/annual-statement-text";
 
 export default async function BankiPage() {
   const cookieStore = await cookies();
@@ -24,7 +25,9 @@ export default async function BankiPage() {
   const token = cookieStore.get("sessionToken")?.value;
   const session = token ? await prisma.session.findUnique({ where: { token }, select: { userId: true } }) : null;
   const userSettings = session ? await prisma.userSettings.findUnique({ where: { userId: session.userId }, select: { interfaceLanguage: true } }) : null;
-  const annualText = annualAnalysisText(bankAnalysisLanguage(userSettings?.interfaceLanguage));
+  const language = bankAnalysisLanguage(userSettings?.interfaceLanguage);
+  const annualText = annualAnalysisText(language);
+  const statementText = annualStatementText(language);
 
   const company = await prisma.company.findUnique({
     where: {
@@ -82,6 +85,12 @@ export default async function BankiPage() {
             className="inline-block rounded-lg border border-blue-600 px-4 py-2 font-medium text-blue-700"
           >
             {annualText.link}
+          </Link>
+          <Link
+            href="/banki/arsreikningur"
+            className="inline-block rounded-lg border border-slate-400 px-4 py-2 font-medium text-slate-700"
+          >
+            {statementText.link}
           </Link>
         </div>
 

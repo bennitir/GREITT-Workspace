@@ -1,3 +1,4 @@
+import { Fragment } from "react";
 import Link from "next/link";
 import { cookies } from "next/headers";
 import { redirect } from "next/navigation";
@@ -6,8 +7,9 @@ import { formatDate } from "@/lib/locale";
 import { formatNumber } from "@/app/banki/_lib/formatting/numbers";
 import { bankAnalysisLanguage } from "@/app/banki/_lib/i18n/analysis-text";
 import { annualAnalysisText } from "@/app/banki/_lib/i18n/annual-analysis-text";
-import { analyzeExpenseEvidence, buildAccountBankAnalysis, buildAnnualBankAnalysis, buildGrantFlowSources } from "@/app/banki/_lib/analysis/annual";
-import { parseRawBankData } from "@/app/banki/_lib/analysis/transactions";
+import { annualStatementText } from "@/app/banki/_lib/i18n/annual-statement-text";
+import { analyzeExpenseEvidence, analyzeIncomeEvidence, buildAccountBankAnalysis, buildAnnualBankAnalysis, buildGrantFlowSources, findPriorRelatedBankTransactions } from "@/app/banki/_lib/analysis/annual";
+import { analyzeBankTransaction, parseRawBankData } from "@/app/banki/_lib/analysis/transactions";
 
 type Props = {
   searchParams: Promise<{
@@ -17,11 +19,15 @@ type Props = {
     account?: string;
     incomeSort?: string;
     incomeConfidence?: string;
+    incomeCategory?: string;
     expenseSort?: string;
     expenseConfidence?: string;
     expenseCategory?: string;
     q?: string;
     view?: string;
+    tx?: string;
+    relatedTx?: string;
+    researchFocus?: string;
   }>;
 };
 
@@ -93,6 +99,7 @@ export default async function AnnualBankAnalysisPage({ searchParams }: Props) {
   const query = await searchParams;
   const { companyId, language } = await getContext();
   const t = annualAnalysisText(language);
+  const statementText = annualStatementText(language);
 
   const accounts = await prisma.bankAccount.findMany({
     where: { companyId, isActive: true },
@@ -114,17 +121,16 @@ export default async function AnnualBankAnalysisPage({ searchParams }: Props) {
     ? requestedYear
     : years[0] ?? new Date().getFullYear();
 
-  const yearTransactions = allTransactions
-    .filter((item) => item.date.getFullYear() === year)
-    .map((item) => ({
-      id: item.id,
-      bankAccountId: item.bankAccountId,
-      bankAccountName: accountById.get(item.bankAccountId)?.name ?? null,
-      date: item.date,
-      text: item.text,
-      amount: Number(item.amount),
-      sourceRawData: item.sourceRawData,
-    }));
+  const mappedTransactions = allTransactions.map((item) => ({
+    id: item.id,
+    bankAccountId: item.bankAccountId,
+    bankAccountName: accountById.get(item.bankAccountId)?.name ?? null,
+    date: item.date,
+    text: item.text,
+    amount: Number(item.amount),
+    sourceRawData: item.sourceRawData,
+  }));
+  const yearTransactions = mappedTransactions.filter((item) => item.date.getFullYear() === year);
 
   const analysis = buildAnnualBankAnalysis(yearTransactions);
   const grantAccountIds = new Set(
@@ -206,14 +212,38 @@ export default async function AnnualBankAnalysisPage({ searchParams }: Props) {
   const expenseCategory = ["WAGES", "PAYROLL_RELATED", "PERSON_PAYMENT", "PREMISES", "UTILITIES", "TELECOM", "SOFTWARE", "INSURANCE", "VEHICLE", "TRAVEL", "ADVERTISING", "TRANSPORT", "GOODS_SERVICES", "DINING", "GROCERY_PURCHASE", "OFFICE_SUPPLIES", "RESALE_GOODS", "EVENT_HOSPITALITY", "SPORTS_EVENT", "SPORTS_EQUIPMENT", "TELECOM_EQUIPMENT", "POS_PAYMENT_SERVICE", "ADMIN_REGISTRATION_FEE", "RELATED_ENTITY_FLOW", "GRANT", "CONTRIBUTION", "COST_ALLOWANCE", "BANK_FEE", "CASH_WITHDRAWAL", "ASSET_INVESTMENT", "LOAN_CAPITAL", "REFUND", "TAX_FINANCIAL", "OPERATING_EXPENSE", "OTHER", "MIXED", "UNKNOWN"].includes(query.expenseCategory ?? "")
     ? query.expenseCategory!
     : "ALL";
+  const incomeCategory = ["OPERATING_REVENUE", "GRANT_CONTRIBUTION", "PAYMENT_SETTLEMENT", "LOAN_CAPITAL", "REFUND", "OTHER", "UNKNOWN"].includes(query.incomeCategory ?? "")
+    ? query.incomeCategory!
+    : "ALL";
+  const researchFocus = (query.researchFocus ?? "").trim();
+  const researchIncomeFocuses: Record<string, string> = {
+    grantRelatedInflows: "GRANT_CONTRIBUTION",
+    unknownInflows: "UNKNOWN",
+    refundInflows: "REFUND",
+    loanInflows: "LOAN_CAPITAL",
+    otherInflows: "OTHER",
+  };
+  const researchExpenseFocuses: Record<string, string> = {
+    unknownOutflows: "UNKNOWN",
+    personPayments: "PERSON_PAYMENT",
+    relatedEntityFlows: "RELATED_ENTITY_FLOW",
+    assetInvestments: "ASSET_INVESTMENT",
+    loanOutflows: "LOAN_CAPITAL",
+    refundOutflows: "REFUND",
+    cashWithdrawals: "CASH_WITHDRAWAL",
+    otherOutflows: "OTHER",
+  };
   const searchQuery = (query.q ?? "").trim();
   const requestedView = query.view ?? "overview";
   const view = ["overview", "summary", "income", "expenses", "flows", "patterns", "accounts"].includes(requestedView)
     ? requestedView
     : "overview";
 
+  const incomeCategoryGroups = incomeCategory === "ALL"
+    ? analysis.classifiedIncomeGroups
+    : analysis.classifiedIncomeGroups.filter((group) => group.classification === incomeCategory);
   const visibleIncomeGroups = sortGroups(
-    filterGroupsBySearch(filterGroupsByConfidence(analysis.classifiedIncomeGroups, incomeConfidence), searchQuery),
+    filterGroupsBySearch(filterGroupsByConfidence(incomeCategoryGroups, incomeConfidence), searchQuery),
     incomeSort,
   );
   const expenseCategoryGroups = expenseCategory === "ALL"
@@ -226,6 +256,60 @@ export default async function AnnualBankAnalysisPage({ searchParams }: Props) {
     filterGroupsBySearch(filterGroupsByConfidence(expenseCategoryGroups, expenseConfidence), searchQuery),
     expenseSort,
   );
+
+  const researchTransactionIds = new Set<number>();
+  const researchIncomeCategory = researchIncomeFocuses[researchFocus] ?? null;
+  const researchExpenseCategory = researchExpenseFocuses[researchFocus] ?? null;
+  if (researchIncomeCategory) {
+    // Keep this selection identical to classificationTotals in annual.ts:
+    // classify each transaction on its own, and exclude internal incoming
+    // transfers and interest income before assigning the research bucket.
+    // Using the summary group's classification here is unsafe because a mixed
+    // counterparty group is deliberately labelled UNKNOWN even when individual
+    // rows inside it have stronger evidence.
+    const internalIncomingIds = new Set(analysis.internalPairs.map((pair) => pair.incomingId));
+    for (const item of yearTransactions) {
+      if (item.amount <= 0 || internalIncomingIds.has(item.id)) continue;
+      const base = analyzeBankTransaction({
+        text: item.text,
+        amount: item.amount,
+        sourceRawData: item.sourceRawData,
+      });
+      if (base.kind === "INTEREST_INCOME") continue;
+      if (analyzeIncomeEvidence(item).classification === researchIncomeCategory) {
+        researchTransactionIds.add(item.id);
+      }
+    }
+  }
+  if (researchExpenseCategory) {
+    for (const group of analysis.classifiedExpenseGroups) {
+      for (const part of group.breakdown) {
+        if (part.classification === researchExpenseCategory) {
+          for (const id of part.transactionIds) researchTransactionIds.add(id);
+        }
+      }
+    }
+  }
+  const researchTransactions = yearTransactions
+    .filter((item) => researchTransactionIds.has(item.id))
+    .sort((a, b) => Math.abs(b.amount) - Math.abs(a.amount) || a.date.getTime() - b.date.getTime());
+  const researchTransactionsTotal = researchTransactions.reduce((sum, item) => sum + Math.abs(item.amount), 0);
+
+  // Research rows from Innsýn must be able to continue all the way down to
+  // the existing transaction drilldown. Resolve the owning analysis group from
+  // the transaction id instead of inventing a second detail view.
+  const researchTransactionHref = (transactionId: number) => {
+    const flow = researchExpenseCategory ? "out" : "in";
+    const groups = flow === "out" ? analysis.classifiedExpenseGroups : analysis.classifiedIncomeGroups;
+    const group = groups.find((candidate) => candidate.transactionIds.includes(transactionId));
+    if (!group) return "#innsyn-rannsokn";
+    const categoryParam = flow === "out" && researchExpenseCategory
+      ? `&expenseCategory=${encodeURIComponent(researchExpenseCategory)}`
+      : flow === "in" && researchIncomeCategory
+        ? `&incomeCategory=${encodeURIComponent(researchIncomeCategory)}`
+        : "";
+    return `/banki/arsgreining?year=${year}&view=${flow === "in" ? "income" : "expenses"}&flow=${flow}&group=${encodeURIComponent(group.key)}${categoryParam}&tx=${transactionId}#faerslur`;
+  };
 
   const selectedFlow = query.flow === "out" ? "out" : query.flow === "in" ? "in" : null;
   const selectedGroupKey = query.group ?? null;
@@ -243,10 +327,25 @@ export default async function AnnualBankAnalysisPage({ searchParams }: Props) {
     selectedCategoryBreakdown?.transactionIds ?? selectedGroup?.transactionIds ?? [],
   );
   const requestedDrilldownAccountId = Number(query.account);
+  const requestedRelatedTransactionIds = new Set(
+    String(query.relatedTx ?? "")
+      .split(",")
+      .map((value) => value.trim())
+      .filter((value) => value.length > 0)
+      .map((value) => Number(value))
+      .filter((value) => Number.isInteger(value)),
+  );
   const selectedTransactions = yearTransactions.filter((item) =>
     selectedTransactionIds.has(item.id) &&
-    (!Number.isInteger(requestedDrilldownAccountId) || item.bankAccountId === requestedDrilldownAccountId)
+    (!Number.isInteger(requestedDrilldownAccountId) || item.bankAccountId === requestedDrilldownAccountId) &&
+    (!requestedRelatedTransactionIds.size || requestedRelatedTransactionIds.has(item.id))
   );
+  const requestedResearchTransactionId = Number(query.tx);
+  const selectedResearchTransaction = Number.isInteger(requestedResearchTransactionId)
+    ? selectedTransactions.find((item) => item.id === requestedResearchTransactionId) ?? null
+    : null;
+  const selectedResearchTransactions = selectedResearchTransaction ? [selectedResearchTransaction] : [];
+
   const baseSelectedRecurringPattern = selectedFlow === "out" && selectedGroup
     ? analysis.recurringExpensePatterns.find((pattern) => pattern.groupKey === selectedGroup.key) ?? null
     : null;
@@ -274,6 +373,75 @@ export default async function AnnualBankAnalysisPage({ searchParams }: Props) {
       }
     : null;
   const recurringTransactionIds = new Set(selectedRecurringPattern?.transactionIds ?? []);
+  const relatedBankLinks = selectedResearchTransactions
+    .filter((item) => item.amount > 0 && analyzeIncomeEvidence(item).evidence === "loan-refund-link-needed")
+    .flatMap((target) => findPriorRelatedBankTransactions(mappedTransactions, target).map((link) => ({ target, link })));
+  const transactionById = new Map(mappedTransactions.map((item) => [item.id, item]));
+
+  // First Bank -> Receipt bridge. Keep this deliberately conservative: exact
+  // amount, a bounded date window, and optional counterparty identity evidence.
+  // These are research candidates only; they never confirm or post anything.
+  const receiptLinkTargets = selectedResearchTransactions.filter((item) =>
+    item.amount > 0 && analyzeIncomeEvidence(item).evidence === "loan-refund-link-needed"
+  );
+  const receiptCandidates = receiptLinkTargets.length
+    ? await prisma.receipt.findMany({
+        where: { companyId },
+        select: {
+          id: true, date: true, aiDate: true, amount: true, aiAmount: true,
+          description: true, merchantName: true, merchantKennitala: true, status: true,
+        },
+        orderBy: [{ date: "asc" }, { id: "asc" }],
+      })
+    : [];
+  const relatedReceiptLinks = receiptLinkTargets.flatMap((target) => {
+    const raw = parseRawBankData(target.sourceRawData);
+    const targetKt = String(raw.counterpartyKennitala ?? "").replace(/\D/g, "");
+    const targetName = String(raw.counterparty ?? target.text ?? "").trim().toLocaleLowerCase("is-IS");
+    return receiptCandidates.flatMap((receipt) => {
+      const receiptAmount = Number(receipt.aiAmount ?? receipt.amount);
+      if (!Number.isFinite(receiptAmount) || Math.abs(receiptAmount - Math.abs(target.amount)) > 0.01) return [];
+      const receiptDate = receipt.aiDate ?? receipt.date;
+      if (!receiptDate) return [];
+      const dayDistance = Math.round(Math.abs(target.date.getTime() - receiptDate.getTime()) / 86_400_000);
+      if (dayDistance > 45) return [];
+      const receiptKt = String(receipt.merchantKennitala ?? "").replace(/\D/g, "");
+      const receiptName = String(receipt.merchantName ?? receipt.description ?? "").trim().toLocaleLowerCase("is-IS");
+      const sameKennitala = Boolean(targetKt && receiptKt && targetKt === receiptKt);
+      const sameName = Boolean(targetName && receiptName && (targetName.includes(receiptName) || receiptName.includes(targetName)));
+      return [{
+        target, receipt, receiptDate, dayDistance,
+        confidence: sameKennitala ? "HIGH" as const : sameName ? "HIGH" as const : "MEDIUM" as const,
+        reasons: ["EXACT_AMOUNT" as const, ...(sameKennitala ? ["SAME_KENNITALA" as const] : []), ...(sameName ? ["SAME_NAME" as const] : [])],
+      }];
+    }).sort((a, b) => (a.confidence === b.confidence ? a.dayDistance - b.dayDistance : a.confidence === "HIGH" ? -1 : 1)).slice(0, 5);
+  });
+
+  // First Bank -> FinancialEvent / Innsyn bridge. Keep the first pass as
+  // conservative as the receipt bridge: exact amount and a bounded date
+  // window. Event title/reference can strengthen the explanation later, but
+  // do not infer accounting recognition from an amount/date match alone.
+  const financialEventCandidates = receiptLinkTargets.length
+    ? await prisma.financialEvent.findMany({
+        where: { companyId },
+        select: {
+          id: true, eventType: true, status: true, title: true, eventDate: true,
+          periodStart: true, periodEnd: true, amount: true, externalReference: true,
+        },
+        orderBy: [{ eventDate: "asc" }, { id: "asc" }],
+      })
+    : [];
+  const relatedFinancialEventLinks = receiptLinkTargets.flatMap((target) =>
+    financialEventCandidates.flatMap((event) => {
+      const eventAmount = event.amount === null ? null : Number(event.amount);
+      if (eventAmount === null || !Number.isFinite(eventAmount) || Math.abs(Math.abs(eventAmount) - Math.abs(target.amount)) > 0.01) return [];
+      const eventDate = event.eventDate ?? event.periodEnd ?? event.periodStart;
+      if (!eventDate) return [];
+      const dayDistance = Math.round(Math.abs(target.date.getTime() - eventDate.getTime()) / 86_400_000);
+      if (dayDistance > 45) return [];
+      return [{ target, event, eventDate, dayDistance, confidence: "MEDIUM" as const }];
+    }).sort((a, b) => a.dayDistance - b.dayDistance).slice(0, 5)
+  );
 
   // Deterministic source-account trace for the selected group. This answers
   // which of the company's own bank accounts the payments actually moved
@@ -288,11 +456,297 @@ export default async function AnnualBankAnalysisPage({ searchParams }: Props) {
     }, new Map<number, { bankAccountId: number; count: number; amount: number }>()).values(),
   ).sort((a, b) => b.amount - a.amount || b.count - a.count);
 
+  // Surface recurring raw bank-field values without assigning them a business
+  // meaning. This is useful for unexplained groups: the researcher can see
+  // whether references, payment explanations or text keys repeat before any
+  // classification rule is introduced.
+  // Cross-bank intermediary research. Bank counterparty and underlying party are
+  // deliberately separate concepts. An embedded kennitala that differs from
+  // the visible bank counterparty is surfaced as evidence only; it never
+  // reclassifies or posts the transaction.
+  const selectedIntermediaryLinks = (() => {
+    if (selectedFlow !== "in") return [];
+    const directPartyByKennitala = new Map<string, { name: string; transactionId: number }>();
+    for (const transaction of yearTransactions) {
+      const raw = parseRawBankData(transaction.sourceRawData);
+      const kennitala = String(raw.counterpartyKennitala ?? "").replace(/\D/g, "");
+      const name = String(raw.counterparty ?? transaction.text ?? "").trim();
+      if (kennitala.length === 10 && name && !directPartyByKennitala.has(kennitala)) {
+        directPartyByKennitala.set(kennitala, { name, transactionId: transaction.id });
+      }
+    }
+    const normalizePartyName = (value: string) => value
+      .toLocaleLowerCase("is")
+      .normalize("NFKD")
+      .replace(/[\u0300-\u036f]/g, "")
+      .replace(/[^a-z0-9áðéíóúýþæö]+/gi, " ")
+      .replace(/\s+/g, " ")
+      .trim();
+    const isLikelySamePartyName = (researchText: string, partyName: string) => {
+      if (!researchText || !partyName) return false;
+      if (researchText.includes(partyName)) return true;
+
+      // Bank descriptions are sometimes truncated (for example "Ungmennafélagið Þrót"
+      // instead of "Ungmennafélagið Þróttur"). Accept a long prefix only when the
+      // shared text is substantial and covers most of the known party name. This keeps
+      // the rule generic while avoiding loose word-level guesses.
+      const maxComparableLength = Math.min(researchText.length, partyName.length);
+      let sharedPrefixLength = 0;
+      while (
+        sharedPrefixLength < maxComparableLength &&
+        researchText[sharedPrefixLength] === partyName[sharedPrefixLength]
+      ) {
+        sharedPrefixLength += 1;
+      }
+      return sharedPrefixLength >= 12 && sharedPrefixLength / partyName.length >= 0.75;
+    };
+
+    const directParties = Array.from(directPartyByKennitala.entries())
+      .map(([kennitala, party]) => ({ kennitala, ...party, normalizedName: normalizePartyName(party.name) }))
+      .filter((party) => party.normalizedName.length >= 6);
+
+    const grouped = new Map<string, { kennitala: string; name: string | null; count: number; amount: number; transactionIds: number[]; groupKey: string | null }>();
+    for (const transaction of selectedTransactions) {
+      if (transaction.amount <= 0) continue;
+      const raw = parseRawBankData(transaction.sourceRawData);
+      const visibleKennitala = String(raw.counterpartyKennitala ?? "").replace(/\D/g, "");
+      const rawResearchFields = [raw.paymentExplanation, raw.textKey, raw.reference]
+        .map((value) => String(value ?? "").trim())
+        .filter(Boolean);
+      const embeddedKennitolas = rawResearchFields
+        .flatMap((value) => value.match(/\b\d{10}\b/g) ?? [])
+        .filter((kennitala, index, values) => kennitala !== visibleKennitala && values.indexOf(kennitala) === index);
+      const normalizedResearchText = normalizePartyName(rawResearchFields.join(" "));
+      const namedKennitolas = directParties
+        .filter((party) =>
+          party.kennitala !== visibleKennitala &&
+          isLikelySamePartyName(normalizedResearchText, party.normalizedName)
+        )
+        .map((party) => party.kennitala);
+      const embedded = Array.from(new Set([...embeddedKennitolas, ...namedKennitolas]));
+
+      for (const kennitala of embedded) {
+        const directParty = directPartyByKennitala.get(kennitala) ?? null;
+        // The first occurrence of a party in the year's bank data may be an outflow,
+        // while this research view navigates income groups. Resolve the destination
+        // from any positive transaction for the same kennitala instead of relying on
+        // that first occurrence. This keeps the intermediary link deterministic and
+        // makes the underlying party navigable whenever it has an income research group.
+        const directIncomeTransactionIds = yearTransactions
+          .filter((candidate) => {
+            if (candidate.amount <= 0) return false;
+            const candidateRaw = parseRawBankData(candidate.sourceRawData);
+            return String(candidateRaw.counterpartyKennitala ?? "").replace(/\D/g, "") === kennitala;
+          })
+          .map((candidate) => candidate.id);
+        const directGroup = analysis.classifiedIncomeGroups.find((group) =>
+          group.transactionIds.some((transactionId) => directIncomeTransactionIds.includes(transactionId))
+        ) ?? null;
+        const current = grouped.get(kennitala) ?? {
+          kennitala, name: directParty?.name ?? null, count: 0, amount: 0, transactionIds: [], groupKey: directGroup?.key ?? null,
+        };
+        current.count += 1;
+        current.amount += transaction.amount;
+        current.transactionIds.push(transaction.id);
+        if (!current.name && directParty?.name) current.name = directParty.name;
+        if (!current.groupKey && directGroup?.key) current.groupKey = directGroup.key;
+        grouped.set(kennitala, current);
+      }
+    }
+
+    return Array.from(grouped.values()).sort((a, b) => b.amount - a.amount || b.count - a.count);
+  })();
+
+  // Reverse intermediary research. When the selected party itself is named inside
+  // another counterparty's bank details, surface that incoming path here as well.
+  // This turns one-way clues into a navigable research network without treating
+  // the relationship as accounting confirmation.
+  const reverseIntermediaryLinks = (() => {
+    if (selectedFlow !== "in" || !selectedTransactions.length) return [];
+
+    const normalizePartyName = (value: string) => value
+      .toLocaleLowerCase("is")
+      .normalize("NFKD")
+      .replace(/[\u0300-\u036f]/g, "")
+      .replace(/[^a-z0-9áðéíóúýþæö]+/gi, " ")
+      .replace(/\s+/g, " ")
+      .trim();
+    const isLikelySamePartyName = (researchText: string, partyName: string) => {
+      if (!researchText || !partyName) return false;
+      if (researchText.includes(partyName)) return true;
+      const maxComparableLength = Math.min(researchText.length, partyName.length);
+      let sharedPrefixLength = 0;
+      while (sharedPrefixLength < maxComparableLength && researchText[sharedPrefixLength] === partyName[sharedPrefixLength]) sharedPrefixLength += 1;
+      return sharedPrefixLength >= 12 && sharedPrefixLength / partyName.length >= 0.75;
+    };
+
+    const selectedParties = new Map<string, string>();
+    for (const transaction of selectedTransactions) {
+      const raw = parseRawBankData(transaction.sourceRawData);
+      const kennitala = String(raw.counterpartyKennitala ?? "").replace(/\D/g, "");
+      const name = String(raw.counterparty ?? transaction.text ?? "").trim();
+      if (kennitala.length === 10 && name) selectedParties.set(kennitala, name);
+    }
+    if (!selectedParties.size) return [];
+
+    const selectedIds = new Set(selectedTransactions.map((item) => item.id));
+    const grouped = new Map<string, { sourceName: string; sourceKennitala: string; count: number; amount: number; transactionIds: number[]; groupKey: string | null }>();
+    for (const transaction of yearTransactions) {
+      if (transaction.amount <= 0 || selectedIds.has(transaction.id)) continue;
+      const raw = parseRawBankData(transaction.sourceRawData);
+      const visibleKennitala = String(raw.counterpartyKennitala ?? "").replace(/\D/g, "");
+      const visibleName = String(raw.counterparty ?? transaction.text ?? "").trim();
+      const rawResearchFields = [raw.paymentExplanation, raw.textKey, raw.reference]
+        .map((value) => String(value ?? "").trim())
+        .filter(Boolean);
+      const normalizedResearchText = normalizePartyName(rawResearchFields.join(" "));
+      const embeddedKennitolas = rawResearchFields.flatMap((value) => value.match(/\b\d{10}\b/g) ?? []);
+
+      const matchesSelected = Array.from(selectedParties.entries()).some(([kennitala, name]) =>
+        kennitala !== visibleKennitala && (
+          embeddedKennitolas.includes(kennitala) ||
+          isLikelySamePartyName(normalizedResearchText, normalizePartyName(name))
+        )
+      );
+      if (!matchesSelected || !visibleName) continue;
+
+      const sourceGroup = analysis.classifiedIncomeGroups.find((group) => group.transactionIds.includes(transaction.id)) ?? null;
+      const key = sourceGroup?.key ?? `${visibleKennitala}:${normalizePartyName(visibleName)}`;
+      const current = grouped.get(key) ?? { sourceName: visibleName, sourceKennitala: visibleKennitala, count: 0, amount: 0, transactionIds: [], groupKey: sourceGroup?.key ?? null };
+      current.count += 1;
+      current.amount += transaction.amount;
+      current.transactionIds.push(transaction.id);
+      grouped.set(key, current);
+    }
+    return Array.from(grouped.values()).sort((a, b) => b.amount - a.amount || b.count - a.count);
+  })();
+
+  const selectedRecurringBankFields = (() => {
+    const fields = [
+      { key: "reference", label: t.bankFieldReference },
+      { key: "paymentExplanation", label: t.bankFieldPaymentExplanation },
+      { key: "textKey", label: t.bankFieldTextKey },
+    ] as const;
+    return fields.flatMap((field) => {
+      const values = new Map<string, { count: number; amount: number }>();
+      for (const item of selectedTransactions) {
+        const raw = parseRawBankData(item.sourceRawData);
+        const value = String(raw[field.key] ?? "").trim();
+        if (!value) continue;
+        const current = values.get(value) ?? { count: 0, amount: 0 };
+        current.count += 1;
+        current.amount += item.amount;
+        values.set(value, current);
+      }
+      return Array.from(values.entries())
+        .filter(([, summary]) => summary.count >= 2)
+        .map(([value, summary]) => ({ field: field.label, value, ...summary }));
+    }).sort((a, b) => b.count - a.count || Math.abs(b.amount) - Math.abs(a.amount)).slice(0, 12);
+  })();
+
+  // Research repeated reference variants without assigning semantic meaning to
+  // the letters themselves. For example, D/K stay neutral until independently
+  // confirmed; we only expose their observed counts, amounts and date spans.
+  const selectedReferenceVariantSummary = selectedIncomeGroup?.referencePattern?.signal === "REPEATED_SETTLEMENT_PATTERN"
+    ? selectedIncomeGroup.referencePattern.variants.map((variant) => {
+        const pattern = selectedIncomeGroup.referencePattern!;
+        const matching = selectedTransactions.filter((item) => {
+          const raw = parseRawBankData(item.sourceRawData);
+          return [raw.reference, raw.paymentExplanation, raw.textKey]
+            .map((value) => String(value ?? "").trim())
+            .filter(Boolean)
+            .some((candidate) =>
+              candidate === `${pattern.stem}-${variant}` ||
+              candidate === `${pattern.stem}_${variant}` ||
+              candidate === `${pattern.stem} ${variant}` ||
+              candidate === `${pattern.stem}${variant}`
+            );
+        }).sort((a, b) => a.date.getTime() - b.date.getTime());
+        return {
+          variant,
+          count: matching.length,
+          amount: matching.reduce((sum, item) => sum + item.amount, 0),
+          firstDate: matching[0]?.date ?? null,
+          lastDate: matching[matching.length - 1]?.date ?? null,
+        };
+      })
+    : [];
+
+  // Compare the timing of adjacent reference variants without treating them as
+  // confirmed settlement pairs. This exposes whether different variants tend to
+  // occur together or on nearby dates while keeping their semantic meaning open.
+  const selectedReferenceVariantTiming = selectedIncomeGroup?.referencePattern?.signal === "REPEATED_SETTLEMENT_PATTERN"
+    ? (() => {
+        const pattern = selectedIncomeGroup.referencePattern!;
+        const rows = selectedTransactions.flatMap((item) => {
+          const raw = parseRawBankData(item.sourceRawData);
+          const candidate = [raw.reference, raw.paymentExplanation, raw.textKey]
+            .map((value) => String(value ?? "").trim())
+            .find((value) => pattern.variants.some((variant) =>
+              value === `${pattern.stem}-${variant}` ||
+              value === `${pattern.stem}_${variant}` ||
+              value === `${pattern.stem} ${variant}` ||
+              value === `${pattern.stem}${variant}`
+            ));
+          if (!candidate) return [];
+          const variant = pattern.variants.find((value) =>
+            candidate === `${pattern.stem}-${value}` ||
+            candidate === `${pattern.stem}_${value}` ||
+            candidate === `${pattern.stem} ${value}` ||
+            candidate === `${pattern.stem}${value}`
+          );
+          return variant ? [{ date: item.date, variant }] : [];
+        }).sort((a, b) => a.date.getTime() - b.date.getTime());
+
+        const transitions: Array<{ from: string; to: string; dayGap: number }> = [];
+        for (let index = 1; index < rows.length; index += 1) {
+          const previous = rows[index - 1];
+          const current = rows[index];
+          if (previous.variant === current.variant) continue;
+          transitions.push({
+            from: previous.variant,
+            to: current.variant,
+            dayGap: Math.round(Math.abs(current.date.getTime() - previous.date.getTime()) / 86_400_000),
+          });
+        }
+
+        const gaps = transitions.map((item) => item.dayGap).sort((a, b) => a - b);
+        const medianGap = gaps.length
+          ? gaps.length % 2 === 1
+            ? gaps[Math.floor(gaps.length / 2)]
+            : (gaps[gaps.length / 2 - 1] + gaps[gaps.length / 2]) / 2
+          : null;
+
+        return {
+          transitionCount: transitions.length,
+          sameDay: transitions.filter((item) => item.dayGap === 0).length,
+          nextDay: transitions.filter((item) => item.dayGap === 1).length,
+          twoToSevenDays: transitions.filter((item) => item.dayGap >= 2 && item.dayGap <= 7).length,
+          overSevenDays: transitions.filter((item) => item.dayGap > 7).length,
+          medianGap,
+        };
+      })()
+    : null;
+
   const drilldownHref = (flow: "in" | "out", key: string) => {
     const categoryParam = flow === "out" && expenseCategory !== "ALL"
       ? `&expenseCategory=${encodeURIComponent(expenseCategory)}`
       : "";
     return `/banki/arsgreining?year=${year}&view=${flow === "in" ? "income" : "expenses"}&flow=${flow}&group=${encodeURIComponent(key)}${categoryParam}#faerslur`;
+  };
+
+  const transactionResearchHref = (transactionId: number) => {
+    if (!selectedFlow || !selectedGroup) return "#faerslur";
+    const categoryParam = selectedFlow === "out" && expenseCategory !== "ALL"
+      ? `&expenseCategory=${encodeURIComponent(expenseCategory)}`
+      : "";
+    const accountParam = Number.isInteger(requestedDrilldownAccountId)
+      ? `&account=${requestedDrilldownAccountId}`
+      : "";
+    const relatedTxParam = requestedRelatedTransactionIds.size
+      ? `&relatedTx=${encodeURIComponent(Array.from(requestedRelatedTransactionIds).join(","))}`
+      : "";
+    return `/banki/arsgreining?year=${year}&view=${selectedFlow === "in" ? "income" : "expenses"}&flow=${selectedFlow}&group=${encodeURIComponent(selectedGroup.key)}${categoryParam}${accountParam}${relatedTxParam}&tx=${transactionId}#faerslur`;
   };
 
   const byAccount = accounts.map((account) => {
@@ -324,7 +778,10 @@ export default async function AnnualBankAnalysisPage({ searchParams }: Props) {
           <h1 className="text-2xl font-bold">📊 {t.title}</h1>
           <p className="mt-2 max-w-4xl text-gray-600">{t.subtitle}</p>
         </div>
-        <Link href="/banki" className="rounded-lg border px-4 py-2 font-medium">← {t.back}</Link>
+        <div className="flex flex-wrap gap-2">
+          <Link href={`/banki/arsreikningur?year=${year}`} className="rounded-lg border border-slate-400 px-4 py-2 font-medium hover:bg-slate-50">{statementText.link} →</Link>
+          <Link href="/banki" className="rounded-lg border px-4 py-2 font-medium">← {t.back}</Link>
+        </div>
       </div>
 
       <div className="mt-6 flex flex-wrap items-center gap-3">
@@ -480,14 +937,24 @@ export default async function AnnualBankAnalysisPage({ searchParams }: Props) {
             <div className="mt-5 grid gap-3 md:grid-cols-2 xl:grid-cols-4">
               <Stat label={t.confirmedFromBankText} value={`${formatNumber(Math.round(analysis.confirmedTurnover))} kr.`} />
               <Stat label={t.paymentSettlement} value={`${formatNumber(Math.round(analysis.classificationTotals.PAYMENT_SETTLEMENT))} kr.`} />
-              <Stat label={t.grantContribution} value={`${formatNumber(Math.round(analysis.classificationTotals.GRANT_CONTRIBUTION))} kr.`} />
+              <Stat label={t.grantLinkedInflow} value={`${formatNumber(Math.round(analysis.classificationTotals.GRANT_CONTRIBUTION))} kr.`} />
               <Stat label={t.unknown} value={`${formatNumber(Math.round(analysis.classificationTotals.UNKNOWN))} kr.`} />
             </div>
             <div className="mt-5 rounded-lg border bg-slate-50 p-4">
               <p className="text-sm text-gray-500">{t.likelyTurnover}</p>
               <p className="mt-1 text-xl font-bold">{formatNumber(Math.round(analysis.likelyTurnover))} kr.</p>
             </div>
-            <div id="utgjaldalisti" className="mt-5 scroll-mt-24 flex flex-wrap items-end gap-3 rounded-lg border bg-slate-50 p-3">
+            {grantFlowIncomingTotal > 0 ? (
+              <div className="mt-5 rounded-xl border border-emerald-200 bg-emerald-50/50 p-4">
+                <div className="grid gap-3 md:grid-cols-3">
+                  <GrantFlowStat label={t.grantLinkedInflow} value={grantFlowIncomingTotal} />
+                  <GrantFlowStat label={t.grantPassThrough} value={grantFlowMatchedTotal} />
+                  <GrantFlowStat label={t.grantRemainingCandidate} value={grantFlowUnmatchedTotal} />
+                </div>
+                <p className="mt-3 text-sm text-emerald-950/80">{t.grantRecognitionHelp}</p>
+              </div>
+            ) : null}
+            <div id="tekjulisti" className="mt-5 scroll-mt-24 flex flex-wrap items-end gap-3 rounded-lg border bg-slate-50 p-3">
               <form method="get" className="flex flex-wrap items-end gap-3">
                 <input type="hidden" name="year" value={year} />
                 <input type="hidden" name="view" value="income" />
@@ -498,6 +965,19 @@ export default async function AnnualBankAnalysisPage({ searchParams }: Props) {
                     <option value="count-desc">{t.sortCount}</option>
                     <option value="name-asc">{t.sortName}</option>
                     <option value="confidence-low">{t.sortUncertainFirst}</option>
+                  </select>
+                </label>
+                <label className="text-sm">
+                  <span className="mb-1 block font-medium text-gray-600">{t.classification}</span>
+                  <select name="incomeCategory" defaultValue={incomeCategory} className="rounded-lg border bg-white px-3 py-2">
+                    <option value="ALL">Allt</option>
+                    <option value="OPERATING_REVENUE">{t.operatingRevenue}</option>
+                    <option value="GRANT_CONTRIBUTION">{t.grantContribution}</option>
+                    <option value="PAYMENT_SETTLEMENT">{t.paymentSettlement}</option>
+                    <option value="LOAN_CAPITAL">{t.loanCapital}</option>
+                    <option value="REFUND">{t.refunds}</option>
+                    <option value="OTHER">{t.other}</option>
+                    <option value="UNKNOWN">{t.unknown}</option>
                   </select>
                 </label>
                 <label className="text-sm">
@@ -516,22 +996,56 @@ export default async function AnnualBankAnalysisPage({ searchParams }: Props) {
             <div className="mt-3 overflow-x-auto">
               <table className="min-w-full text-sm">
                 <thead className="border-b text-left text-gray-500">
-                  <tr><th className="p-2">{t.source}</th><th className="p-2">{t.classification}</th><th className="p-2">{t.confidence}</th><th className="p-2 text-right">{t.count}</th><th className="p-2 text-right">{t.amount}</th></tr>
+                  <tr><th className="p-2">{t.source}</th><th className="p-2">{t.classification}</th><th className="p-2">{t.classificationConfidence}</th><th className="p-2">{t.researchEvidence}</th><th className="p-2 text-right">{t.count}</th><th className="p-2 text-right">{t.amount}</th></tr>
                 </thead>
                 <tbody>
-                  {visibleIncomeGroups.slice(0, 40).map((group) => (
-                    <tr key={group.key} className="border-b last:border-0">
-                      <td className="p-2 font-medium">
-                        <Link className="text-blue-700 hover:underline" href={drilldownHref("in", group.key)}>
-                          {group.label}
+                  {visibleIncomeGroups.slice(0, 40).map((group) => {
+                    const groupTransactions = yearTransactions.filter((item) => group.transactionIds.includes(item.id));
+                    const evidenceRows = groupTransactions.map((item) => analyzeIncomeEvidence(item));
+                    const hasReferencePattern = group.referencePattern?.signal === "REPEATED_SETTLEMENT_PATTERN";
+                    const evidenceCount = groupTransactions.filter((_, index) => {
+                      const evidence = evidenceRows[index];
+                      return hasReferencePattern || evidence.evidence !== "insufficient-bank-evidence";
+                    }).length;
+                    const unexplainedCount = Math.max(0, groupTransactions.length - evidenceCount);
+                    const strongEvidenceCount = evidenceRows.filter((evidence) =>
+                      evidence.evidence !== "insufficient-bank-evidence" && evidence.confidence === "HIGH"
+                    ).length;
+                    const indicatedEvidenceCount = Math.max(0, evidenceCount - strongEvidenceCount);
+                    const researchEvidenceLabel = evidenceCount === 0
+                      ? t.researchEvidenceNone
+                      : [
+                          strongEvidenceCount > 0
+                            ? `${formatNumber(strongEvidenceCount)} ${t.strongEvidenceTransactions}`
+                            : null,
+                          indicatedEvidenceCount > 0
+                            ? `${formatNumber(indicatedEvidenceCount)} ${t.transactionsWithEvidence}`
+                            : null,
+                          `${formatNumber(unexplainedCount)} ${t.unexplainedTransactions}`,
+                        ].filter(Boolean).join(" · ");
+
+                    return (
+                    <tr key={group.key} className="border-b last:border-0 hover:bg-gray-50">
+                      <td className="p-0 font-medium">
+                        <Link className="block p-2 text-blue-700 hover:underline" href={drilldownHref("in", group.key)}>{group.label}</Link>
+                      </td>
+                      <td className="p-0">
+                        <Link className="block p-2" href={drilldownHref("in", group.key)}>
+                          <div>{classificationLabel(group.classification)}</div>
+                          {group.classification === "UNKNOWN" && hasReferencePattern ? (
+                            <div className="mt-1 text-xs text-amber-700">
+                              {t.repeatedSettlementPatternNeedsConfirmation} · {group.referencePattern?.stem}-* · {group.referencePattern?.variants.join("/")}
+                            </div>
+                          ) : null}
                         </Link>
                       </td>
-                      <td className="p-2">{classificationLabel(group.classification)}</td>
-                      <td className="p-2">{confidenceLabel(group.confidence)}</td>
-                      <td className="p-2 text-right">{formatNumber(group.count)}</td>
-                      <td className="p-2 text-right font-medium">{formatNumber(Math.round(group.amount))} kr.</td>
+                      <td className="p-0"><Link className="block p-2" href={drilldownHref("in", group.key)}>{confidenceLabel(group.confidence)}</Link></td>
+                      <td className="p-0"><Link className="block p-2" href={drilldownHref("in", group.key)}>{researchEvidenceLabel}</Link></td>
+                      <td className="p-0 text-right"><Link className="block p-2" href={drilldownHref("in", group.key)}>{formatNumber(group.count)}</Link></td>
+                      <td className="p-0 text-right font-medium"><Link className="block p-2" href={drilldownHref("in", group.key)}>{formatNumber(Math.round(group.amount))} kr.</Link></td>
                     </tr>
-                  ))}
+                    );
+                  })}
                 </tbody>
               </table>
             </div>
@@ -835,6 +1349,143 @@ export default async function AnnualBankAnalysisPage({ searchParams }: Props) {
                   </div>
                 </div>
               ) : null}
+              {selectedFlow === "in" && selectedIntermediaryLinks.length ? (
+                <div className="mt-4 rounded-lg border border-violet-200 bg-violet-50 p-4 text-violet-950">
+                  <p className="font-semibold">{t.intermediaryResearchTitle}</p>
+                  <p className="mt-1 text-sm">{t.intermediaryResearchHelp}</p>
+                  <div className="mt-3 overflow-x-auto">
+                    <table className="min-w-full text-sm">
+                      <thead className="border-b border-violet-200 text-left">
+                        <tr>
+                          <th className="p-2">{t.underlyingParty}</th>
+                          <th className="p-2">{t.underlyingKennitala}</th>
+                          <th className="p-2 text-right">{t.count}</th>
+                          <th className="p-2 text-right">{t.amount}</th>
+                          <th className="p-2">{t.researchStatus}</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {selectedIntermediaryLinks.map((row) => {
+                          const underlyingHref = row.groupKey
+                            ? `/banki/arsgreining?year=${year}&view=income&flow=in&group=${encodeURIComponent(row.groupKey)}#faerslur`
+                            : null;
+                          return (
+                            <tr key={row.kennitala} className={`border-b border-violet-100 last:border-0 ${underlyingHref ? "hover:bg-violet-100/70" : ""}`}>
+                              <td className="p-0 font-medium">
+                                {underlyingHref ? <Link className="block p-2 text-blue-700 hover:underline" href={underlyingHref}>{row.name ?? t.unknownUnderlyingParty}</Link> : <span className="block p-2">{row.name ?? t.unknownUnderlyingParty}</span>}
+                              </td>
+                              <td className="p-0">{underlyingHref ? <Link className="block p-2" href={underlyingHref}>{row.kennitala}</Link> : <span className="block p-2">{row.kennitala}</span>}</td>
+                              <td className="p-0 text-right">{underlyingHref ? <Link className="block p-2" href={underlyingHref}>{formatNumber(row.count)}</Link> : <span className="block p-2">{formatNumber(row.count)}</span>}</td>
+                              <td className="p-0 text-right font-medium">{underlyingHref ? <Link className="block p-2" href={underlyingHref}>{formatNumber(Math.round(row.amount))} kr.</Link> : <span className="block p-2">{formatNumber(Math.round(row.amount))} kr.</span>}</td>
+                              <td className="p-0">{underlyingHref ? <Link className="block p-2" href={underlyingHref}>{t.intermediaryEvidenceOnly}</Link> : <span className="block p-2">{t.intermediaryEvidenceOnly}</span>}</td>
+                            </tr>
+                          );
+                        })}
+                      </tbody>
+                    </table>
+                  </div>
+                </div>
+              ) : null}
+              {selectedFlow === "in" && reverseIntermediaryLinks.length ? (
+                <div className="mt-4 rounded-lg border border-indigo-200 bg-indigo-50 p-4 text-indigo-950">
+                  <p className="font-semibold">{t.reverseIntermediaryResearchTitle}</p>
+                  <p className="mt-1 text-sm">{t.reverseIntermediaryResearchHelp}</p>
+                  <div className="mt-3 overflow-x-auto">
+                    <table className="min-w-full text-sm">
+                      <thead className="border-b border-indigo-200 text-left">
+                        <tr>
+                          <th className="p-2">{t.sourceCounterparty}</th>
+                          <th className="p-2 text-right">{t.count}</th>
+                          <th className="p-2 text-right">{t.amount}</th>
+                          <th className="p-2">{t.researchStatus}</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {reverseIntermediaryLinks.map((row, index) => {
+                          const href = row.groupKey
+                            ? `/banki/arsgreining?year=${year}&view=income&flow=in&group=${encodeURIComponent(row.groupKey)}&relatedTx=${encodeURIComponent(row.transactionIds.join(","))}#faerslur`
+                            : null;
+                          return (
+                            <tr key={`${row.sourceKennitala}:${index}`} className={`border-b border-indigo-100 last:border-0 ${href ? "hover:bg-indigo-100/70" : ""}`}>
+                              <td className="p-0 font-medium">{href ? <Link className="block p-2 text-blue-700 hover:underline" href={href}>{row.sourceName}</Link> : <span className="block p-2">{row.sourceName}</span>}</td>
+                              <td className="p-0 text-right">{href ? <Link className="block p-2" href={href}>{formatNumber(row.count)}</Link> : <span className="block p-2">{formatNumber(row.count)}</span>}</td>
+                              <td className="p-0 text-right font-medium">{href ? <Link className="block p-2" href={href}>{formatNumber(Math.round(row.amount))} kr.</Link> : <span className="block p-2">{formatNumber(Math.round(row.amount))} kr.</span>}</td>
+                              <td className="p-0">{href ? <Link className="block p-2" href={href}>{t.intermediaryEvidenceOnly}</Link> : <span className="block p-2">{t.intermediaryEvidenceOnly}</span>}</td>
+                            </tr>
+                          );
+                        })}
+                      </tbody>
+                    </table>
+                  </div>
+                </div>
+              ) : null}
+              {selectedFlow === "in" && selectedRecurringBankFields.length ? (
+                <div className="mt-4 rounded-lg border bg-white p-4">
+                  <p className="font-semibold">{t.recurringBankFieldsTitle}</p>
+                  <p className="mt-1 text-sm text-gray-600">{t.recurringBankFieldsHelp}</p>
+                  <div className="mt-3 overflow-x-auto">
+                    <table className="min-w-full text-sm">
+                      <thead className="border-b text-left text-gray-500">
+                        <tr><th className="p-2">{t.bankField}</th><th className="p-2">{t.bankFieldValue}</th><th className="p-2 text-right">{t.count}</th><th className="p-2 text-right">{t.amount}</th></tr>
+                      </thead>
+                      <tbody>
+                        {selectedRecurringBankFields.map((row) => (
+                          <tr key={`${row.field}:${row.value}`} className="border-b last:border-0">
+                            <td className="p-2 text-gray-600">{row.field}</td>
+                            <td className="p-2 font-medium">{row.value}</td>
+                            <td className="p-2 text-right">{formatNumber(row.count)}</td>
+                            <td className="p-2 text-right font-medium">{formatNumber(Math.round(row.amount))} kr.</td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                </div>
+              ) : null}
+              {selectedReferenceVariantSummary.length ? (
+                <div className="mt-4 rounded-lg border border-amber-200 bg-amber-50 p-4 text-amber-950">
+                  <p className="font-semibold">{t.referenceVariantResearchTitle}</p>
+                  <p className="mt-1 text-sm">{t.referenceVariantResearchHelp}</p>
+                  <div className="mt-3 overflow-x-auto">
+                    <table className="min-w-full text-sm">
+                      <thead className="border-b border-amber-200 text-left">
+                        <tr>
+                          <th className="p-2">{t.referenceVariant}</th>
+                          <th className="p-2 text-right">{t.count}</th>
+                          <th className="p-2 text-right">{t.amount}</th>
+                          <th className="p-2">{t.referenceVariantDateSpan}</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {selectedReferenceVariantSummary.map((row) => (
+                          <tr key={row.variant} className="border-b border-amber-100 last:border-0">
+                            <td className="p-2 font-semibold">{selectedIncomeGroup?.referencePattern?.stem}-{row.variant}</td>
+                            <td className="p-2 text-right">{formatNumber(row.count)}</td>
+                            <td className="p-2 text-right font-medium">{formatNumber(Math.round(row.amount))} kr.</td>
+                            <td className="p-2 whitespace-nowrap">
+                              {row.firstDate && row.lastDate ? `${formatDate(row.firstDate)} – ${formatDate(row.lastDate)}` : "—"}
+                            </td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                  {selectedReferenceVariantTiming?.transitionCount ? (
+                    <div className="mt-4 border-t border-amber-200 pt-3">
+                      <p className="font-semibold">{t.referenceVariantTimingTitle}</p>
+                      <p className="mt-1 text-sm">{t.referenceVariantTimingHelp}</p>
+                      <div className="mt-3 flex flex-wrap gap-x-6 gap-y-2 text-sm">
+                        <span><strong>{t.referenceVariantTransitions}:</strong> {formatNumber(selectedReferenceVariantTiming.transitionCount)}</span>
+                        <span><strong>{t.referenceVariantSameDay}:</strong> {formatNumber(selectedReferenceVariantTiming.sameDay)}</span>
+                        <span><strong>{t.referenceVariantNextDay}:</strong> {formatNumber(selectedReferenceVariantTiming.nextDay)}</span>
+                        <span><strong>{t.referenceVariantTwoToSevenDays}:</strong> {formatNumber(selectedReferenceVariantTiming.twoToSevenDays)}</span>
+                        <span><strong>{t.referenceVariantOverSevenDays}:</strong> {formatNumber(selectedReferenceVariantTiming.overSevenDays)}</span>
+                        <span><strong>{t.referenceVariantMedianGap}:</strong> {selectedReferenceVariantTiming.medianGap ?? "—"}</span>
+                      </div>
+                    </div>
+                  ) : null}
+                </div>
+              ) : null}
               {selectedRecurringPattern ? (
                 <div className="mt-4 rounded-lg border border-emerald-200 bg-emerald-50 p-4 text-emerald-950">
                   <p className="font-semibold">{t.recurringTitle}</p>
@@ -861,31 +1512,173 @@ export default async function AnnualBankAnalysisPage({ searchParams }: Props) {
                         .join(" · ");
                       const isRecurring = recurringTransactionIds.has(item.id);
                       const evidence = item.amount < 0 ? analyzeExpenseEvidence(item) : null;
+                      const incomeEvidence = item.amount > 0 ? analyzeIncomeEvidence(item) : null;
                       const natureLabel = evidence ? ({
                         CARD_PURCHASE: t.natureCardPurchase, TRANSFER: t.natureTransfer, REFUND: t.natureRefund,
                         GRANT: t.natureGrant, CONTRIBUTION: t.natureContribution, COST_ALLOWANCE: t.natureCostAllowance, BANK_FEE: t.natureBankFee, CASH_WITHDRAWAL: t.natureCashWithdrawal, COLLECTION_FEE: t.natureCollectionFee, OTHER: t.natureOther,
                       } as const)[evidence.paymentNature] : "—";
+                      const incomeReferencePattern = item.amount > 0 && selectedIncomeGroup?.referencePattern?.signal === "REPEATED_SETTLEMENT_PATTERN"
+                        ? selectedIncomeGroup.referencePattern
+                        : null;
+                      const rawReferenceCandidates = [raw.reference, raw.paymentExplanation, raw.textKey]
+                        .map((value) => String(value ?? "").trim())
+                        .filter(Boolean);
+                      const referenceMatchesPattern = incomeReferencePattern
+                        ? incomeReferencePattern.variants.some((variant) =>
+                            rawReferenceCandidates.some((candidate) =>
+                              candidate === `${incomeReferencePattern.stem}-${variant}` ||
+                              candidate === `${incomeReferencePattern.stem}_${variant}` ||
+                              candidate === `${incomeReferencePattern.stem} ${variant}` ||
+                              candidate === `${incomeReferencePattern.stem}${variant}`
+                            )
+                          )
+                        : false;
+                      const embeddedKennitolas = [raw.paymentExplanation, raw.textKey, raw.reference]
+                        .map((value) => String(value ?? ""))
+                        .flatMap((value) => value.match(/\b\d{10}\b/g) ?? []);
+                      const counterpartyKennitala = String(raw.counterpartyKennitala ?? "").replace(/\D/g, "");
+                      const hasUnderlyingPartyEvidence = embeddedKennitolas.some((kennitala) =>
+                        kennitala !== counterpartyKennitala
+                      );
+                      const incomePurposeLabel = hasUnderlyingPartyEvidence
+                        ? t.incomeEvidenceIntermediaryFlow
+                        : incomeEvidence?.evidence === "stacked-grant-account-and-text"
+                        ? t.incomeEvidenceGrantStacked
+                        : incomeEvidence?.evidence === "receiving-account-grant"
+                          ? t.incomeEvidenceGrantAccount
+                          : incomeEvidence?.evidence === "stacked-event-account-and-text"
+                            ? t.incomeEvidenceEventStacked
+                            : incomeEvidence?.evidence === "lottery-pool-related-inflow"
+                              ? t.incomeEvidenceLotteryPool
+                              : incomeEvidence?.evidence === "loan-refund-link-needed"
+                                ? t.incomeEvidenceLoanRefundLink
+                                : incomeEvidence?.evidence === "payment-settlement"
+                                  ? t.incomeEvidencePaymentSettlement
+                                  : null;
                       const purposeLabel = evidence ? ({
                         PREMISES: t.premises, UTILITIES: t.utilities, TELECOM: t.telecom, SOFTWARE: t.software,
                         INSURANCE: t.insurance, VEHICLE: t.vehicle, TRAVEL: t.travel, ADVERTISING: t.advertising, TRANSPORT: t.transport, DINING: t.dining, GROCERY_PURCHASE: t.groceryPurchase, OFFICE_SUPPLIES: t.officeSupplies, RESALE_GOODS: t.resaleGoods, EVENT_HOSPITALITY: t.eventHospitality, SPORTS: t.sportsPurpose, SPORTS_EQUIPMENT: t.sportsEquipment, TELECOM_EQUIPMENT: t.telecomEquipment, POS_PAYMENT_SERVICE: t.posPaymentService, ADMIN_REGISTRATION_FEE: t.adminRegistrationFee, PREMIUM_UNSPECIFIED: t.premiumUnspecified,
                         WAGES: t.wages, PAYROLL_RELATED: t.payrollRelated, PERSON_PAYMENT: t.personPayments,
                         GOODS_SERVICES: t.goodsServices, ASSET_INVESTMENT: t.assetInvestment, LOAN_CAPITAL: t.loanCapital, UNKNOWN: t.purposeUnknown,
-                      } as const)[evidence.purpose] : "—";
+                      } as const)[evidence.purpose] : incomePurposeLabel
+                        ? incomePurposeLabel
+                        : referenceMatchesPattern && incomeReferencePattern
+                          ? `${t.repeatedSettlementPatternNeedsConfirmation} · ${incomeReferencePattern.stem}-* · ${incomeReferencePattern.variants.join("/")}`
+                          : "—";
                       const confidenceLabel = (value: string) => value === "HIGH" ? t.high : value === "MEDIUM" ? t.medium : t.low;
+                      const researchHref = transactionResearchHref(item.id);
+                      const cellLinkClass = "block h-full w-full px-2 py-3";
+                      const isSelectedResearchTransaction = selectedResearchTransaction?.id === item.id;
+                      const transactionIntermediaryLinks = selectedIntermediaryLinks.filter((row) => row.transactionIds.includes(item.id));
+                      const showLoanRefundResearch = incomeEvidence?.evidence === "loan-refund-link-needed";
+                      const showRelatedResearch = selectedFlow === "in" && isSelectedResearchTransaction && (showLoanRefundResearch || transactionIntermediaryLinks.length > 0);
                       return (
-                        <tr key={item.id} className={`border-b last:border-0 ${isRecurring ? "bg-emerald-50/60" : ""}`}>
-                          <td className="p-2 whitespace-nowrap">{formatDate(item.date)}</td>
-                          <td className="p-2">
-                            <Link className="text-blue-700 hover:underline" href={`/banki/${item.bankAccountId}`}>
-                              {accountById.get(item.bankAccountId)?.name ?? item.bankAccountId}
-                            </Link>
-                          </td>
-                          <td className="p-2">{item.text || "—"}</td>
-                          <td className="p-2 whitespace-nowrap">{natureLabel}<div className="text-xs text-gray-500">{evidence ? confidenceLabel(evidence.paymentNatureConfidence) : ""}</div></td>
-                          <td className="p-2 whitespace-nowrap">{purposeLabel}<div className="text-xs text-gray-500">{evidence ? confidenceLabel(evidence.purposeConfidence) : ""}</div></td>
-                          <td className="p-2 text-gray-600">{details || "—"}</td>
-                          <td className="p-2 text-right font-medium whitespace-nowrap">{formatNumber(Math.round(item.amount))} kr.</td>
-                        </tr>
+                        <Fragment key={item.id}>
+                          <tr className={`border-b transition-colors hover:bg-blue-100/70 ${isSelectedResearchTransaction ? "bg-blue-100" : isRecurring ? "bg-emerald-50/60" : ""}`}>
+                            <td className="whitespace-nowrap"><Link className={cellLinkClass} href={researchHref}>{formatDate(item.date)}</Link></td>
+                            <td><Link className={`${cellLinkClass} font-medium text-blue-700`} href={researchHref}>{accountById.get(item.bankAccountId)?.name ?? item.bankAccountId}</Link></td>
+                            <td><Link className={cellLinkClass} href={researchHref}>{item.text || "—"}</Link></td>
+                            <td className="whitespace-nowrap"><Link className={cellLinkClass} href={researchHref}>{natureLabel}<div className="text-xs text-gray-500">{evidence ? confidenceLabel(evidence.paymentNatureConfidence) : ""}</div></Link></td>
+                            <td className="whitespace-nowrap"><Link className={cellLinkClass} href={researchHref}>{purposeLabel}<div className="text-xs text-gray-500">{evidence ? confidenceLabel(evidence.purposeConfidence) : hasUnderlyingPartyEvidence ? t.medium : incomePurposeLabel && incomeEvidence ? confidenceLabel(incomeEvidence.confidence) : ""}</div></Link></td>
+                            <td className="text-gray-600"><Link className={cellLinkClass} href={researchHref}>{details || "—"}</Link></td>
+                            <td className="text-right font-medium whitespace-nowrap"><Link className={cellLinkClass} href={researchHref}>{formatNumber(Math.round(item.amount))} kr.</Link></td>
+                          </tr>
+                          {showRelatedResearch ? (
+                            <tr key={`${item.id}-research`} className="border-b bg-gray-50/40">
+                              <td colSpan={7} className="p-3">
+                                <div className="space-y-3">
+                                  {transactionIntermediaryLinks.length ? (
+                                    <div className="rounded-lg border border-violet-200 bg-violet-50 p-4 text-violet-950">
+                                      <p className="font-semibold">{t.intermediaryResearchTitle}</p>
+                                      <p className="mt-1 text-sm">{t.intermediaryResearchHelp}</p>
+                                      <div className="mt-3 overflow-x-auto">
+                                        <table className="min-w-full text-sm">
+                                          <thead className="border-b border-violet-200 text-left">
+                                            <tr>
+                                              <th className="p-2">{t.underlyingParty}</th>
+                                              <th className="p-2">{t.underlyingKennitala}</th>
+                                              <th className="p-2">{t.researchStatus}</th>
+                                            </tr>
+                                          </thead>
+                                          <tbody>
+                                            {transactionIntermediaryLinks.map((row) => {
+                                              const underlyingHref = row.groupKey
+                                                ? `/banki/arsgreining?year=${year}&view=income&flow=in&group=${encodeURIComponent(row.groupKey)}#faerslur`
+                                                : null;
+                                              return (
+                                                <tr key={`${item.id}:${row.kennitala}`} className={`border-b border-violet-100 last:border-0 ${underlyingHref ? "hover:bg-violet-100/70" : ""}`}>
+                                                  <td className="p-0 font-medium">{underlyingHref ? <Link className="block p-2 text-blue-700 hover:underline" href={underlyingHref}>{row.name ?? t.unknownUnderlyingParty}</Link> : <span className="block p-2">{row.name ?? t.unknownUnderlyingParty}</span>}</td>
+                                                  <td className="p-0">{underlyingHref ? <Link className="block p-2" href={underlyingHref}>{row.kennitala}</Link> : <span className="block p-2">{row.kennitala}</span>}</td>
+                                                  <td className="p-0">{underlyingHref ? <Link className="block p-2" href={underlyingHref}>{t.intermediaryEvidenceOnly}</Link> : <span className="block p-2">{t.intermediaryEvidenceOnly}</span>}</td>
+                                                </tr>
+                                              );
+                                            })}
+                                          </tbody>
+                                        </table>
+                                      </div>
+                                    </div>
+                                  ) : null}
+                                  {showLoanRefundResearch ? (
+                                  <div className="rounded-lg border border-blue-200 bg-blue-50 p-4">
+                                    <p className="font-semibold">{t.relatedBankDataTitle}</p>
+                                    <p className="mt-1 text-sm text-gray-700">{t.relatedBankDataHelp}</p>
+                                    {relatedBankLinks.length ? (
+                                      <div className="mt-3 space-y-2 text-sm">
+                                        {relatedBankLinks.map(({ target, link }) => {
+                                          const candidate = transactionById.get(link.candidateId);
+                                          if (!candidate) return null;
+                                          const reasons = link.reasons.map((reason) => reason === "SAME_COUNTERPARTY" ? t.relatedReasonCounterparty : reason === "EXACT_AMOUNT" ? t.relatedReasonExactAmount : t.relatedReasonLoanWording).join(" · ");
+                                          return (
+                                            <div key={`${target.id}-${candidate.id}`} className="rounded border border-blue-100 bg-white p-3">
+                                              <div><strong>{t.relatedCandidate}:</strong> {formatDate(candidate.date)} · {accountById.get(candidate.bankAccountId)?.name ?? candidate.bankAccountId} · {candidate.text || "—"} · {formatNumber(Math.round(candidate.amount))} kr.</div>
+                                              <div className="mt-2 rounded bg-blue-50 px-3 py-2 font-medium text-blue-950">
+                                                <strong>{t.relatedFlow}:</strong> {formatDate(candidate.date)} · {accountById.get(candidate.bankAccountId)?.name ?? candidate.bankAccountId} · {formatNumber(Math.round(candidate.amount))} kr. → {formatDate(target.date)} · {accountById.get(target.bankAccountId)?.name ?? target.bankAccountId} · +{formatNumber(Math.round(Math.abs(target.amount)))} kr.
+                                              </div>
+                                              <div className="mt-1 text-gray-600">{reasons} · {link.dayDistance} {t.relatedDaysApart} · {link.confidence === "HIGH" ? t.high : t.medium}</div>
+                                            </div>
+                                          );
+                                        })}
+                                      </div>
+                                    ) : <p className="mt-3 text-sm font-medium">{t.relatedBankDataNone}</p>}
+                                  </div>
+                                  ) : null}
+                                  {receiptLinkTargets.length ? (
+                                    <div className="rounded-lg border border-violet-200 bg-violet-50 p-4">
+                                      <p className="font-semibold">{t.relatedReceiptsTitle}</p>
+                                      <p className="mt-1 text-sm text-gray-700">{t.relatedReceiptsHelp}</p>
+                                      {relatedReceiptLinks.length ? (
+                                        <div className="mt-3 space-y-2 text-sm">
+                                          {relatedReceiptLinks.map(({ target, receipt, receiptDate, dayDistance, confidence, reasons }) => (
+                                            <div key={`${target.id}-${receipt.id}`} className="rounded border border-violet-100 bg-white p-3">
+                                              <div><strong>{t.relatedReceiptCandidate}:</strong>{" "}<Link className="text-blue-700 hover:underline" href={`/fylgiskjol/${receipt.id}`}>{formatDate(receiptDate)} · {receipt.merchantName || receipt.description || `#${receipt.id}`} · {formatNumber(Math.round(Number(receipt.aiAmount ?? receipt.amount)))} kr.</Link></div>
+                                              <div className="mt-1 text-gray-600">{reasons.map((reason) => reason === "EXACT_AMOUNT" ? t.relatedReceiptReasonExactAmount : reason === "SAME_KENNITALA" ? t.relatedReceiptReasonKennitala : t.relatedReceiptReasonName).join(" · ")} · {dayDistance} {t.relatedDaysApart} · {confidence === "HIGH" ? t.high : t.medium}</div>
+                                            </div>
+                                          ))}
+                                        </div>
+                                      ) : <p className="mt-3 text-sm font-medium">{t.relatedReceiptsNone}</p>}
+                                    </div>
+                                  ) : null}
+                                  {receiptLinkTargets.length ? (
+                                    <div className="rounded-lg border border-emerald-200 bg-emerald-50 p-4">
+                                      <p className="font-semibold">{t.relatedFinancialEventsTitle}</p>
+                                      <p className="mt-1 text-sm text-gray-700">{t.relatedFinancialEventsHelp}</p>
+                                      {relatedFinancialEventLinks.length ? (
+                                        <div className="mt-3 space-y-2 text-sm">
+                                          {relatedFinancialEventLinks.map(({ target, event, eventDate, dayDistance }) => (
+                                            <div key={`${target.id}-${event.id}`} className="rounded border border-emerald-100 bg-white p-3">
+                                              <div><strong>{t.relatedFinancialEventCandidate}:</strong>{" "}{formatDate(eventDate)} · {event.title || event.eventType} · {formatNumber(Math.round(Math.abs(Number(event.amount))))} kr.</div>
+                                              <div className="mt-1 text-gray-600">{t.relatedFinancialEventReasonExactAmount} · {dayDistance} {t.relatedDaysApart} · {t.medium}{event.externalReference ? ` · ${event.externalReference}` : ""}{event.status ? ` · ${event.status}` : ""}</div>
+                                            </div>
+                                          ))}
+                                        </div>
+                                      ) : <p className="mt-3 text-sm font-medium">{t.relatedFinancialEventsNone}</p>}
+                                    </div>
+                                  ) : null}
+                                </div>
+                              </td>
+                            </tr>
+                          ) : null}
+                        </Fragment>
                       );
                     })}
                   </tbody>
@@ -907,7 +1700,7 @@ export default async function AnnualBankAnalysisPage({ searchParams }: Props) {
                   </thead>
                   <tbody>
                     {analysis.flowThroughSuggestions.slice(0, 50).map((pair) => (
-                      <tr key={`${pair.incomingId}-${pair.outgoingId}`} className="border-b last:border-0">
+                      <tr key={`${pair.incomingIds.join("+")}-${pair.outgoingIds.join("+")}`} className="border-b last:border-0">
                         <td className="p-2">{accountById.get(pair.bankAccountId)?.name ?? pair.bankAccountId}</td>
                         <td className="p-2">{pair.incomingLabel}</td>
                         <td className="p-2">{pair.outgoingLabel}</td>
@@ -921,19 +1714,62 @@ export default async function AnnualBankAnalysisPage({ searchParams }: Props) {
             )}
           </section>
 
-          <section className={`${view === "flows" ? "" : "hidden"} mt-8 rounded-xl border p-6`}>
+          {(researchIncomeCategory || researchExpenseCategory) && (view === "income" || view === "expenses") ? (
+            <section id="innsyn-rannsokn" className="mt-8 scroll-mt-24 rounded-xl border-2 border-amber-300 bg-amber-50/50 p-6">
+              <div className="flex flex-wrap items-start justify-between gap-3">
+                <div>
+                  <p className="text-xs font-semibold uppercase tracking-[0.14em] text-amber-800">Rannsókn úr Innsýn</p>
+                  <h2 className="mt-1 text-xl font-semibold">Nákvæmt færslusafn rannsóknaratriðis</h2>
+                  <p className="mt-2 max-w-3xl text-sm text-gray-600">Aðeins þær bankafærslur sem mynda valið rannsóknaratriði eru sýndar hér. Þetta breytir hvorki flokkun né bókun.</p>
+                </div>
+                <div className="text-right text-sm">
+                  <div className="font-semibold">{formatNumber(researchTransactions.length)} færslur</div>
+                  <div className="text-gray-600">{formatNumber(Math.round(researchTransactionsTotal))} kr.</div>
+                </div>
+              </div>
+              <div className="mt-4 overflow-x-auto rounded-lg border bg-white">
+                <table className="min-w-full text-sm">
+                  <thead className="border-b text-left text-gray-500"><tr><th className="p-2">Dagsetning</th><th className="p-2">Reikningur</th><th className="p-2">Texti</th><th className="p-2 text-right">Upphæð</th></tr></thead>
+                  <tbody>
+                    {researchTransactions.map((item) => {
+                      const href = researchTransactionHref(item.id);
+                      const linkClass = "block h-full w-full px-2 py-3";
+                      return (
+                        <tr key={item.id} className="border-b last:border-0 transition-colors hover:bg-amber-100/70">
+                          <td className="whitespace-nowrap"><Link href={href} className={linkClass}>{formatDate(item.date)}</Link></td>
+                          <td><Link href={href} className={`${linkClass} font-medium text-blue-700`}>{item.bankAccountName ?? item.bankAccountId}</Link></td>
+                          <td><Link href={href} className={linkClass}>{item.text}</Link></td>
+                          <td className="text-right font-medium whitespace-nowrap"><Link href={href} className={linkClass}>{formatNumber(Math.round(Math.abs(item.amount)))} kr.</Link></td>
+                        </tr>
+                      );
+                    })}
+                  </tbody>
+                </table>
+              </div>
+            </section>
+          ) : null}
+
+          <section id="innri-millifaerslur" className={`${view === "flows" ? "" : "hidden"} mt-8 scroll-mt-24 rounded-xl ${researchFocus === "internalTransfers" ? "border-2 border-amber-300 bg-amber-50/50" : "border"} p-6`}>
+            {researchFocus === "internalTransfers" ? <p className="mb-2 text-xs font-semibold uppercase tracking-[0.14em] text-amber-800">Rannsókn úr Innsýn · nákvæm pörun</p> : null}
             <h2 className="text-xl font-semibold">{t.internalTitle}</h2>
             <p className="mt-2 max-w-4xl text-sm text-gray-600">{t.internalHelp}</p>
             {analysis.internalPairs.length === 0 ? (
               <p className="mt-4 text-gray-600">{t.noInternal}</p>
             ) : (
+              <>
+                {researchFocus === "internalTransfers" ? (
+                  <div className="mt-4 flex flex-wrap gap-x-6 gap-y-1 text-sm">
+                    <span><strong>{formatNumber(analysis.internalPairs.length)}</strong> pör</span>
+                    <span><strong>{formatNumber(Math.round(analysis.likelyInternalInflows))} kr.</strong> samtals</span>
+                  </div>
+                ) : null}
               <div className="mt-4 overflow-x-auto">
                 <table className="min-w-full text-sm">
                   <thead className="border-b text-left text-gray-500">
                     <tr><th className="p-2">{t.from}</th><th className="p-2">{t.to}</th><th className="p-2">{t.dates}</th><th className="p-2 text-right">{t.amount}</th></tr>
                   </thead>
                   <tbody>
-                    {analysis.internalPairs.slice(0, 50).map((pair) => (
+                    {analysis.internalPairs.map((pair) => (
                       <tr key={`${pair.outgoingId}-${pair.incomingId}`} className="border-b last:border-0">
                         <td className="p-2">{accountById.get(pair.outgoingAccountId)?.name ?? pair.outgoingAccountId}</td>
                         <td className="p-2">{accountById.get(pair.incomingAccountId)?.name ?? pair.incomingAccountId}</td>
@@ -944,6 +1780,7 @@ export default async function AnnualBankAnalysisPage({ searchParams }: Props) {
                   </tbody>
                 </table>
               </div>
+              </>
             )}
           </section>
 
@@ -953,20 +1790,38 @@ export default async function AnnualBankAnalysisPage({ searchParams }: Props) {
             <div className="mt-4 overflow-x-auto">
               <table className="min-w-full text-sm">
                 <thead className="border-b text-left text-gray-500">
-                  <tr><th className="p-2">{t.source}</th><th className="p-2 text-right">{t.count}</th><th className="p-2 text-right">{t.amount}</th></tr>
+                  <tr><th className="p-2">{t.source}</th><th className="p-2">{t.investigationStatus}</th><th className="p-2 text-right">{t.count}</th><th className="p-2 text-right">{t.amount}</th></tr>
                 </thead>
                 <tbody>
-                  {analysis.incomeGroups.slice(0, 30).map((group) => (
-                    <tr key={group.key} className="border-b last:border-0">
-                      <td className="p-2">
-                        <Link className="text-blue-700 hover:underline" href={drilldownHref("in", group.key)}>
-                          {group.label}
+                  {analysis.incomeGroups.slice(0, 30).map((group) => {
+                    const classifiedGroup = analysis.classifiedIncomeGroups.find((item) => item.key === group.key);
+                    const groupTransactions = yearTransactions.filter((item) => group.transactionIds.includes(item.id));
+                    const evidenceRows = groupTransactions.map((item) => analyzeIncomeEvidence(item));
+                    const hasReferencePattern = classifiedGroup?.referencePattern != null;
+                    const evidenceCount = groupTransactions.filter((_, index) => {
+                      const evidence = evidenceRows[index];
+                      return hasReferencePattern || evidence.evidence !== "insufficient-bank-evidence";
+                    }).length;
+                    const unexplainedCount = Math.max(0, groupTransactions.length - evidenceCount);
+                    const statusLabel = evidenceCount > 0 ? t.statusEvidenceFound : t.statusUnexplained;
+                    return (
+                    <tr key={group.key} className="border-b last:border-0 transition-colors hover:bg-blue-50/70">
+                      <td className="p-0 font-medium">
+                        <Link className="block p-2 text-blue-700 hover:underline" href={drilldownHref("in", group.key)}>{group.label}</Link>
+                      </td>
+                      <td className="p-0">
+                        <Link className="block p-2" href={drilldownHref("in", group.key)}>
+                          <div>{statusLabel}</div>
+                          <div className="mt-0.5 text-xs text-gray-500">
+                            {formatNumber(evidenceCount)} {t.transactionsWithEvidence} · {formatNumber(unexplainedCount)} {t.unexplainedTransactions}
+                          </div>
                         </Link>
                       </td>
-                      <td className="p-2 text-right">{formatNumber(group.count)}</td>
-                      <td className="p-2 text-right font-medium">{formatNumber(Math.round(group.amount))} kr.</td>
+                      <td className="p-0 text-right"><Link className="block p-2" href={drilldownHref("in", group.key)}>{formatNumber(group.count)}</Link></td>
+                      <td className="p-0 text-right font-medium"><Link className="block p-2" href={drilldownHref("in", group.key)}>{formatNumber(Math.round(group.amount))} kr.</Link></td>
                     </tr>
-                  ))}
+                    );
+                  })}
                 </tbody>
               </table>
             </div>

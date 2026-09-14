@@ -118,6 +118,12 @@ export type ClassifiedIncomeGroup = {
   confidence: IncomeConfidence;
   evidence: string;
   transactionIds: number[];
+  referencePattern?: {
+    stem: string;
+    variants: string[];
+    count: number;
+    signal: "REPEATED_SETTLEMENT_PATTERN";
+  } | null;
 };
 
 function normalizedEvidenceText(transaction: AnnualBankTransaction) {
@@ -134,6 +140,109 @@ function normalizedEvidenceText(transaction: AnnualBankTransaction) {
     .toLocaleLowerCase("is-IS");
 }
 
+function detectRepeatedReferencePattern(items: AnnualBankTransaction[]) {
+  if (items.length < 4) return null;
+
+  const parsed = items.map((transaction) => {
+    const raw = parseRawBankData(transaction.sourceRawData);
+    const candidates = [raw.reference, raw.paymentExplanation, raw.textKey]
+      .map((value) => String(value ?? "").trim())
+      .filter(Boolean);
+    for (const candidate of candidates) {
+      const match = candidate.match(/^(.{3,}?)[-_\s]?([A-Za-z])$/);
+      if (match) return { stem: match[1].trim(), variant: match[2].toUpperCase() };
+    }
+    return null;
+  });
+
+  const usable = parsed.filter((item): item is { stem: string; variant: string } => Boolean(item));
+  if (usable.length < 4 || usable.length / items.length < 0.8) return null;
+
+  const stemCounts = new Map<string, number>();
+  for (const item of usable) stemCounts.set(item.stem, (stemCounts.get(item.stem) ?? 0) + 1);
+  const [stem, count] = Array.from(stemCounts.entries()).sort((a, b) => b[1] - a[1])[0] ?? [];
+  if (!stem || !count || count / items.length < 0.8) return null;
+
+  const variants = Array.from(new Set(usable.filter((item) => item.stem === stem).map((item) => item.variant))).sort();
+  if (variants.length < 2) return null;
+
+  return { stem, variants, count, signal: "REPEATED_SETTLEMENT_PATTERN" as const };
+}
+
+export type PriorBankTransactionLink = {
+  targetId: number;
+  candidateId: number;
+  confidence: IncomeConfidence;
+  reasons: Array<"SAME_COUNTERPARTY" | "EXACT_AMOUNT" | "LOAN_WORDING">;
+  dayDistance: number;
+};
+
+/**
+ * Conservative deterministic lookup for an earlier bank transaction that may
+ * explain a later inflow. This does not create an accounting link: it only
+ * returns traceable candidates when independent bank facts line up.
+ */
+export function findPriorRelatedBankTransactions(
+  transactions: AnnualBankTransaction[],
+  target: AnnualBankTransaction,
+): PriorBankTransactionLink[] {
+  const targetRaw = parseRawBankData(target.sourceRawData);
+  const targetKennitala = String(targetRaw.counterpartyKennitala ?? "").replace(/\D/g, "");
+  const targetCounterparty = String(targetRaw.counterparty ?? "").trim().toLocaleLowerCase("is-IS");
+
+  const links: PriorBankTransactionLink[] = [];
+
+  for (const candidate of transactions) {
+    if (candidate.id === target.id || candidate.date >= target.date) continue;
+
+    const days = dayDistance(candidate.date, target.date);
+    if (days > 120.01) continue;
+
+    const raw = parseRawBankData(candidate.sourceRawData);
+    const kennitala = String(raw.counterpartyKennitala ?? "").replace(/\D/g, "");
+    const counterparty = String(raw.counterparty ?? "").trim().toLocaleLowerCase("is-IS");
+    const sameCounterparty = Boolean(
+      (targetKennitala && kennitala && targetKennitala === kennitala) ||
+      (targetCounterparty && counterparty && targetCounterparty === counterparty)
+    );
+    if (!sameCounterparty) continue;
+
+    const detailText = [raw.paymentExplanation, raw.textKey, raw.reference, candidate.text]
+      .filter(Boolean).join(" ").toLocaleLowerCase("is-IS");
+    const exactAmount = Math.abs(Math.abs(candidate.amount) - Math.abs(target.amount)) < 0.005;
+    const loanWording = /\bl[aá]n\b|\blan\b|loan/i.test(detailText);
+    if (!exactAmount && !loanWording) continue;
+
+    const reasons: PriorBankTransactionLink["reasons"] = ["SAME_COUNTERPARTY"];
+    if (exactAmount) reasons.push("EXACT_AMOUNT");
+    if (loanWording) reasons.push("LOAN_WORDING");
+
+    const confidence: PriorBankTransactionLink["confidence"] =
+      exactAmount && candidate.amount * target.amount < 0 ? "HIGH" : "MEDIUM";
+
+    links.push({
+      targetId: target.id,
+      candidateId: candidate.id,
+      confidence,
+      reasons,
+      dayDistance: days,
+    });
+  }
+
+  const rank = (value: IncomeConfidence) => value === "HIGH" ? 2 : value === "MEDIUM" ? 1 : 0;
+  return links
+    .sort((a, b) => rank(b.confidence) - rank(a.confidence) || a.dayDistance - b.dayDistance)
+    .slice(0, 5);
+}
+
+export function analyzeIncomeEvidence(transaction: AnnualBankTransaction): {
+  classification: IncomeClassification;
+  confidence: IncomeConfidence;
+  evidence: string;
+} {
+  return classifyIncomeTransactions([transaction]);
+}
+
 function classifyIncomeTransactions(items: AnnualBankTransaction[]): {
   classification: IncomeClassification;
   confidence: IncomeConfidence;
@@ -147,6 +256,44 @@ function classifyIncomeTransactions(items: AnnualBankTransaction[]): {
       .join(" ")
       .toLocaleLowerCase("is-IS");
   }).join(" | ");
+
+  const receivingAccountText = items
+    .map((transaction) => String(transaction.bankAccountName ?? "").trim())
+    .filter(Boolean)
+    .join(" | ")
+    .toLocaleLowerCase("is-IS");
+
+  // Independent deterministic evidence may reinforce itself. The receiving own
+  // account is purpose evidence, while explicit bank wording is semantic evidence.
+  // We only raise confidence when both point in the same direction; payer identity
+  // is never used to create the accounting meaning.
+  const grantAccountEvidence = /\bstyrk(?:ir|ja|ur|s)?\b/i.test(receivingAccountText);
+  const grantTextEvidence = /\bstyrk|\bframlag|grant|subsid/i.test(text);
+  if (grantAccountEvidence && grantTextEvidence) {
+    return { classification: "GRANT_CONTRIBUTION", confidence: "HIGH", evidence: "stacked-grant-account-and-text" };
+  }
+  if (grantAccountEvidence) {
+    return { classification: "GRANT_CONTRIBUTION", confidence: "MEDIUM", evidence: "receiving-account-grant" };
+  }
+
+  const eventAccountEvidence = /\bm[oó]tareikning/i.test(receivingAccountText);
+  const eventTextEvidence = /m[oó]tam[aá]l|m[oó]tagjald|m[oó]tareikning|\bkeppnisgjald/i.test(text);
+  if (eventAccountEvidence && eventTextEvidence) {
+    return { classification: "OPERATING_REVENUE", confidence: "HIGH", evidence: "stacked-event-account-and-text" };
+  }
+
+  // Some bank wording is useful purpose/flow evidence without being enough to
+  // determine final accounting recognition. Keep these rows unclassified and
+  // expose the evidence for research instead of forcing them into revenue.
+  const lotteryPoolEvidence = /\bgetraun(?:ir|um)?\b|\blott(?:o\b|ó(?=$|[^A-Za-zÀ-ÖØ-öø-ÿ]))/i.test(bankDetailText);
+  if (lotteryPoolEvidence) {
+    return { classification: "UNKNOWN", confidence: "MEDIUM", evidence: "lottery-pool-related-inflow" };
+  }
+
+  const loanRefundLinkEvidence = /\bl[aá]n\b/i.test(bankDetailText) && /endurg(?:r|reið)|endurgreið/i.test(bankDetailText);
+  if (loanRefundLinkEvidence) {
+    return { classification: "UNKNOWN", confidence: "MEDIUM", evidence: "loan-refund-link-needed" };
+  }
 
   // Strong semantic words are deliberately preferred over counterparty identity.
   // This layer must not infer accounting meaning merely from who paid.
@@ -178,13 +325,13 @@ function classifyIncomeTransactions(items: AnnualBankTransaction[]): {
       classification: "OPERATING_REVENUE",
       confidence: "HIGH",
       evidence: "operating-revenue",
-      patterns: [/æfingagjald/i, /þátttökugjald/i, /félagsgjald/i, /aðgangseyri/i, /\bsala\b/i, /sölutekj/i],
+      patterns: [/æfingagjald/i, /þátttökugjald/i, /félagsgjald/i, /aðgangseyri/i, /mótagjald/i, /mótamála/i, /mótareikning/i, /hvatagreiðsl/i, /\bsala\b/i, /sölutekj/i],
     },
     {
       classification: "PAYMENT_SETTLEMENT",
       confidence: "MEDIUM",
       evidence: "payment-settlement",
-      patterns: [/kortauppgj/i, /posa?uppgj/i, /greiðslumiðl/i, /\buppgjör\b/i],
+      patterns: [/kort[af]?uppgj/i, /posa?uppgj/i, /greiðslumiðl/i, /greiðsluuppgj/i, /söluuppgj/i, /\buppgjör\b/i],
     },
   ];
 
@@ -319,6 +466,11 @@ export function analyzeExpenseEvidence(item: AnnualBankTransaction): ExpenseEvid
     paymentNature = { paymentNature: "COST_ALLOWANCE", paymentNatureConfidence: "MEDIUM", paymentNatureEvidence: "labelled-cost-allowance-transfer" };
   } else if (transfer && /\bstyrk/i.test(text)) {
     paymentNature = { paymentNature: "GRANT", paymentNatureConfidence: "MEDIUM", paymentNatureEvidence: "grant-labelled-transfer" };
+  } else if (/\bhlaupastyrk/i.test(text)) {
+    // A clearly labelled outgoing sponsorship/donation remains a grant-like
+    // outflow even when the bank feed presents it as a card purchase rather
+    // than a transfer. This is purpose/nature evidence, not an account posting.
+    paymentNature = { paymentNature: "GRANT", paymentNatureConfidence: "MEDIUM", paymentNatureEvidence: "explicit-hlaupastyrkur-wording" };
   } else if (transfer && /\bframlag/i.test(text)) {
     paymentNature = { paymentNature: "CONTRIBUTION", paymentNatureConfidence: "MEDIUM", paymentNatureEvidence: "contribution-labelled-transfer" };
   } else if (bankKind === "BANK_FEE") {
@@ -372,15 +524,20 @@ export function analyzeExpenseEvidence(item: AnnualBankTransaction): ExpenseEvid
     "5303131230": { purpose: "ADVERTISING", confidence: "HIGH", evidence: "confirmed-counterparty-kennitala:5303131230" }, // Skali merking ehf.
     "5701200930": { purpose: "ADVERTISING", confidence: "HIGH", evidence: "confirmed-counterparty-kennitala:5701200930" }, // RÚV Sala ehf.
     "6605952449": { purpose: "TELECOM", confidence: "HIGH", evidence: "confirmed-counterparty-kennitala:6605952449" }, // Internet á Íslandi hf.
+    "4102830349": { purpose: "GOODS_SERVICES", confidence: "HIGH", evidence: "confirmed-counterparty-kennitala:4102830349" }, // Terra umhverfisþjónusta hf.
   };
   const confirmedPatternPurpose: Partial<Record<string, { purpose: ExpensePurposeIndication; confidence: IncomeConfidence; evidence: string }>> = {
     "counterparty:s direct lindir": { purpose: "SPORTS_EQUIPMENT", confidence: "HIGH", evidence: "confirmed-counterparty-pattern:s-direct-lindir" },
+    "counterparty:emobi a islandi ehf": { purpose: "TELECOM_EQUIPMENT", confidence: "HIGH", evidence: "confirmed-counterparty-pattern:emobi-a-islandi-ehf" },
   };
   const confirmedPurpose = confirmedCounterpartyPurpose[counterpartyKennitala] ?? (patternKey ? confirmedPatternPurpose[patternKey] : undefined);
   const purposeMatch = collectionFee || confirmedPurpose ? undefined : purposeRules.find((rule) => rule.patterns.some((pattern) => pattern.test(text)));
   const firstDayDigits = Number(counterpartyKennitala.slice(0, 2));
   const looksLikeIndividualKennitala = counterpartyKennitala.length === 10 && firstDayDigits >= 1 && firstDayDigits <= 31;
-  const individualTransfer = transfer && looksLikeIndividualKennitala;
+  // A personal kennitala is useful counterparty evidence even when a bank feed
+  // fails to label the movement as TRANSFER. Do not apply it to card purchases:
+  // sole proprietors can legitimately appear as card merchants.
+  const individualTransfer = looksLikeIndividualKennitala && bankKind !== "CARD_PURCHASE";
   const purpose = tournamentAccount
     ? { purpose: "SPORTS" as const, purposeConfidence: "HIGH" as IncomeConfidence, purposeEvidence: "tournament-source-account" }
     : confirmedPurpose
@@ -429,6 +586,8 @@ export type RecurringExpensePattern = {
 export type FlowThroughSuggestion = {
   incomingId: number;
   outgoingId: number;
+  incomingIds: number[];
+  outgoingIds: number[];
   bankAccountId: number;
   amount: number;
   incomingDate: Date;
@@ -471,7 +630,14 @@ export function buildGrantFlowSources(
   grantAccountIds: Set<number>,
 ): GrantFlowSource[] {
   const byId = new Map(transactions.map((tx) => [tx.id, tx]));
-  const flowByIncomingId = new Map(flowThroughSuggestions.map((pair) => [pair.incomingId, pair]));
+  const flowByIncomingId = new Map<number, FlowThroughSuggestion[]>();
+  for (const pair of flowThroughSuggestions) {
+    for (const incomingId of pair.incomingIds) {
+      const bucket = flowByIncomingId.get(incomingId) ?? [];
+      bucket.push(pair);
+      flowByIncomingId.set(incomingId, bucket);
+    }
+  }
   const grantTextPattern = /\bstyrk|\bframlag|grant|subsid|dotac|грант/i;
 
   return incomeGroups
@@ -498,16 +664,22 @@ export function buildGrantFlowSources(
 
       const destinations = new Map<string, GrantFlowDestination>();
       let strongMatchedAmount = 0;
+      const seenFlows = new Set<FlowThroughSuggestion>();
       for (const incomingId of incomingIds) {
-        const pair = flowByIncomingId.get(incomingId);
-        if (!pair) continue;
-        strongMatchedAmount += pair.amount;
-        const label = pair.outgoingLabel || "Óþekkt";
-        const current = destinations.get(label) ?? { label, amount: 0, count: 0, outgoingIds: [] };
-        current.amount += pair.amount;
-        current.count += 1;
-        current.outgoingIds.push(pair.outgoingId);
-        destinations.set(label, current);
+        for (const pair of flowByIncomingId.get(incomingId) ?? []) {
+          if (seenFlows.has(pair)) continue;
+          // Count a grouped match only when all of its incoming rows belong to
+          // this grant source. This avoids claiming a partial many-to-one flow.
+          if (!pair.incomingIds.every((id) => incomingIds.includes(id))) continue;
+          seenFlows.add(pair);
+          strongMatchedAmount += pair.amount;
+          const label = pair.outgoingLabel || "Óþekkt";
+          const current = destinations.get(label) ?? { label, amount: 0, count: 0, outgoingIds: [] };
+          current.amount += pair.amount;
+          current.count += 1;
+          current.outgoingIds.push(...pair.outgoingIds);
+          destinations.set(label, current);
+        }
       }
 
       const incomingAmount = incomingIds.reduce((sum, id) => sum + Math.max(0, byId.get(id)?.amount ?? 0), 0);
@@ -785,38 +957,133 @@ function findLikelyFlowThrough(
 ): FlowThroughSuggestion[] {
   const incoming = transactions.filter((item) => item.amount > 0 && !internalIncomingIds.has(item.id));
   const outgoing = transactions.filter((item) => item.amount < 0 && !internalOutgoingIds.has(item.id));
-  const candidateMap = new Map<number, AnnualBankTransaction[]>();
+  const usedIncoming = new Set<number>();
+  const usedOutgoing = new Set<number>();
+  const suggestions: FlowThroughSuggestion[] = [];
 
+  const cents = (value: number) => Math.round(Math.abs(value) * 100);
+  const withinWindow = (left: AnnualBankTransaction[], right: AnnualBankTransaction[]) =>
+    left.every((a) => right.every((b) => dayDistance(a.date, b.date) <= 2.01));
+  const combinedLabel = (items: AnnualBankTransaction[]) => {
+    const labels = Array.from(new Set(items.map(counterpartyLabel).filter(Boolean)));
+    return labels.length <= 2 ? labels.join(" + ") : `${labels.slice(0, 2).join(" + ")} +${labels.length - 2}`;
+  };
+  const addSuggestion = (ins: AnnualBankTransaction[], outs: AnnualBankTransaction[]) => {
+    const incomingAmount = ins.reduce((sum, item) => sum + item.amount, 0);
+    const outgoingAmount = Math.abs(outs.reduce((sum, item) => sum + item.amount, 0));
+    if (cents(incomingAmount) !== cents(outgoingAmount)) return;
+    const incomingDate = new Date(Math.max(...ins.map((item) => item.date.getTime())));
+    const outgoingDate = new Date(Math.min(...outs.map((item) => item.date.getTime())));
+    suggestions.push({
+      incomingId: ins[0].id,
+      outgoingId: outs[0].id,
+      incomingIds: ins.map((item) => item.id),
+      outgoingIds: outs.map((item) => item.id),
+      bankAccountId: ins[0].bankAccountId,
+      amount: incomingAmount,
+      incomingDate,
+      outgoingDate,
+      dayDistance: dayDistance(incomingDate, outgoingDate),
+      incomingLabel: combinedLabel(ins),
+      outgoingLabel: combinedLabel(outs),
+    });
+    ins.forEach((item) => usedIncoming.add(item.id));
+    outs.forEach((item) => usedOutgoing.add(item.id));
+  };
+
+  // First preserve the old conservative 1:1 rule: exact amount, same own
+  // account, within two days, and unique on both sides.
+  const oneToOneCandidates = new Map<number, AnnualBankTransaction[]>();
   for (const item of incoming) {
     const matches = outgoing.filter((candidate) =>
       candidate.bankAccountId === item.bankAccountId &&
-      amountKey(candidate.amount) === amountKey(item.amount) &&
+      cents(candidate.amount) === cents(item.amount) &&
       dayDistance(candidate.date, item.date) <= 2.01
     );
-    if (matches.length === 1) candidateMap.set(item.id, matches);
+    if (matches.length === 1) oneToOneCandidates.set(item.id, matches);
   }
-
   const outgoingUses = new Map<number, number>();
-  for (const matches of candidateMap.values()) {
-    const match = matches[0];
-    outgoingUses.set(match.id, (outgoingUses.get(match.id) ?? 0) + 1);
+  for (const matches of oneToOneCandidates.values()) {
+    outgoingUses.set(matches[0].id, (outgoingUses.get(matches[0].id) ?? 0) + 1);
+  }
+  for (const item of incoming) {
+    const match = oneToOneCandidates.get(item.id)?.[0];
+    if (!match || (outgoingUses.get(match.id) ?? 0) !== 1) continue;
+    addSuggestion([item], [match]);
   }
 
-  return incoming.flatMap((item) => {
-    const match = candidateMap.get(item.id)?.[0];
-    if (!match || (outgoingUses.get(match.id) ?? 0) !== 1) return [];
-    return [{
-      incomingId: item.id,
-      outgoingId: match.id,
-      bankAccountId: item.bankAccountId,
-      amount: item.amount,
-      incomingDate: item.date,
-      outgoingDate: match.date,
-      dayDistance: dayDistance(item.date, match.date),
-      incomingLabel: counterpartyLabel(item),
-      outgoingLabel: counterpartyLabel(match),
-    }];
-  }).sort((a, b) => b.amount - a.amount || a.incomingDate.getTime() - b.incomingDate.getTime());
+  type ComboCandidate = { ins: AnnualBankTransaction[]; outs: AnnualBankTransaction[] };
+  const comboKey = (items: AnnualBankTransaction[]) => items.map((item) => item.id).sort((a, b) => a - b).join(",");
+  const combinations = (items: AnnualBankTransaction[], size: number) => {
+    const result: AnnualBankTransaction[][] = [];
+    const walk = (from: number, chosen: AnnualBankTransaction[]) => {
+      if (chosen.length === size) { result.push(chosen.slice()); return; }
+      for (let i = from; i <= items.length - (size - chosen.length); i += 1) {
+        chosen.push(items[i]); walk(i + 1, chosen); chosen.pop();
+      }
+    };
+    walk(0, []);
+    return result;
+  };
+
+  // Then look for a small, exact many-to-one / one-to-many bridge. We cap the
+  // combination at three rows and only accept a candidate when the exact set is
+  // unique. This catches e.g. 75,000 + 75,000 -> 150,000 without turning the
+  // bank analysis into a general subset-sum guesser.
+  const findUniqueCombos = (manySide: "incoming" | "outgoing") => {
+    const manyPool = (manySide === "incoming" ? incoming : outgoing).filter((item) =>
+      manySide === "incoming" ? !usedIncoming.has(item.id) : !usedOutgoing.has(item.id)
+    );
+    const singlePool = (manySide === "incoming" ? outgoing : incoming).filter((item) =>
+      manySide === "incoming" ? !usedOutgoing.has(item.id) : !usedIncoming.has(item.id)
+    );
+    const candidates: ComboCandidate[] = [];
+
+    for (const single of singlePool) {
+      const nearby = manyPool.filter((item) =>
+        item.bankAccountId === single.bankAccountId && dayDistance(item.date, single.date) <= 2.01
+      );
+      const matches: AnnualBankTransaction[][] = [];
+      for (const size of [2, 3]) {
+        for (const combo of combinations(nearby, size)) {
+          if (!withinWindow(combo, [single])) continue;
+          if (combo.reduce((sum, item) => sum + cents(item.amount), 0) === cents(single.amount)) matches.push(combo);
+        }
+      }
+      // More than one exact combination is ambiguous, so leave it unmatched.
+      if (matches.length !== 1) continue;
+      candidates.push(manySide === "incoming"
+        ? { ins: matches[0], outs: [single] }
+        : { ins: [single], outs: matches[0] });
+    }
+
+    // A row may not participate in two different accepted combinations.
+    const rowUses = new Map<string, number>();
+    for (const candidate of candidates) {
+      for (const item of [...candidate.ins, ...candidate.outs]) {
+        const key = `${item.amount > 0 ? "i" : "o"}:${item.id}`;
+        rowUses.set(key, (rowUses.get(key) ?? 0) + 1);
+      }
+    }
+    const accepted = candidates.filter((candidate) =>
+      [...candidate.ins, ...candidate.outs].every((item) =>
+        (rowUses.get(`${item.amount > 0 ? "i" : "o"}:${item.id}`) ?? 0) === 1
+      )
+    );
+    const seen = new Set<string>();
+    for (const candidate of accepted) {
+      if (candidate.ins.some((item) => usedIncoming.has(item.id)) || candidate.outs.some((item) => usedOutgoing.has(item.id))) continue;
+      const key = `${comboKey(candidate.ins)}->${comboKey(candidate.outs)}`;
+      if (seen.has(key)) continue;
+      seen.add(key);
+      addSuggestion(candidate.ins, candidate.outs);
+    }
+  };
+
+  findUniqueCombos("incoming");
+  findUniqueCombos("outgoing");
+
+  return suggestions.sort((a, b) => b.amount - a.amount || a.incomingDate.getTime() - b.incomingDate.getTime());
 }
 
 export function buildAnnualBankAnalysis(transactions: AnnualBankTransaction[]) {
@@ -876,14 +1143,57 @@ export function buildAnnualBankAnalysis(transactions: AnnualBankTransaction[]) {
           const key = buildPatternKey(tx.text, raw) ?? `text:${tx.text}`;
           return key === group.key;
         });
-      const classification = classifyIncomeTransactions(groupTransactions);
-      return { ...group, ...classification };
+
+      // Classify each incoming row before summarising the counterparty group.
+      // One strongly worded grant/refund/settlement row must not reclassify every
+      // other payment from the same payer. This mirrors the conservative expense
+      // analysis and keeps the evidence attached to the transaction that carries it.
+      const perTransaction = groupTransactions.map((tx) => classifyIncomeTransactions([tx]));
+      const referencePattern = detectRepeatedReferencePattern(groupTransactions);
+      const first = perTransaction[0];
+      const sameClassification = Boolean(first) && perTransaction.every(
+        (item) => item.classification === first.classification,
+      );
+
+      if (!first || !sameClassification) {
+        return {
+          ...group,
+          classification: "UNKNOWN" as const,
+          confidence: "LOW" as const,
+          evidence: "mixed-transaction-evidence",
+          referencePattern,
+        };
+      }
+
+      const confidenceRank: Record<IncomeConfidence, number> = { LOW: 0, MEDIUM: 1, HIGH: 2 };
+      const confidence = perTransaction.reduce<IncomeConfidence>(
+        (lowest, item) => confidenceRank[item.confidence] < confidenceRank[lowest] ? item.confidence : lowest,
+        first.confidence,
+      );
+      return {
+        ...group,
+        classification: first.classification,
+        confidence,
+        evidence: perTransaction.every((item) => item.evidence === first.evidence)
+          ? first.evidence
+          : "shared-income-evidence",
+        referencePattern,
+      };
     })
     .sort((a, b) => b.amount - a.amount || b.count - a.count);
 
-  const classificationTotals = classifiedIncomeGroups.reduce<Record<IncomeClassification, number>>(
-    (totals, group) => {
-      totals[group.classification] += group.amount;
+  // Totals are transaction-based rather than group-based. A mixed counterparty
+  // can therefore contribute its clearly evidenced rows to the right bucket while
+  // genuinely unclear rows remain UNKNOWN. This lets deterministic evidence reduce
+  // the unclassified inflow without contaminating the rest of the payer group.
+  const classificationTotals = analyzed
+    .filter((item) => item.transaction.amount > 0)
+    .filter((item) => !internalIncomingIds.has(item.transaction.id))
+    .filter((item) => item.result.kind !== "INTEREST_INCOME")
+    .reduce<Record<IncomeClassification, number>>(
+    (totals, item) => {
+      const classified = classifyIncomeTransactions([item.transaction]);
+      totals[classified.classification] += item.transaction.amount;
       return totals;
     },
     {
@@ -898,9 +1208,16 @@ export function buildAnnualBankAnalysis(transactions: AnnualBankTransaction[]) {
   );
 
   const likelyTurnover = classificationTotals.OPERATING_REVENUE + classificationTotals.PAYMENT_SETTLEMENT;
-  const confirmedTurnover = classifiedIncomeGroups
-    .filter((group) => group.classification === "OPERATING_REVENUE" && group.confidence === "HIGH")
-    .reduce((sum, group) => sum + group.amount, 0);
+  const confirmedTurnover = analyzed
+    .filter((item) => item.transaction.amount > 0)
+    .filter((item) => !internalIncomingIds.has(item.transaction.id))
+    .filter((item) => item.result.kind !== "INTEREST_INCOME")
+    .reduce((sum, item) => {
+      const classified = classifyIncomeTransactions([item.transaction]);
+      return classified.classification === "OPERATING_REVENUE" && classified.confidence === "HIGH"
+        ? sum + item.transaction.amount
+        : sum;
+    }, 0);
 
   const analyzedKinds = new Map(analyzed.map((item) => [item.transaction.id, item.result.kind]));
   const candidateExpenseGroups = new Map<string, {
