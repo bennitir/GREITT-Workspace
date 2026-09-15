@@ -120,6 +120,17 @@ export default function Sidebar({
   {t.companies}
 </Link>
 
+<Link
+  href="/skilabod"
+  className={`block rounded-lg px-4 py-3 transition-colors ${
+    pathname.startsWith("/skilabod")
+      ? "bg-blue-600 text-white"
+      : "text-slate-300 hover:bg-slate-800"
+  }`}
+>
+  {t.messages}
+</Link>
+
 {enabledModuleIds.includes("sala") && (
   <Link
     href="/sala"

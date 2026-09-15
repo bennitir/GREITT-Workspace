@@ -23,6 +23,7 @@ import DeleteCompanyButton from "@/components/DeleteCompanyButton";
 import ReactivateCompanyButton from "@/components/ReactivateCompanyButton";
 import { saveCompanyBookkeepingSettings } from "@/app/actions/bookkeepingSettingsActions";
 import { getBookkeepingWorkflowSettings } from "@/lib/core/bookkeeping-workflow";
+import { companyAccessText } from "@/lib/i18n/company-access";
 
 export default async function CompanyAdminPage({
   params,
@@ -94,6 +95,13 @@ export default async function CompanyAdminPage({
   if (!company) {
     redirect("/stjornbord");
   }
+
+  const userSettings = await prisma.userSettings.findUnique({
+    where: { userId: session.user.id },
+    select: { interfaceLanguage: true },
+  });
+
+  const tAccess = companyAccessText(userSettings?.interfaceLanguage ?? "is");
 
   const moduleSettings =
     await getCompanyModuleSettings(company.id);
@@ -413,6 +421,12 @@ export default async function CompanyAdminPage({
                   <p className="mt-1 text-xs text-slate-500">
                     Kerfishlutverk: {access.user.role}
                   </p>
+
+                  <p className="mt-1 text-xs font-medium text-slate-600">
+                    {access.emailNotificationsEnabled
+                      ? tAccess.enabled
+                      : tAccess.disabled}
+                  </p>
                 </div>
 
 <form
@@ -457,7 +471,8 @@ export default async function CompanyAdminPage({
                         String(
                           formData.get("accessRole") ||
                             "VIEWER"
-                        )
+                        ),
+                        formData.get("emailNotificationsEnabled") === "on"
                       );
                     }}
                     className="flex items-center gap-2"
@@ -484,11 +499,21 @@ export default async function CompanyAdminPage({
                       </option>
                     </select>
 
+                    <label className="flex items-center gap-2 text-sm text-slate-700">
+                      <input
+                        type="checkbox"
+                        name="emailNotificationsEnabled"
+                        defaultChecked={access.emailNotificationsEnabled}
+                        className="h-4 w-4 rounded border-slate-300"
+                      />
+                      <span>{tAccess.emailNotifications}</span>
+                    </label>
+
                     <button
                       type="submit"
                       className="rounded-lg bg-slate-700 px-3 py-2 text-sm font-medium text-white"
                     >
-                      Vista réttindi
+                      {tAccess.saveAccess}
                     </button>
                   </form>
 
@@ -555,15 +580,17 @@ export default async function CompanyAdminPage({
               userSearchResults.map((user) => (
                 <form
                   key={user.id}
-                  action={async () => {
+                  action={async (formData: FormData) => {
                     "use server";
 
                     await addUserCompany(
                       user.id,
-                      company.id
+                      company.id,
+                      String(formData.get("accessRole") || "MANAGER"),
+                      formData.get("emailNotificationsEnabled") === "on"
                     );
                   }}
-                  className="flex items-center justify-between gap-3 rounded-lg border p-3"
+                  className="flex flex-wrap items-center justify-between gap-3 rounded-lg border p-3"
                 >
                   <div>
                     <p className="font-medium">
@@ -575,12 +602,44 @@ export default async function CompanyAdminPage({
                     </p>
                   </div>
 
-                  <button
-                    type="submit"
-                    className="rounded-lg bg-blue-600 px-3 py-2 text-sm font-medium text-white"
-                  >
-                    Tengja
-                  </button>
+                  <div className="flex flex-wrap items-center gap-3">
+                    <label className="flex flex-col gap-1 text-sm text-slate-700">
+                      <span className="text-xs font-medium text-slate-600">
+                        {tAccess.chooseAccessRole}
+                      </span>
+                      <select
+                        name="accessRole"
+                        defaultValue="MANAGER"
+                        className="rounded-lg border px-3 py-2 text-sm"
+                      >
+                        <option value="OWNER">Eigandi</option>
+                        <option value="MANAGER">Stjórnandi</option>
+                        <option value="BOOKKEEPER">Bókari</option>
+                        <option value="VIEWER">Skoðunaraðgangur</option>
+                      </select>
+                    </label>
+
+                    <label className="flex flex-col gap-1 text-sm text-slate-700">
+                      <span className="flex items-center gap-2">
+                        <input
+                          type="checkbox"
+                          name="emailNotificationsEnabled"
+                          className="h-4 w-4 rounded border-slate-300"
+                        />
+                        <span>{tAccess.connectWithNotifications}</span>
+                      </span>
+                      <span className="max-w-xs text-xs text-slate-500">
+                        {tAccess.emailNotificationsHelp}
+                      </span>
+                    </label>
+
+                    <button
+                      type="submit"
+                      className="rounded-lg bg-blue-600 px-3 py-2 text-sm font-medium text-white"
+                    >
+                      Tengja
+                    </button>
+                  </div>
                 </form>
               ))
             )}

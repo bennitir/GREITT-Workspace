@@ -658,6 +658,13 @@ vatDataUpdatedAt?: Date | null;
 vatConfirmedAt?: Date | null;
 vatConfirmedBy?: string | null;
 
+payrollRegistered?: boolean | null;
+payrollRegistrationDate?: Date | null;
+payrollDataSource?: string | null;
+payrollDataUpdatedAt?: Date | null;
+payrollConfirmedAt?: Date | null;
+payrollConfirmedBy?: string | null;
+
 nextVoucherNumber?: number;
 
     rskRegisteredActivities?: string | null;
@@ -1798,6 +1805,23 @@ export async function reactivateCompany(
   revalidatePath(
     `/fyrirtaeki/${id}`
   );
+}
+
+export async function clearActiveCompany() {
+  const activeUser = await getEffectiveUser();
+
+  if (!activeUser) {
+    redirect("/innskraning");
+  }
+
+  const cookieStore = await cookies();
+  cookieStore.delete("activeCompanyId");
+
+  revalidatePath("/");
+  revalidatePath("/fyrirtaeki");
+  revalidatePath("/fylgiskjol");
+
+  redirect("/");
 }
 
 export async function setActiveCompany(

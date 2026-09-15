@@ -2,6 +2,7 @@ import CompanyEditForm from "@/components/CompanyEditForm";
 import { prisma } from "@/lib/prisma";
 import { getEffectiveUser } from "@/lib/core/access-control";
 import { redirect } from "next/navigation";
+import { companyEditText } from "@/lib/i18n/company-edit";
 
 type Props = {
   params: Promise<{
@@ -28,6 +29,13 @@ export default async function BreytaFyrirtaekiPage({
   if (activeUser.role !== "ADMIN") {
     redirect("/fyrirtaeki");
   }
+
+  const userSettings = await prisma.userSettings.findUnique({
+    where: { userId: activeUser.id },
+    select: { interfaceLanguage: true },
+  });
+  const language = userSettings?.interfaceLanguage ?? "is";
+  const t = companyEditText(language);
 
   const company = await prisma.company.findUnique({
   where: {
@@ -57,10 +65,10 @@ export default async function BreytaFyrirtaekiPage({
   return (
     <main className="p-8">
       <h1 className="mb-6 text-3xl font-bold">
-        Breyta fyrirtæki
+        {t.title}
       </h1>
 
-      <CompanyEditForm company={company} />
+      <CompanyEditForm company={company} language={language} />
     </main>
   );
 }

@@ -1,0 +1,3 @@
+ALTER TABLE "CompanyTask"
+ADD COLUMN "recurrenceFrequency" TEXT NOT NULL DEFAULT 'NONE',
+ADD COLUMN "recurrenceInterval" INTEGER NOT NULL DEFAULT 1;

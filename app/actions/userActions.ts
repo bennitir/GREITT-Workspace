@@ -212,7 +212,8 @@ export async function setUserActive(
 export async function addUserCompany(
   userId: number,
   companyId: number,
-  accessRole: string = "MANAGER"
+  accessRole: string = "MANAGER",
+  emailNotificationsEnabled: boolean = false
 ) {
   await requireEffectiveAdmin();
 
@@ -268,6 +269,7 @@ export async function addUserCompany(
     update: {
       isActive: true,
       accessRole,
+      emailNotificationsEnabled,
     },
 
     create: {
@@ -275,16 +277,19 @@ export async function addUserCompany(
       companyId,
       isActive: true,
       accessRole,
+      emailNotificationsEnabled,
     },
   });
 
   revalidatePath("/stjornbord");
+  revalidatePath(`/stjornbord/fyrirtaeki/${companyId}`);
 }
 
 export async function setUserCompanyRole(
   userId: number,
   companyId: number,
-  accessRole: string
+  accessRole: string,
+  emailNotificationsEnabled?: boolean
 ) {
   await requireEffectiveAdmin();
 
@@ -324,10 +329,14 @@ export async function setUserCompanyRole(
 
     data: {
       accessRole,
+      ...(emailNotificationsEnabled === undefined
+        ? {}
+        : { emailNotificationsEnabled }),
     },
   });
 
   revalidatePath("/stjornbord");
+  revalidatePath(`/stjornbord/fyrirtaeki/${companyId}`);
 }
 
 export async function removeUserCompany(

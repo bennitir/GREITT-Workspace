@@ -1,0 +1,4 @@
+ALTER TABLE "CompanyTask"
+ADD COLUMN "scheduleRule" TEXT NOT NULL DEFAULT 'NONE',
+ADD COLUMN "periodStart" TIMESTAMP(3),
+ADD COLUMN "periodEnd" TIMESTAMP(3);

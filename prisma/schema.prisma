@@ -31,6 +31,14 @@ model Company {
   vatConfirmedAt      DateTime?
   vatConfirmedBy      String?
 
+  // Launagreiðendaskrá / staðgreiðsla og tryggingagjald
+  payrollRegistered       Boolean?
+  payrollRegistrationDate DateTime?
+  payrollDataSource       String?
+  payrollDataUpdatedAt    DateTime?
+  payrollConfirmedAt      DateTime?
+  payrollConfirmedBy      String?
+
   // RSK / starfsemi
   rskRegisteredActivities String?
   activeActivities        String?
@@ -40,6 +48,7 @@ model Company {
   activitiesConfirmedBy   String?
 
   activities CompanyActivity[]
+  messages   CompanyMessage[]
 
   // Tengingar
   accounts     Account[]
@@ -68,6 +77,7 @@ model Company {
   suggestions Suggestion[]
   bookkeepingSettings CompanyBookkeepingSettings?
   serviceTimeEntries ServiceTimeEntry[]
+  tasks CompanyTask[]
 }
 
 
@@ -90,6 +100,97 @@ model CompanyBookkeepingSettings {
   updatedAt DateTime @updatedAt
 
   company Company @relation(fields: [companyId], references: [id], onDelete: Cascade)
+}
+
+
+// Almenn verkefni, frestir og áminningar fyrir Heimasvæði GLÖGGT.
+// Verkefnið getur verið handvirkt eða orðið til úr annarri einingu síðar.
+model CompanyTask {
+  id Int @id @default(autoincrement())
+  companyId Int
+
+  taskType String @default("GENERAL")
+  title String
+  details String?
+  status String @default("OPEN") // OPEN | COMPLETED | CANCELLED
+  priority String @default("NORMAL") // LOW | NORMAL | HIGH | URGENT
+  dueAt DateTime?
+
+  // Ef assigneeUserId er null er verkefnið fyrirtækisverkefni.
+  assigneeUserId Int?
+  createdByUserId Int?
+  completedByUserId Int?
+  completedAt DateTime?
+
+  // Gagnaskil sem tengjast verkefninu. Þetta er almennt lag sem nýtist
+  // t.d. VSK, launum og ársuppgjöri. Opinber skilafrestur er áfram dueAt.
+  dataRequestStatus String @default("NONE") // NONE | REQUESTED | CLIENT_SUBMITTED | ACCEPTED | NEEDS_MORE
+  dataDueAt DateTime?
+  reminderStartAt DateTime?
+  reminderIntervalDays Int @default(3)
+  lastReminderAt DateTime?
+  clientSubmittedAt DateTime?
+  clientSubmittedByUserId Int?
+  dataReviewedAt DateTime?
+  dataReviewedByUserId Int?
+
+  // Rekjanleg tenging við uppruna verkefnis þegar það verður til sjálfvirkt.
+  sourceType String?
+  sourceId String?
+
+  // Innri aðgerð í GLÖGGT og/eða opinber ytri skilaleið.
+  actionPath String?
+  externalUrl String?
+
+  // Endurtekning. Næsta verkefni verður til þegar þessu er lokið.
+  recurrenceFrequency String @default("NONE") // NONE | DAILY | WEEKLY | MONTHLY | YEARLY
+  recurrenceInterval Int @default(1)
+
+  // Kerfisregla fyrir lögbundin skil. Slík skil reikna frest út frá uppgjörstímabili.
+  scheduleRule String @default("NONE") // NONE | VAT_GENERAL_BIMONTHLY
+  periodStart DateTime?
+  periodEnd DateTime?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  company Company @relation(fields: [companyId], references: [id], onDelete: Cascade)
+  assignee User? @relation("CompanyTaskAssignee", fields: [assigneeUserId], references: [id], onDelete: SetNull)
+  createdBy User? @relation("CompanyTaskCreatedBy", fields: [createdByUserId], references: [id], onDelete: SetNull)
+  completedBy User? @relation("CompanyTaskCompletedBy", fields: [completedByUserId], references: [id], onDelete: SetNull)
+  clientSubmittedBy User? @relation("CompanyTaskClientSubmittedBy", fields: [clientSubmittedByUserId], references: [id], onDelete: SetNull)
+  dataReviewedBy User? @relation("CompanyTaskDataReviewedBy", fields: [dataReviewedByUserId], references: [id], onDelete: SetNull)
+
+  @@index([companyId, status, dueAt])
+  @@index([assigneeUserId, status, dueAt])
+  @@index([sourceType, sourceId])
+  @@index([companyId, dataRequestStatus, dataDueAt])
+}
+
+
+// Almenn skilaboð innan fyrirtækis. Skilaboð eru aðskilin frá verkefnum/frestum.
+// Sendingarleiðir (t.d. tölvupóstur/push) geta síðar byggt ofan á sama grunn.
+model CompanyMessage {
+  id Int @id @default(autoincrement())
+  companyId Int
+  recipientUserId Int
+  createdByUserId Int
+
+  subject String
+  body String
+  readAt     DateTime?
+  archivedAt DateTime?
+  trashedAt  DateTime?
+  createdAt  DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  company Company @relation(fields: [companyId], references: [id], onDelete: Cascade)
+  recipient User @relation("CompanyMessageRecipient", fields: [recipientUserId], references: [id], onDelete: Cascade)
+  createdBy User @relation("CompanyMessageCreatedBy", fields: [createdByUserId], references: [id], onDelete: Cascade)
+
+  @@index([companyId, recipientUserId, readAt, createdAt])
+  @@index([companyId, recipientUserId, archivedAt, trashedAt])
+  @@index([companyId, createdByUserId, createdAt])
 }
 
 model Customer {
@@ -291,6 +392,13 @@ model User {
   reviewedSuggestions  Suggestion[] @relation("SuggestionReviewedBy")
   settings UserSettings?
   serviceTimeEntries ServiceTimeEntry[]
+  assignedCompanyTasks CompanyTask[] @relation("CompanyTaskAssignee")
+  createdCompanyTasks CompanyTask[] @relation("CompanyTaskCreatedBy")
+  completedCompanyTasks CompanyTask[] @relation("CompanyTaskCompletedBy")
+  clientSubmittedCompanyTasks CompanyTask[] @relation("CompanyTaskClientSubmittedBy")
+  dataReviewedCompanyTasks CompanyTask[] @relation("CompanyTaskDataReviewedBy")
+  receivedCompanyMessages CompanyMessage[] @relation("CompanyMessageRecipient")
+  createdCompanyMessages CompanyMessage[] @relation("CompanyMessageCreatedBy")
 }
 
 
@@ -365,6 +473,10 @@ model UserCompany {
   canApproveExpenses Boolean @default(false)
   canBookEntries Boolean @default(false)
   canManageCompanySettings Boolean @default(false)
+
+  // Tölvupósttilkynningar eru stilltar á tengingu notanda og fyrirtækis.
+  // Sama manneskja getur því fengið tilkynningar fyrir eitt fyrirtæki en ekki annað.
+  emailNotificationsEnabled Boolean @default(false)
 
   company Company @relation(fields: [companyId], references: [id], onDelete: Cascade)
   user    User    @relation(fields: [userId], references: [id], onDelete: Cascade)

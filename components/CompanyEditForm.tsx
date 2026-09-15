@@ -9,6 +9,7 @@ import {
 import TextInput from "@/components/ui/TextInput";
 import PhoneInput from "@/components/ui/PhoneInput";
 import Button from "@/components/ui/Button";
+import { companyEditText } from "@/lib/i18n/company-edit";
 
 type Company = {
   id: number;
@@ -27,6 +28,12 @@ type Company = {
   vatDataUpdatedAt: Date | null;
   vatConfirmedAt: Date | null;
   vatConfirmedBy: string | null;
+  payrollRegistered: boolean | null;
+  payrollRegistrationDate: Date | null;
+  payrollDataSource: string | null;
+  payrollDataUpdatedAt: Date | null;
+  payrollConfirmedAt: Date | null;
+  payrollConfirmedBy: string | null;
 
   nextVoucherNumber: number;
 
@@ -62,11 +69,14 @@ type ActivityFormRow = {
 
 type Props = {
   company: Company;
+  language: string;
 };
 
 export default function CompanyEditForm({
   company,
+  language,
 }: Props) {
+  const t = companyEditText(language);
   const [message, setMessage] = useState("");
   const [saving, setSaving] = useState(false);
 
@@ -92,6 +102,8 @@ export default function CompanyEditForm({
         ? "NO"
         : ""
   );
+
+  const [payrollRegistered, setPayrollRegistered] = useState<"" | "YES" | "NO">(company.payrollRegistered === true ? "YES" : company.payrollRegistered === false ? "NO" : "");
 
   function addActivity() {
     setActivities((current) => [
@@ -151,7 +163,7 @@ export default function CompanyEditForm({
     nextVoucherNumber < 1
   ) {
     setMessage(
-      "Næsta fylgiskjalsnúmer verður að vera heil tala stærri en 0."
+      t.voucherError
     );
     return;
   }
@@ -164,7 +176,7 @@ export default function CompanyEditForm({
 
   if (invalidActivity) {
     setMessage(
-      "Heiti starfsemi vantar við skráðan starfsemiskóða."
+      t.activityError
     );
     return;
   }
@@ -275,6 +287,12 @@ export default function CompanyEditForm({
           ? company.vatConfirmedBy
           : null,
 
+      payrollRegistered: payrollRegistered === "YES" ? true : payrollRegistered === "NO" ? false : null,
+      payrollRegistrationDate: payrollRegistered === "YES" && formData.get("payrollRegistrationDate") ? new Date(String(formData.get("payrollRegistrationDate"))) : null,
+      payrollDataSource: payrollRegistered === "YES" ? String(formData.get("payrollDataSource") || "") || null : null,
+      payrollConfirmedBy: payrollRegistered === "YES" ? String(formData.get("payrollConfirmedBy") || "") || null : null,
+      payrollConfirmedAt: payrollRegistered === "YES" && formData.get("payrollConfirmedAt") ? new Date(String(formData.get("payrollConfirmedAt"))) : null,
+
       nextVoucherNumber,
 
       activitiesConfirmedBy:
@@ -308,7 +326,7 @@ export default function CompanyEditForm({
       );
     }
 
-    setMessage("✓ Breytingar vistaðar");
+    setMessage(t.saved);
   } catch (error) {
     console.error(
       "Villa við vistun fyrirtækis:",
@@ -316,7 +334,7 @@ export default function CompanyEditForm({
     );
 
     setMessage(
-      "Ekki tókst að vista breytingarnar. Reyndu aftur."
+      t.saveError
     );
   } finally {
     setSaving(false);
@@ -332,13 +350,13 @@ export default function CompanyEditForm({
       className="max-w-xl space-y-5"
     >
       <TextInput
-        label="Nafn"
+        label={t.name}
         name="name"
         defaultValue={company.name}
       />
 
       <TextInput
-        label="Kennitala"
+        label={t.id}
         name="kennitala"
         defaultValue={
           company.kennitala.includes("-")
@@ -352,26 +370,26 @@ export default function CompanyEditForm({
       />
 
       <TextInput
-        label="Heimilisfang"
+        label={t.address}
         name="address"
         defaultValue={company.address}
       />
 
       <PhoneInput
-        label="Sími"
+        label={t.phone}
         name="phone"
         defaultValue={company.phone}
       />
 
       <TextInput
-        label="Netfang"
+        label={t.email}
         name="email"
         type="email"
         defaultValue={company.email}
       />
 
       <TextInput
-        label="Tengiliður"
+        label={t.contact}
         name="contact"
         defaultValue={company.contact}
       />
@@ -383,7 +401,7 @@ export default function CompanyEditForm({
 
         <div className="space-y-2">
           <label className="block font-medium">
-            VSK-skráning
+            {t.vatRegistration}
           </label>
 
           <select
@@ -400,15 +418,15 @@ export default function CompanyEditForm({
             className="block w-full rounded border p-2"
           >
             <option value="">
-              Ekki staðfest
+              {t.unconfirmed}
             </option>
 
             <option value="YES">
-              Já, VSK-skráð
+              {t.yesVat}
             </option>
 
             <option value="NO">
-              Nei, ekki VSK-skráð
+              {t.noVat}
             </option>
           </select>
         </div>
@@ -416,7 +434,7 @@ export default function CompanyEditForm({
         {vatRegistered === "YES" && (
           <div className="mt-5 space-y-5">
             <TextInput
-              label="VSK-númer"
+              label={t.vatNumber}
               name="vatNumber"
               defaultValue={
                 company.vatNumber ?? ""
@@ -425,7 +443,7 @@ export default function CompanyEditForm({
 
             <div>
               <label className="mb-1 block font-medium">
-                Skráningardagur VSK
+                {t.vatDate}
               </label>
 
               <IcelandicDateInput
@@ -445,7 +463,7 @@ export default function CompanyEditForm({
 
             <div className="space-y-2">
               <label className="block font-medium">
-                Uppgjörstegund VSK
+                {t.vatType}
               </label>
 
               <select
@@ -456,26 +474,26 @@ export default function CompanyEditForm({
                 className="block w-full rounded border p-2"
               >
                 <option value="">
-                  Ekki staðfest
+                  {t.unconfirmed}
                 </option>
 
                 <option value="BIMONTHLY">
-                  Tveggja mánaða skil
+                  {t.bimonthly}
                 </option>
 
                 <option value="ANNUAL">
-                  Árleg skil
+                  {t.annual}
                 </option>
 
                 <option value="MONTHLY">
-                  Mánaðarleg skil
+                  {t.monthly}
                 </option>
               </select>
             </div>
 
             <div className="space-y-2">
               <label className="block font-medium">
-                Uppruni VSK-upplýsinga
+                {t.sourceVat}
               </label>
 
               <select
@@ -486,25 +504,25 @@ export default function CompanyEditForm({
                 className="block w-full rounded border p-2"
               >
                 <option value="">
-                  Ekki skráð
+                  {t.notRecorded}
                 </option>
 
                 <option value="MANUAL">
-                  Handvirk skráning
+                  {t.manual}
                 </option>
 
                 <option value="RSK">
-                  RSK / Skatturinn
+                  {t.rsk}
                 </option>
 
                 <option value="IMPORT">
-                  Innflutt gögn
+                  {t.imported}
                 </option>
               </select>
             </div>
 
             <TextInput
-              label="VSK-upplýsingar staðfestar af"
+              label={t.vatConfirmedBy}
               name="vatConfirmedBy"
               defaultValue={
                 company.vatConfirmedBy ?? ""
@@ -513,7 +531,7 @@ export default function CompanyEditForm({
 
             <div>
               <label className="mb-1 block font-medium">
-                Dagsetning staðfestingar VSK
+                {t.vatConfirmedAt}
               </label>
 
               <IcelandicDateInput
@@ -535,13 +553,28 @@ export default function CompanyEditForm({
       </div>
 
       <div className="border-t pt-5">
-        <h2 className="mb-4 text-lg font-semibold">
-          Bókhald
-        </h2>
+        <h2 className="mb-1 text-lg font-semibold">{t.payroll}</h2>
+        <p className="mb-4 text-sm text-slate-500">{t.payrollHelp}</p>
+        <div className="space-y-2">
+          <label className="block font-medium">{t.payrollRegistration}</label>
+          <select name="payrollRegistered" value={payrollRegistered} onChange={(e) => setPayrollRegistered(e.target.value as "" | "YES" | "NO")} className="block w-full rounded border p-2">
+            <option value="">{t.unconfirmed}</option><option value="YES">{t.yesPayroll}</option><option value="NO">{t.noPayroll}</option>
+          </select>
+        </div>
+        {payrollRegistered === "YES" && <div className="mt-5 space-y-5">
+          <div><label className="mb-1 block font-medium">{t.payrollDate}</label><IcelandicDateInput name="payrollRegistrationDate" submitFormat="iso" defaultValue={company.payrollRegistrationDate ? new Date(company.payrollRegistrationDate).toISOString().slice(0, 10) : ""} /></div>
+          <div className="space-y-2"><label className="block font-medium">{t.payrollSource}</label><select name="payrollDataSource" defaultValue={company.payrollDataSource ?? ""} className="block w-full rounded border p-2"><option value="">{t.notRecorded}</option><option value="MANUAL">{t.manual}</option><option value="RSK">{t.rsk}</option><option value="IMPORT">{t.imported}</option></select></div>
+          <TextInput label={t.payrollConfirmedBy} name="payrollConfirmedBy" defaultValue={company.payrollConfirmedBy ?? ""} />
+          <div><label className="mb-1 block font-medium">{t.payrollConfirmedAt}</label><IcelandicDateInput name="payrollConfirmedAt" submitFormat="iso" defaultValue={company.payrollConfirmedAt ? new Date(company.payrollConfirmedAt).toISOString().slice(0, 10) : ""} /></div>
+        </div>}
+      </div>
+
+      <div className="border-t pt-5">
+        <h2 className="mb-4 text-lg font-semibold">{t.accounting}</h2>
 
         <div>
           <label className="mb-1 block font-medium">
-            Næsta fylgiskjalsnúmer
+            {t.nextVoucher}
           </label>
 
           <input
@@ -558,8 +591,7 @@ export default function CompanyEditForm({
           />
 
           <p className="mt-1 text-sm text-slate-500">
-            Næsta samþykkta fylgiskjal fær þetta
-            númer.
+            {t.nextVoucherHelp}
           </p>
         </div>
       </div>
@@ -568,14 +600,11 @@ export default function CompanyEditForm({
         <div className="mb-4 flex items-center justify-between gap-4">
           <div>
             <h2 className="text-lg font-semibold">
-              Starfsemi
+              {t.activities}
             </h2>
 
             <p className="mt-1 text-sm text-slate-500">
-              Fyrirtæki getur haft margar
-              starfsemisgreinar. Merktu sérstaklega
-              hvaða greinar eru skráðar hjá RSK og
-              hvaða starfsemi er virk.
+              {t.activitiesHelp}
             </p>
           </div>
         </div>
@@ -584,21 +613,17 @@ export default function CompanyEditForm({
           activities.length === 0 && (
             <div className="mb-5 rounded-lg border border-amber-300 bg-amber-50 p-4">
               <p className="font-medium text-amber-900">
-                Eldri starfsemisskráning fannst
+                {t.legacyTitle}
               </p>
 
               <p className="mt-1 text-sm text-amber-800">
-                Gömlu upplýsingarnar hafa ekki verið
-                fluttar sjálfkrafa yfir í nýja
-                starfsemislistann. Farðu yfir þær og
-                skráðu réttar starfsemisgreinar hér
-                fyrir neðan.
+                {t.legacyHelp}
               </p>
 
               {company.rskRegisteredActivities && (
                 <div className="mt-3 text-sm text-amber-900">
                   <span className="font-medium">
-                    Eldra gildi – skráð hjá RSK:
+                    {t.oldRsk}
                   </span>{" "}
                   {company.rskRegisteredActivities}
                 </div>
@@ -607,7 +632,7 @@ export default function CompanyEditForm({
               {company.activeActivities && (
                 <div className="mt-2 text-sm text-amber-900">
                   <span className="font-medium">
-                    Eldra gildi – virk starfsemi:
+                    {t.oldActive}
                   </span>{" "}
                   {company.activeActivities}
                 </div>
@@ -618,8 +643,7 @@ export default function CompanyEditForm({
         <div className="space-y-4">
           {activities.length === 0 && (
             <div className="rounded-lg border border-dashed p-4 text-sm text-slate-500">
-              Engin starfsemisgrein hefur verið
-              skráð enn.
+              {t.noActivities}
             </div>
           )}
 
@@ -640,7 +664,7 @@ export default function CompanyEditForm({
                 <div className="grid gap-4 sm:grid-cols-[140px_1fr]">
                   <div>
                     <label className="mb-1 block text-sm font-medium">
-                      Kóði
+                      {t.code}
                     </label>
 
                     <input
@@ -663,7 +687,7 @@ export default function CompanyEditForm({
 
                   <div>
                     <label className="mb-1 block text-sm font-medium">
-                      Heiti starfsemi
+                      {t.activityName}
                     </label>
 
                     <input
@@ -706,7 +730,7 @@ export default function CompanyEditForm({
                       className="h-4 w-4"
                     />
 
-                    Skráð hjá RSK
+                    {t.registeredRsk}
                   </label>
 
                   <label className="flex items-center gap-2 text-sm">
@@ -722,12 +746,12 @@ export default function CompanyEditForm({
                       className="h-4 w-4"
                     />
 
-                    Virk starfsemi
+                    {t.activeActivity}
                   </label>
 
                   {isRskManaged ? (
                     <span className="ml-auto rounded border border-blue-200 bg-blue-50 px-3 py-1.5 text-sm font-medium text-blue-800">
-                      Uppruni: RSK
+                      {t.originRsk}
                     </span>
                   ) : (
                     <button
@@ -737,7 +761,7 @@ export default function CompanyEditForm({
                       }
                       className="ml-auto rounded border border-red-200 bg-white px-3 py-1.5 text-sm font-medium text-red-700 hover:bg-red-50"
                     >
-                      Fjarlægja
+                      {t.remove}
                     </button>
                   )}
                 </div>
@@ -752,12 +776,12 @@ export default function CompanyEditForm({
           onClick={addActivity}
           className="mt-4 rounded border border-slate-300 bg-white px-4 py-2 font-medium text-slate-700 hover:bg-slate-50"
         >
-          + Bæta við starfsemi
+          {t.addActivity}
         </button>
 
         <div className="mt-6 space-y-5">
           <TextInput
-            label="Upplýsingar um starfsemi staðfestar af"
+            label={t.activitiesConfirmedBy}
             name="activitiesConfirmedBy"
             defaultValue={
               company.activitiesConfirmedBy ?? ""
@@ -766,7 +790,7 @@ export default function CompanyEditForm({
 
           <div>
             <label className="mb-1 block font-medium">
-              Starfsemi staðfest þann
+              {t.activitiesConfirmedAt}
             </label>
 
             <IcelandicDateInput
@@ -786,8 +810,7 @@ export default function CompanyEditForm({
 
           <div>
             <label className="mb-1 block font-medium">
-              Staðfest vottorð frá RSK
-              (valkvætt)
+              {t.certificate}
             </label>
 
             <input
@@ -799,7 +822,7 @@ export default function CompanyEditForm({
 
             {company.rskCertificatePath && (
               <p className="mt-2 text-sm text-green-700">
-                ✓ Vottorð er þegar skráð
+                {t.certificateExists}
               </p>
             )}
           </div>
@@ -807,7 +830,7 @@ export default function CompanyEditForm({
       </div>
 
       <Button type="submit" disabled={saving}>
-  {saving ? "Vista..." : "Vista breytingar"}
+  {saving ? t.saving : t.save}
 </Button>
 
       {message && (
