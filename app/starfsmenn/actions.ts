@@ -45,11 +45,26 @@ function optionalNumber(value: FormDataEntryValue | null) {
 function dateOnly(value: FormDataEntryValue | null) {
   const text = String(value ?? "").trim();
   if (!text) return null;
-  const match = /^(\d{4})-(\d{2})-(\d{2})$/.exec(text);
-  if (!match) throw new Error("Ógild dagsetning.");
-  const year = Number(match[1]);
-  const month = Number(match[2]);
-  const day = Number(match[3]);
+
+  const localMatch = /^(\d{1,2})\.(\d{1,2})\.(\d{4})$/.exec(text);
+  const isoMatch = /^(\d{4})-(\d{2})-(\d{2})$/.exec(text);
+
+  let year: number;
+  let month: number;
+  let day: number;
+
+  if (localMatch) {
+    day = Number(localMatch[1]);
+    month = Number(localMatch[2]);
+    year = Number(localMatch[3]);
+  } else if (isoMatch) {
+    year = Number(isoMatch[1]);
+    month = Number(isoMatch[2]);
+    day = Number(isoMatch[3]);
+  } else {
+    throw new Error("Ógild dagsetning. Notaðu sniðið dd.mm.áááá.");
+  }
+
   const date = new Date(Date.UTC(year, month - 1, day, 12, 0, 0));
   if (date.getUTCFullYear() !== year || date.getUTCMonth() !== month - 1 || date.getUTCDate() !== day) {
     throw new Error("Ógild dagsetning.");
@@ -66,6 +81,7 @@ function dayBefore(value: Date) {
 function revalidateEmployee(employeeId?: number) {
   revalidatePath("/starfsmenn");
   if (employeeId) revalidatePath(`/starfsmenn/${employeeId}`);
+  revalidatePath("/verk");
   revalidatePath("/verk10");
 }
 

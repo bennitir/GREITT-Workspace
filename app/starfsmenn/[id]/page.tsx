@@ -8,12 +8,13 @@ import { employeeLocale, employeeText } from "@/lib/i18n/employees";
 import { adminRoleLabel } from "@/lib/i18n/admin";
 import { prisma } from "@/lib/prisma";
 import { addEmployeeCompensation, addEmployeeQualification, setEmployeeActiveStatus, updateEmployee, updateEmployeeQualification } from "../actions";
+import LocalDateInput from "./LocalDateInput";
 
 type Props = { params: Promise<{ id: string }> };
 
 function inputDate(value: Date | null | undefined) {
   if (!value) return "";
-  return `${value.getUTCFullYear()}-${String(value.getUTCMonth() + 1).padStart(2, "0")}-${String(value.getUTCDate()).padStart(2, "0")}`;
+  return `${String(value.getUTCDate()).padStart(2, "0")}.${String(value.getUTCMonth() + 1).padStart(2, "0")}.${value.getUTCFullYear()}`;
 }
 
 export default async function EmployeeDetailPage({ params }: Props) {
@@ -51,7 +52,7 @@ export default async function EmployeeDetailPage({ params }: Props) {
 
   const money = (value: number | null) => value === null ? "—" : new Intl.NumberFormat(locale, { style: "currency", currency: "ISK", maximumFractionDigits: 0 }).format(value);
   const number = (value: number | null) => value === null ? "—" : new Intl.NumberFormat(locale, { maximumFractionDigits: 2 }).format(value);
-  const displayDate = (value: Date | null) => value ? value.toLocaleDateString(locale) : "—";
+  const displayDate = (value: Date | null) => value ? inputDate(value) : "—";
 
   return (
     <main className="space-y-6">
@@ -88,8 +89,8 @@ export default async function EmployeeDetailPage({ params }: Props) {
             <label className="grid gap-1 text-sm"><span>{t.department}</span><input name="department" defaultValue={employee.department ?? ""} className="rounded-lg border px-3 py-2" /></label>
             <label className="grid gap-1 text-sm"><span>{t.employmentKind}</span><select name="employmentKind" defaultValue={employee.employmentKind} className="rounded-lg border px-3 py-2"><option value="EMPLOYEE">{t.kinds.EMPLOYEE}</option><option value="TEMPORARY">{t.kinds.TEMPORARY}</option><option value="APPRENTICE">{t.kinds.APPRENTICE}</option><option value="OTHER">{t.kinds.OTHER}</option></select></label>
             <label className="grid gap-1 text-sm"><span>{t.employmentPercent}</span><input name="employmentPercent" type="number" min="0" max="100" step="0.01" defaultValue={employee.employmentPercent ?? ""} className="rounded-lg border px-3 py-2" /></label>
-            <label className="grid gap-1 text-sm"><span>{t.employmentStart}</span><input name="employmentStartDate" type="date" defaultValue={inputDate(employee.employmentStartDate)} className="rounded-lg border px-3 py-2" /></label>
-            <label className="grid gap-1 text-sm"><span>{t.employmentEnd}</span><input name="employmentEndDate" type="date" defaultValue={inputDate(employee.employmentEndDate)} className="rounded-lg border px-3 py-2" /></label>
+            <label className="grid gap-1 text-sm"><span>{t.employmentStart}</span><LocalDateInput name="employmentStartDate" defaultValue={inputDate(employee.employmentStartDate)} placeholder={t.datePlaceholder} calendarLabel={t.openCalendar} /></label>
+            <label className="grid gap-1 text-sm"><span>{t.employmentEnd}</span><LocalDateInput name="employmentEndDate" defaultValue={inputDate(employee.employmentEndDate)} placeholder={t.datePlaceholder} calendarLabel={t.openCalendar} /></label>
             <label className="grid gap-1 text-sm sm:col-span-2"><span>{t.notes}</span><textarea name="notes" defaultValue={employee.notes ?? ""} rows={4} className="rounded-lg border px-3 py-2" /></label>
             <div className="sm:col-span-2 rounded-xl border bg-slate-50 p-3">
               <div className="flex flex-wrap items-center justify-between gap-3">
@@ -149,7 +150,7 @@ export default async function EmployeeDetailPage({ params }: Props) {
             <summary className="cursor-pointer font-semibold">＋ {t.newCompensation}</summary>
             <form action={addEmployeeCompensation} className="mt-4 grid gap-3 sm:grid-cols-2">
               <input type="hidden" name="employeeId" value={employee.id} />
-              <label className="grid gap-1 text-sm"><span>{t.validFrom}</span><input type="date" name="validFrom" required className="rounded-lg border bg-white px-3 py-2" /></label>
+              <label className="grid gap-1 text-sm"><span>{t.validFrom}</span><LocalDateInput name="validFrom" required placeholder={t.datePlaceholder} calendarLabel={t.openCalendar} /></label>
               <label className="grid gap-1 text-sm"><span>{t.payType}</span><select name="payType" defaultValue="MONTHLY" className="rounded-lg border bg-white px-3 py-2"><option value="MONTHLY">{t.payTypes.MONTHLY}</option><option value="HOURLY">{t.payTypes.HOURLY}</option><option value="MIXED">{t.payTypes.MIXED}</option></select></label>
               <label className="grid gap-1 text-sm"><span>{t.monthlySalary}</span><input type="number" min="0" step="1" name="monthlySalary" className="rounded-lg border bg-white px-3 py-2" /></label>
               <label className="grid gap-1 text-sm"><span>{t.hourlyRate}</span><input type="number" min="0" step="0.01" name="hourlyRate" className="rounded-lg border bg-white px-3 py-2" /></label>
@@ -232,11 +233,11 @@ export default async function EmployeeDetailPage({ params }: Props) {
                       </label>
                       <label className="grid gap-1 text-sm">
                         <span>{t.validFrom}</span>
-                        <input type="date" name="validFrom" defaultValue={inputDate(item.validFrom)} className="rounded-lg border bg-white px-3 py-2" />
+                        <LocalDateInput name="validFrom" defaultValue={inputDate(item.validFrom)} placeholder={t.datePlaceholder} calendarLabel={t.openCalendar} />
                       </label>
                       <label className="grid gap-1 text-sm">
                         <span>{t.validUntil}</span>
-                        <input type="date" name="validUntil" defaultValue={inputDate(item.validUntil)} className="rounded-lg border bg-white px-3 py-2" />
+                        <LocalDateInput name="validUntil" defaultValue={inputDate(item.validUntil)} placeholder={t.datePlaceholder} calendarLabel={t.openCalendar} />
                       </label>
                       <label className="grid gap-1 text-sm sm:col-span-2">
                         <span>{t.qualificationNotes}</span>
@@ -283,11 +284,11 @@ export default async function EmployeeDetailPage({ params }: Props) {
               </label>
               <label className="grid gap-1 text-sm">
                 <span>{t.validFrom}</span>
-                <input type="date" name="validFrom" className="rounded-lg border bg-white px-3 py-2" />
+                <LocalDateInput name="validFrom" placeholder={t.datePlaceholder} calendarLabel={t.openCalendar} />
               </label>
               <label className="grid gap-1 text-sm">
                 <span>{t.validUntil}</span>
-                <input type="date" name="validUntil" className="rounded-lg border bg-white px-3 py-2" />
+                <LocalDateInput name="validUntil" placeholder={t.datePlaceholder} calendarLabel={t.openCalendar} />
               </label>
               <label className="grid gap-1 text-sm sm:col-span-2">
                 <span>{t.qualificationNotes}</span>
@@ -308,7 +309,7 @@ export default async function EmployeeDetailPage({ params }: Props) {
           <h2 className="text-xl font-bold">{t.workConnection}</h2>
           <p className="mt-2 text-sm text-slate-600">{t.workHelp}</p>
           <div className="mt-4 grid grid-cols-2 gap-3"><div className="rounded-xl bg-slate-50 p-3"><p className="text-xs text-slate-500">{t.assignments}</p><p className="mt-1 text-2xl font-bold">{employee.workPartAssignments.length}</p></div><div className="rounded-xl bg-slate-50 p-3"><p className="text-xs text-slate-500">{t.actualMinutes}</p><p className="mt-1 text-2xl font-bold">{new Intl.NumberFormat(locale).format(totalMinutes)} {t.minutesShort}</p></div></div>
-          <Link href="/verk10" className="mt-4 inline-flex rounded-lg border px-3 py-2 text-sm font-semibold hover:bg-slate-50">{t.work10Label} →</Link>
+          <Link href="/verk" className="mt-4 inline-flex rounded-lg border px-3 py-2 text-sm font-semibold hover:bg-slate-50">{t.workLabel} →</Link>
         </Card>
       </div>
     </main>
