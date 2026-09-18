@@ -248,7 +248,7 @@ export default function Sidebar({
 
       </nav>
 
-      <ServiceTimeTracker />
+      <ServiceTimeTracker interfaceLanguage={interfaceLanguage} />
       <form action={logoutUser} className="mt-auto pt-6">
   <button
     type="submit"

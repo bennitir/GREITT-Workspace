@@ -7,6 +7,7 @@ import PageHeader from "@/components/ui/PageHeader";
 import Card from "@/components/ui/Card";
 import Button from "@/components/ui/Button";
 import { workText } from "@/lib/i18n/work";
+import { normalizeUiLanguage } from "@/lib/i18n/ui";
 
 async function createWorkOrder(formData: FormData) {
   "use server";
@@ -21,9 +22,12 @@ async function createWorkOrder(formData: FormData) {
   const description = String(formData.get("description") ?? "").trim();
   const address = String(formData.get("address") ?? "").trim();
   const priority = String(formData.get("priority") ?? "NORMAL");
+  const sourceLanguage = normalizeUiLanguage(
+    String(formData.get("sourceLanguage") ?? "is"),
+  );
   if (!title) throw new Error("Heiti verks vantar.");
   const createdById = activeUserId ? Number(activeUserId) : null;
-  await prisma.workOrder.create({ data: { companyId, createdById: createdById && Number.isInteger(createdById) ? createdById : null, title, description: description || null, address: address || null, priority, status: "NEW" } });
+  await prisma.workOrder.create({ data: { companyId, createdById: createdById && Number.isInteger(createdById) ? createdById : null, sourceLanguage, title, description: description || null, address: address || null, priority, status: "NEW" } });
   revalidatePath("/verk");
   redirect("/verk");
 }
@@ -45,6 +49,7 @@ export default async function NýttVerkPage() {
       <PageHeader title={t.newTitle} description={t.newDescription} />
       <Card>
         <form action={createWorkOrder} className="space-y-6">
+          <input type="hidden" name="sourceLanguage" value={language} />
           <div><label htmlFor="title" className="block font-medium">{t.workTitle}</label><input id="title" name="title" type="text" required className="mt-2 w-full rounded-lg border px-4 py-3" placeholder={t.workTitlePlaceholder} /></div>
           <div><label htmlFor="address" className="block font-medium">{t.address}</label><input id="address" name="address" type="text" className="mt-2 w-full rounded-lg border px-4 py-3" placeholder={t.addressPlaceholder} /></div>
           <div><label htmlFor="description" className="block font-medium">{t.description}</label><textarea id="description" name="description" rows={5} className="mt-2 w-full rounded-lg border px-4 py-3" placeholder={t.descriptionPlaceholder} /></div>
