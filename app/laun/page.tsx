@@ -1,16 +1,24 @@
+import Link from "next/link";
 import { requireCompanyModule } from "@/lib/core/require-company-module";
 import Card from "@/components/ui/Card";
 import PageHeader from "@/components/ui/PageHeader";
+import { getCurrentInterfaceLanguage } from "@/lib/i18n/current-language";
+import { employeeText } from "@/lib/i18n/employees";
 
 export default async function LaunPage() {
   await requireCompanyModule("laun");
+  const language = await getCurrentInterfaceLanguage();
+  const employeeT = employeeText(language);
 
   return (
     <main className="space-y-6">
-      <PageHeader
-        title="Laun"
-        description="Fyrsta vinnuútgáfa GLÖGGT Launa – kjör, tímar, hlunnindi, reglur og launakeyrsla í skýru flæði."
-      />
+      <div className="flex flex-wrap items-start justify-between gap-4">
+        <PageHeader
+          title="Laun"
+          description="Fyrsta vinnuútgáfa GLÖGGT Launa – kjör, tímar, hlunnindi, reglur og launakeyrsla í skýru flæði."
+        />
+        <Link href="/starfsmenn" className="rounded-lg border bg-white px-4 py-2 font-semibold text-blue-700 hover:bg-blue-50">{employeeT.title}</Link>
+      </div>
 
       <div className="grid gap-4 md:grid-cols-4">
         <Card><p className="text-sm text-slate-500">Starfsmenn</p><p className="mt-2 text-3xl font-bold">—</p><p className="mt-1 text-sm text-slate-500">Virk ráðningarsambönd</p></Card>

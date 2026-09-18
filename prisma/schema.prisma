@@ -59,8 +59,18 @@ model Company {
   receipts     Receipt[]
   usageEvents  UsageEvent[]
   users        UserCompany[]
+  employees    Employee[]
+  employeeCompensations EmployeeCompensation[]
+  employeeQualifications EmployeeQualification[]
   workLogs     WorkLog[]
   workOrders   WorkOrder[]
+  workParts    WorkPart[]
+  workPartAssignments WorkPartAssignment[]
+  workPartLaborFacts WorkPartLaborFact[]
+  workPartUsageFacts WorkPartUsageFact[]
+  inventoryItems InventoryItem[]
+  inventoryLocations InventoryLocation[]
+  inventoryMovements InventoryMovement[]
   bankAccounts BankAccount[]
   vatPeriods   VatPeriod[]
 
@@ -381,6 +391,23 @@ model User {
   companies                      UserCompany[]
   workLogs                       WorkLog[]
   createdWorkOrders              WorkOrder[]
+  createdWorkOrderTranslations   WorkOrderTranslation[] @relation("WorkOrderTranslationCreatedBy")
+  createdWorkParts               WorkPart[] @relation("WorkPartCreatedBy")
+  updatedWorkParts               WorkPart[] @relation("WorkPartUpdatedBy")
+  createdWorkPartTranslations    WorkPartTranslation[] @relation("WorkPartTranslationCreatedBy")
+  workPartAssignments            WorkPartAssignment[] @relation("WorkPartAssignmentUser")
+  createdWorkPartAssignments     WorkPartAssignment[] @relation("WorkPartAssignmentCreatedBy")
+  removedWorkPartAssignments     WorkPartAssignment[] @relation("WorkPartAssignmentRemovedBy")
+  performedWorkPartLaborFacts     WorkPartLaborFact[] @relation("WorkPartLaborFactUser")
+  createdWorkPartLaborFacts       WorkPartLaborFact[] @relation("WorkPartLaborFactCreatedBy")
+  voidedWorkPartLaborFacts        WorkPartLaborFact[] @relation("WorkPartLaborFactVoidedBy")
+  createdWorkPartLaborFactTranslations WorkPartLaborFactTranslation[] @relation("WorkPartLaborFactTranslationCreatedBy")
+  createdWorkPartUsageFacts       WorkPartUsageFact[] @relation("WorkPartUsageFactCreatedBy")
+  voidedWorkPartUsageFacts        WorkPartUsageFact[] @relation("WorkPartUsageFactVoidedBy")
+  createdInventoryItems           InventoryItem[] @relation("InventoryItemCreatedBy")
+  createdInventoryLocations       InventoryLocation[] @relation("InventoryLocationCreatedBy")
+  createdInventoryMovements       InventoryMovement[] @relation("InventoryMovementCreatedBy")
+  voidedInventoryMovements        InventoryMovement[] @relation("InventoryMovementVoidedBy")
   vatSubmissions                 VatSubmission[]
   passwordResetTokens            PasswordResetToken[]
   auditEvents                    AuditEvent[]
@@ -399,6 +426,11 @@ model User {
   dataReviewedCompanyTasks CompanyTask[] @relation("CompanyTaskDataReviewedBy")
   receivedCompanyMessages CompanyMessage[] @relation("CompanyMessageRecipient")
   createdCompanyMessages CompanyMessage[] @relation("CompanyMessageCreatedBy")
+  employeeProfiles Employee[] @relation("EmployeeUser")
+  createdEmployees Employee[] @relation("EmployeeCreatedBy")
+  updatedEmployees Employee[] @relation("EmployeeUpdatedBy")
+  createdEmployeeCompensations EmployeeCompensation[] @relation("EmployeeCompensationCreatedBy")
+  createdEmployeeQualifications EmployeeQualification[] @relation("EmployeeQualificationCreatedBy")
 }
 
 
@@ -482,6 +514,105 @@ model UserCompany {
   user    User    @relation(fields: [userId], references: [id], onDelete: Cascade)
 
   @@unique([userId, companyId])
+}
+
+
+model Employee {
+  id        Int @id @default(autoincrement())
+  companyId Int
+  userId    Int?
+
+  employeeNumber String?
+  fullName       String
+  kennitala      String?
+  address        String?
+  postalCode     String?
+  city           String?
+  phone          String?
+  email          String?
+  preferredLanguage String @default("is")
+
+  jobTitle          String?
+  department        String?
+  employmentKind    String @default("EMPLOYEE") // EMPLOYEE | TEMPORARY | APPRENTICE | OTHER
+  employmentStartDate DateTime?
+  employmentEndDate   DateTime?
+  employmentPercent Float?
+  isActive          Boolean @default(true)
+  notes             String?
+
+  createdById Int?
+  updatedById Int?
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  company Company @relation(fields: [companyId], references: [id], onDelete: Cascade)
+  user User? @relation("EmployeeUser", fields: [userId], references: [id], onDelete: SetNull)
+  createdBy User? @relation("EmployeeCreatedBy", fields: [createdById], references: [id], onDelete: SetNull)
+  updatedBy User? @relation("EmployeeUpdatedBy", fields: [updatedById], references: [id], onDelete: SetNull)
+  compensations EmployeeCompensation[]
+  qualifications EmployeeQualification[]
+  workPartAssignments WorkPartAssignment[]
+  workPartLaborFacts WorkPartLaborFact[]
+
+  @@index([companyId, userId])
+  @@index([companyId, employeeNumber])
+  @@index([companyId, isActive])
+  @@index([companyId, fullName])
+  @@index([kennitala])
+}
+
+model EmployeeCompensation {
+  id        Int @id @default(autoincrement())
+  companyId Int
+  employeeId Int
+
+  validFrom DateTime
+  validTo   DateTime?
+  payType   String @default("MONTHLY") // MONTHLY | HOURLY | MIXED
+  monthlySalary Float?
+  hourlyRate    Float?
+  internalCostPerMinute Float?
+  internalCostSource String @default("MANUAL") // MANUAL | CALCULATED
+  currency String @default("ISK")
+  notes    String?
+
+  createdById Int?
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  company Company @relation(fields: [companyId], references: [id], onDelete: Cascade)
+  employee Employee @relation(fields: [employeeId], references: [id], onDelete: Cascade)
+  createdBy User? @relation("EmployeeCompensationCreatedBy", fields: [createdById], references: [id], onDelete: SetNull)
+
+  @@index([companyId, employeeId, validFrom])
+  @@index([employeeId, validTo])
+}
+
+model EmployeeQualification {
+  id        Int @id @default(autoincrement())
+  companyId Int
+  employeeId Int
+
+  qualificationType String @default("OTHER") // DRIVING_LICENSE | MACHINE | CERTIFICATION | TRAINING | OTHER
+  title             String
+  issuer            String?
+  certificateNumber String?
+  qualificationCodes String?
+  validFrom         DateTime?
+  validUntil        DateTime?
+  notes             String?
+
+  createdById Int?
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  company Company @relation(fields: [companyId], references: [id], onDelete: Cascade)
+  employee Employee @relation(fields: [employeeId], references: [id], onDelete: Cascade)
+  createdBy User? @relation("EmployeeQualificationCreatedBy", fields: [createdById], references: [id], onDelete: SetNull)
+
+  @@index([companyId, employeeId])
+  @@index([employeeId, validUntil])
 }
 
 model Session {
@@ -608,6 +739,7 @@ model WorkOrder {
   id          Int       @id @default(autoincrement())
   companyId   Int
   createdById Int?
+  sourceLanguage String @default("is")
   title       String
   description String?
   address     String?
@@ -617,13 +749,37 @@ model WorkOrder {
   startedAt   DateTime?
   completedAt DateTime?
 
-  workLogs  WorkLog[]
-  company   Company   @relation(fields: [companyId], references: [id], onDelete: Cascade)
+  workLogs     WorkLog[]
+  workParts    WorkPart[]
+  translations WorkOrderTranslation[]
+  company      Company   @relation(fields: [companyId], references: [id], onDelete: Cascade)
   createdBy User?     @relation(fields: [createdById], references: [id])
 
   @@index([companyId])
   @@index([status])
   @@index([createdById])
+}
+
+
+model WorkOrderTranslation {
+  id          Int @id @default(autoincrement())
+  workOrderId Int
+
+  language    String
+  title       String?
+  description String?
+  source      String @default("HUMAN") // HUMAN | AI | IMPORTED | TEST_PROJECTION
+
+  createdById Int?
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  workOrder WorkOrder @relation(fields: [workOrderId], references: [id], onDelete: Cascade)
+  createdBy User? @relation("WorkOrderTranslationCreatedBy", fields: [createdById], references: [id], onDelete: SetNull)
+
+  @@unique([workOrderId, language])
+  @@index([workOrderId])
+  @@index([language])
 }
 
 model WorkLog {
@@ -648,6 +804,299 @@ model WorkLog {
   @@index([workOrderId])
   @@index([userId])
   @@index([workDate])
+}
+
+model WorkPart {
+  id          Int      @id @default(autoincrement())
+  companyId   Int
+  workOrderId Int
+
+  // Röð verkþátta innan sama Verks. Hún segir framsetningarröð,
+  // en er ekki dependency-grafið sjálft.
+  sequence Int @default(1)
+
+  // Frumtexti er varðveittur óbreyttur. Þýðingar eru geymdar
+  // sjálfstætt í WorkPartTranslation og yfirskrifa aldrei frumtextann.
+  sourceLanguage String @default("is")
+  title          String
+  description    String?
+
+  status String @default("PLANNED")
+
+  createdById Int?
+  updatedById Int?
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  company      Company               @relation(fields: [companyId], references: [id], onDelete: Cascade)
+  workOrder    WorkOrder             @relation(fields: [workOrderId], references: [id], onDelete: Cascade)
+  createdBy    User?                 @relation("WorkPartCreatedBy", fields: [createdById], references: [id], onDelete: SetNull)
+  updatedBy    User?                 @relation("WorkPartUpdatedBy", fields: [updatedById], references: [id], onDelete: SetNull)
+  translations WorkPartTranslation[]
+  assignments  WorkPartAssignment[]
+  laborFacts   WorkPartLaborFact[]
+  usageFacts   WorkPartUsageFact[]
+  inventoryMovements InventoryMovement[]
+
+  @@unique([workOrderId, sequence])
+  @@index([companyId])
+  @@index([workOrderId])
+  @@index([status])
+}
+
+model WorkPartTranslation {
+  id         Int @id @default(autoincrement())
+  workPartId Int
+
+  language    String
+  title       String?
+  description String?
+  source      String @default("HUMAN") // HUMAN | AI | IMPORTED | TEST_PROJECTION
+
+  createdById Int?
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  workPart  WorkPart @relation(fields: [workPartId], references: [id], onDelete: Cascade)
+  createdBy User?    @relation("WorkPartTranslationCreatedBy", fields: [createdById], references: [id], onDelete: SetNull)
+
+  @@unique([workPartId, language])
+  @@index([workPartId])
+  @@index([language])
+}
+
+model WorkPartAssignment {
+  id         Int @id @default(autoincrement())
+  companyId  Int
+  workPartId Int
+
+  // Fyrsta varanlega úthlutunargerðin er PERSON. resourceKind er þó
+  // varðveitt frá byrjun svo sama tengihugtak geti síðar tekið við
+  // TEAM, MACHINE, VEHICLE, TOOL og CONTRACTOR án þess að gera þau að
+  // dálkum á WorkPart sjálfum.
+  resourceKind  String @default("PERSON")
+  employeeId    Int?
+  userId        Int? // Legacy/login link; employeeId is the operational identity.
+  resourceLabel String?
+
+  createdById Int?
+  removedAt   DateTime?
+  removedById Int?
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  company   Company  @relation(fields: [companyId], references: [id], onDelete: Cascade)
+  workPart  WorkPart @relation(fields: [workPartId], references: [id], onDelete: Cascade)
+  employee  Employee? @relation(fields: [employeeId], references: [id], onDelete: SetNull)
+  user      User?    @relation("WorkPartAssignmentUser", fields: [userId], references: [id], onDelete: SetNull)
+  createdBy User?    @relation("WorkPartAssignmentCreatedBy", fields: [createdById], references: [id], onDelete: SetNull)
+  removedBy User?    @relation("WorkPartAssignmentRemovedBy", fields: [removedById], references: [id], onDelete: SetNull)
+
+  @@index([companyId])
+  @@index([workPartId, removedAt])
+  @@index([employeeId, removedAt])
+  @@index([userId, removedAt])
+  @@index([resourceKind])
+}
+
+model WorkPartLaborFact {
+  id         Int @id @default(autoincrement())
+  companyId  Int
+  workPartId Int
+
+  // Raunvinna er sjálfstæð staðreynd frá úthlutun. Í þessu fyrsta skrefi
+  // skráum við handvirkan mannafla/tíma; Mobile getur síðar skrifað sömu
+  // staðreynd með start/end og annarri source-merkingu.
+  employeeId      Int?
+  userId          Int? // Legacy/login link; employeeId is the operational identity.
+  resourceLabel   String?
+  workDate        DateTime
+  startedAt       DateTime?
+  endedAt         DateTime?
+  durationMinutes Int
+  note            String?
+  noteSourceLanguage String @default("is")
+  source          String @default("MANUAL") // MANUAL | MOBILE | IMPORTED | API | LEGACY
+
+  createdById Int?
+  voidedAt    DateTime?
+  voidedById  Int?
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  company   Company  @relation(fields: [companyId], references: [id], onDelete: Cascade)
+  workPart  WorkPart @relation(fields: [workPartId], references: [id], onDelete: Cascade)
+  employee  Employee? @relation(fields: [employeeId], references: [id], onDelete: SetNull)
+  user      User?    @relation("WorkPartLaborFactUser", fields: [userId], references: [id], onDelete: SetNull)
+  createdBy User?    @relation("WorkPartLaborFactCreatedBy", fields: [createdById], references: [id], onDelete: SetNull)
+  voidedBy  User?    @relation("WorkPartLaborFactVoidedBy", fields: [voidedById], references: [id], onDelete: SetNull)
+  translations WorkPartLaborFactTranslation[]
+
+  @@index([companyId])
+  @@index([workPartId, voidedAt])
+  @@index([employeeId, workDate])
+  @@index([userId, workDate])
+  @@index([workDate])
+  @@index([source])
+}
+
+
+model WorkPartUsageFact {
+  id         Int @id @default(autoincrement())
+  companyId  Int
+  workPartId Int
+
+  // Sameiginleg magnmælanleg raunnotkun. Fyrsta virka kind er MATERIAL,
+  // en sami grunnur getur síðar tekið við MACHINE_TIME, VEHICLE, TRAVEL
+  // og OTHER án þess að bæta sérdálkum á WorkPart.
+  kind          String @default("MATERIAL")
+  resourceCode  String?
+  resourceLabel String
+  sourceLanguage String @default("is")
+
+  usageDate  DateTime
+  quantity   Float
+  unit       String
+  customUnit String?
+  note       String?
+  source     String @default("MANUAL") // MANUAL | MOBILE | IMPORTED | API
+
+  inventoryItemId     Int?
+  inventoryLocationId Int?
+
+  createdById Int?
+  voidedAt    DateTime?
+  voidedById  Int?
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  company   Company  @relation(fields: [companyId], references: [id], onDelete: Cascade)
+  workPart  WorkPart @relation(fields: [workPartId], references: [id], onDelete: Cascade)
+  createdBy User?    @relation("WorkPartUsageFactCreatedBy", fields: [createdById], references: [id], onDelete: SetNull)
+  voidedBy  User?    @relation("WorkPartUsageFactVoidedBy", fields: [voidedById], references: [id], onDelete: SetNull)
+  inventoryItem InventoryItem? @relation(fields: [inventoryItemId], references: [id], onDelete: SetNull)
+  inventoryLocation InventoryLocation? @relation(fields: [inventoryLocationId], references: [id], onDelete: SetNull)
+  inventoryMovement InventoryMovement?
+
+  @@index([companyId])
+  @@index([workPartId, voidedAt])
+  @@index([usageDate])
+  @@index([kind])
+  @@index([resourceCode])
+  @@index([source])
+  @@index([inventoryItemId])
+  @@index([inventoryLocationId])
+}
+
+model InventoryItem {
+  id        Int @id @default(autoincrement())
+  companyId Int
+
+  sku            String
+  name           String
+  description    String?
+  sourceLanguage String @default("is")
+
+  baseUnit   String @default("PCS")
+  customUnit String?
+
+  isStockTracked Boolean @default(true)
+  isActive       Boolean @default(true)
+  minStock       Float?
+  purchaseUnitCost Float?
+  saleUnitPrice    Float?
+
+  createdById Int?
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  company   Company @relation(fields: [companyId], references: [id], onDelete: Cascade)
+  createdBy User? @relation("InventoryItemCreatedBy", fields: [createdById], references: [id], onDelete: SetNull)
+  movements InventoryMovement[]
+  usageFacts WorkPartUsageFact[]
+
+  @@unique([companyId, sku])
+  @@index([companyId, isActive])
+  @@index([companyId, name])
+}
+
+model InventoryLocation {
+  id        Int @id @default(autoincrement())
+  companyId Int
+
+  code      String
+  name      String
+  kind      String @default("WAREHOUSE") // WAREHOUSE | VEHICLE | SITE | OTHER
+  isActive  Boolean @default(true)
+
+  createdById Int?
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  company   Company @relation(fields: [companyId], references: [id], onDelete: Cascade)
+  createdBy User? @relation("InventoryLocationCreatedBy", fields: [createdById], references: [id], onDelete: SetNull)
+  movements InventoryMovement[]
+  usageFacts WorkPartUsageFact[]
+
+  @@unique([companyId, code])
+  @@index([companyId, isActive])
+}
+
+model InventoryMovement {
+  id        Int @id @default(autoincrement())
+  companyId Int
+  itemId    Int
+  locationId Int
+
+  movementType String // OPENING | RECEIPT | ISSUE | ADJUSTMENT | WORK_USAGE | RETURN
+  quantityDelta Float
+  unit           String
+  unitCost       Float?
+  movementAt     DateTime
+  note           String?
+  source         String @default("MANUAL") // MANUAL | WORK | IMPORTED | API
+
+  workPartId Int?
+  usageFactId Int? @unique
+
+  createdById Int?
+  voidedAt    DateTime?
+  voidedById  Int?
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  company  Company @relation(fields: [companyId], references: [id], onDelete: Cascade)
+  item     InventoryItem @relation(fields: [itemId], references: [id], onDelete: Restrict)
+  location InventoryLocation @relation(fields: [locationId], references: [id], onDelete: Restrict)
+  workPart WorkPart? @relation(fields: [workPartId], references: [id], onDelete: SetNull)
+  usageFact WorkPartUsageFact? @relation(fields: [usageFactId], references: [id], onDelete: SetNull)
+  createdBy User? @relation("InventoryMovementCreatedBy", fields: [createdById], references: [id], onDelete: SetNull)
+  voidedBy  User? @relation("InventoryMovementVoidedBy", fields: [voidedById], references: [id], onDelete: SetNull)
+
+  @@index([companyId, movementAt])
+  @@index([itemId, locationId, voidedAt])
+  @@index([workPartId])
+  @@index([movementType])
+}
+
+model WorkPartLaborFactTranslation {
+  id          Int @id @default(autoincrement())
+  laborFactId Int
+
+  language String
+  text     String
+  source   String @default("HUMAN") // HUMAN | AI | IMPORTED
+
+  createdById Int?
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  laborFact WorkPartLaborFact @relation(fields: [laborFactId], references: [id], onDelete: Cascade)
+  createdBy User? @relation("WorkPartLaborFactTranslationCreatedBy", fields: [createdById], references: [id], onDelete: SetNull)
+
+  @@unique([laborFactId, language])
+  @@index([laborFactId])
+  @@index([language])
 }
 
 model BankAccount {
