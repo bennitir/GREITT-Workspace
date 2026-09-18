@@ -1,9 +1,25 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { DEFAULT_LOCALE } from "@/lib/locale";
+import { normalizeUiLanguage, type UiLanguage } from "@/lib/i18n/ui";
 
-export default function TopClock() {
+type Props = {
+  interfaceLanguage?: string;
+};
+
+const DATE_LOCALE_BY_LANGUAGE: Record<UiLanguage, string> = {
+  is: "is-IS",
+  en: "en-GB",
+  pl: "pl-PL",
+  sr: "sr-Cyrl-RS",
+};
+
+function capitalizeFirst(value: string) {
+  if (!value) return value;
+  return value.charAt(0).toLocaleUpperCase() + value.slice(1);
+}
+
+export default function TopClock({ interfaceLanguage }: Props) {
   const [now, setNow] = useState<Date | null>(null);
 
   useEffect(() => {
@@ -11,7 +27,7 @@ export default function TopClock() {
 
     const timer = window.setInterval(() => {
       setNow(new Date());
-    }, 60000);
+    }, 60_000);
 
     return () => window.clearInterval(timer);
   }, []);
@@ -24,57 +40,20 @@ export default function TopClock() {
     );
   }
 
-  const weekdays = [
-  "sunnudagur",
-  "mánudagur",
-  "þriðjudagur",
-  "miðvikudagur",
-  "fimmtudagur",
-  "föstudagur",
-  "laugardagur",
-];
+  const language = normalizeUiLanguage(interfaceLanguage);
+  const locale = DATE_LOCALE_BY_LANGUAGE[language];
 
-const months = [
-  "janúar",
-  "febrúar",
-  "mars",
-  "apríl",
-  "maí",
-  "júní",
-  "júlí",
-  "ágúst",
-  "september",
-  "október",
-  "nóvember",
-  "desember",
-];
+  const dateText = capitalizeFirst(
+    new Intl.DateTimeFormat(locale, {
+      weekday: "long",
+      day: "numeric",
+      month: "long",
+      year: "numeric",
+      timeZone: "Atlantic/Reykjavik",
+    }).format(now)
+  );
 
-const icelandParts = new Intl.DateTimeFormat("en-CA", {
-  timeZone: "Atlantic/Reykjavik",
-  year: "numeric",
-  month: "2-digit",
-  day: "2-digit",
-  weekday: "short",
-}).formatToParts(now);
-
-const year = Number(
-  icelandParts.find((part) => part.type === "year")?.value
-);
-const month = Number(
-  icelandParts.find((part) => part.type === "month")?.value
-);
-const day = Number(
-  icelandParts.find((part) => part.type === "day")?.value
-);
-
-const weekdayIndex = new Date(
-  Date.UTC(year, month - 1, day)
-).getUTCDay();
-
-const dateText =
-  `${weekdays[weekdayIndex]} ${day}. ${months[month - 1]} ${year}`;
-
-  const timeText = new Intl.DateTimeFormat(DEFAULT_LOCALE, {
+  const timeText = new Intl.DateTimeFormat(locale, {
     hour: "2-digit",
     minute: "2-digit",
     hour12: false,
@@ -84,7 +63,7 @@ const dateText =
   return (
     <div className="border-b bg-white px-6 py-3">
       <div className="text-right text-sm text-gray-600">
-        <span className="capitalize">{dateText}</span>
+        <span>{dateText}</span>
         <span className="mx-2">·</span>
         <span className="text-xl font-bold">{timeText}</span>
       </div>
