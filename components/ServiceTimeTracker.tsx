@@ -48,7 +48,11 @@ type PendingIdle = {
   durationSeconds: number;
 };
 
-export default function ServiceTimeTracker() {
+type Props = {
+  interfaceLanguage?: string;
+};
+
+export default function ServiceTimeTracker({ interfaceLanguage }: Props) {
   const pathname = usePathname();
   const [cfg, setCfg] = useState<TrackingConfig | null>(null);
   const [elapsedSeconds, setElapsedSeconds] = useState(0);
@@ -230,13 +234,17 @@ export default function ServiceTimeTracker() {
 
   if (!cfg || !["AUTO", "AUTO_PROMPT"].includes(cfg.mode)) return null;
 
-  const t = uiText(cfg.interfaceLanguage);
-  const options = uiOptions(cfg.interfaceLanguage);
+  const displayLanguage = interfaceLanguage ?? cfg.interfaceLanguage;
+  const t = uiText(displayLanguage);
+  const options = uiOptions(displayLanguage);
   const moduleLabel = (() => {
     const module = moduleFromPath(pathname);
     if (module === "Bókhald") return options.modules.bokhald;
     if (module === "Laun") return options.modules.laun;
     if (module === "Verk") return options.modules.verk;
+    if (module === "VSK") return t.vat;
+    if (module === "Innsýn") return t.insights;
+    if (module === "Banki") return t.bank;
     if (module === "Vinnusaga") return t.myHistory;
     return module;
   })();
