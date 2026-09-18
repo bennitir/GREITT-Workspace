@@ -13,11 +13,20 @@ type Props = {
 function localToIso(value: string) {
   const match = /^(\d{1,2})\.(\d{1,2})\.(\d{4})$/.exec(value.trim());
   if (!match) return "";
+
   const day = Number(match[1]);
   const month = Number(match[2]);
   const year = Number(match[3]);
   const date = new Date(Date.UTC(year, month - 1, day, 12, 0, 0));
-  if (date.getUTCFullYear() !== year || date.getUTCMonth() !== month - 1 || date.getUTCDate() !== day) return "";
+
+  if (
+    date.getUTCFullYear() !== year ||
+    date.getUTCMonth() !== month - 1 ||
+    date.getUTCDate() !== day
+  ) {
+    return "";
+  }
+
   return `${year}-${String(month).padStart(2, "0")}-${String(day).padStart(2, "0")}`;
 }
 
@@ -36,29 +45,37 @@ export default function LocalDateInput({
 }: Props) {
   const id = useId();
   const pickerRef = useRef<HTMLInputElement>(null);
-  const [value, setValue] = useState(defaultValue);
+  const [displayValue, setDisplayValue] = useState(defaultValue);
+  const isoValue = localToIso(displayValue);
 
   function openPicker() {
     const picker = pickerRef.current;
     if (!picker) return;
-    picker.value = localToIso(value);
+    picker.value = isoValue;
     picker.showPicker?.();
   }
 
   return (
     <div className="relative flex items-center">
+      {/*
+        The user edits the Icelandic display value, but the submitted form value
+        is always ISO date-only. This keeps browser/UI formatting separate from
+        the server/database contract.
+      */}
+      <input type="hidden" name={name} value={isoValue} />
+
       <input
         id={id}
-        name={name}
-        value={value}
-        onChange={(event) => setValue(event.target.value)}
+        value={displayValue}
+        onChange={(event) => setDisplayValue(event.target.value)}
         placeholder={placeholder}
         inputMode="numeric"
         autoComplete="off"
         required={required}
-        pattern="\\d{1,2}\\.\\d{1,2}\\.\\d{4}"
+        pattern="[0-9]{1,2}[.][0-9]{1,2}[.][0-9]{4}"
         className="w-full rounded-lg border bg-white px-3 py-2 pr-11"
       />
+
       <input
         ref={pickerRef}
         type="date"
@@ -66,9 +83,12 @@ export default function LocalDateInput({
         aria-hidden="true"
         className="pointer-events-none absolute right-2 h-8 w-8 opacity-0"
         onChange={(event) => {
-          if (event.target.value) setValue(isoToLocal(event.target.value));
+          if (event.target.value) {
+            setDisplayValue(isoToLocal(event.target.value));
+          }
         }}
       />
+
       <button
         type="button"
         onClick={openPicker}
