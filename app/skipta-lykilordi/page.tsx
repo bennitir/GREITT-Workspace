@@ -5,8 +5,18 @@ import { redirect } from "next/navigation";
 import { prisma } from "@/lib/prisma";
 import { changeRequiredPassword } from "@/app/actions/passwordActions";
 
-export default async function SkiptaLykilordiPage() {
+export default async function SkiptaLykilordiPage({
+  searchParams,
+}: {
+  searchParams: Promise<{ next?: string }>;
+}) {
   const cookieStore = await cookies();
+  const params = await searchParams;
+  const mobileDestination =
+    params.next === "mobile" ||
+    params.next === "/mobile" ||
+    cookieStore.get("postPasswordChangePath")?.value === "/mobile";
+
   const sessionToken =
     cookieStore.get("sessionToken")?.value;
 
@@ -32,12 +42,8 @@ export default async function SkiptaLykilordiPage() {
   }
 
   if (!session.user.mustChangePassword) {
-    const postPasswordChangePath =
-      cookieStore.get("postPasswordChangePath")?.value === "/mobile"
-        ? "/mobile"
-        : "/";
     cookieStore.delete("postPasswordChangePath");
-    redirect(postPasswordChangePath);
+    redirect(mobileDestination ? "/mobile" : "/");
   }
 
   return (
@@ -78,6 +84,11 @@ export default async function SkiptaLykilordiPage() {
             action={changeRequiredPassword}
             className="space-y-6"
           >
+            <input
+              type="hidden"
+              name="next"
+              value={mobileDestination ? "mobile" : ""}
+            />
             <div>
               <label
                 htmlFor="newPassword"

@@ -4,6 +4,7 @@ import bcrypt from "bcryptjs";
 import { cookies } from "next/headers";
 import { redirect } from "next/navigation";
 import { prisma } from "@/lib/prisma";
+import { getMobileCompaniesForUser } from "@/lib/core/mobile-company";
 import crypto from "crypto";
 import { sendPasswordResetEmail } from "@/lib/email";
 
@@ -76,16 +77,42 @@ export async function changeRequiredPassword(formData: FormData) {
     }),
   ]);
 
-  const postPasswordChangePath =
-    cookieStore.get("postPasswordChangePath")?.value === "/mobile"
-      ? "/mobile"
-      : "/";
+  const requestedNext = String(formData.get("next") ?? "");
+  const wantsMobile =
+    requestedNext === "mobile" ||
+    requestedNext === "/mobile" ||
+    cookieStore.get("postPasswordChangePath")?.value === "/mobile";
 
-  cookieStore.delete("activeCompanyId");
   cookieStore.delete("activeUserId");
+
+  if (wantsMobile) {
+    const companies = await getMobileCompaniesForUser(session.user);
+    const currentCompanyId = Number(
+      cookieStore.get("activeCompanyId")?.value ?? 0,
+    );
+    const currentCompanyIsValid = companies.some(
+      (company) => company.id === currentCompanyId,
+    );
+
+    if (!currentCompanyIsValid) {
+      if (companies.length === 1) {
+        cookieStore.set("activeCompanyId", String(companies[0].id), {
+          httpOnly: true,
+          sameSite: "lax",
+          path: "/",
+          secure: process.env.NODE_ENV === "production",
+        });
+      } else {
+        cookieStore.delete("activeCompanyId");
+      }
+    }
+  } else {
+    cookieStore.delete("activeCompanyId");
+  }
+
   cookieStore.delete("postPasswordChangePath");
 
-  redirect(postPasswordChangePath);
+  redirect(wantsMobile ? "/mobile" : "/");
 }
 
 export async function requestPasswordReset(formData: FormData) {

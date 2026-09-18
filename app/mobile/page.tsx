@@ -3,12 +3,10 @@ import { cookies } from "next/headers";
 import { redirect } from "next/navigation";
 
 import { prisma } from "@/lib/prisma";
-import {
-  getCompanyAccess,
-  getEffectiveUser,
-} from "@/lib/core/access-control";
+import { getEffectiveUser } from "@/lib/core/access-control";
 import { uiText } from "@/lib/i18n/ui";
 import { logoutMobileUser } from "@/app/actions/userActions";
+import { getMobileCompaniesForUser } from "@/lib/core/mobile-company";
 
 async function chooseMobileCompany(formData: FormData) {
   "use server";
@@ -19,9 +17,16 @@ async function chooseMobileCompany(formData: FormData) {
     throw new Error("Ógilt fyrirtæki.");
   }
 
-  const access = await getCompanyAccess(companyId);
+  const user = await getEffectiveUser();
 
-  if (!access.allowed) {
+  if (!user) {
+    redirect("/innskraning?next=/mobile");
+  }
+
+  const companies = await getMobileCompaniesForUser(user);
+  const allowed = companies.some((company) => company.id === companyId);
+
+  if (!allowed) {
     throw new Error("Þú hefur ekki aðgang að þessu fyrirtæki.");
   }
 
@@ -58,39 +63,7 @@ const veljaFyrirtaeki = params.velja === "1";
     cookieStore.get("activeCompanyId")?.value || 0,
   );
 
-  const companies =
-    user.role === "ADMIN"
-      ? await prisma.company.findMany({
-          select: {
-            id: true,
-            name: true,
-            kennitala: true,
-          },
-          orderBy: {
-            name: "asc",
-          },
-        })
-      : (
-          await prisma.userCompany.findMany({
-            where: {
-              userId: user.id,
-              isActive: true,
-            },
-            include: {
-              company: {
-                select: {
-                  id: true,
-                  name: true,
-                  kennitala: true,
-                },
-              },
-            },
-          })
-        )
-          .map((access) => access.company)
-          .sort((a, b) =>
-            a.name.localeCompare(b.name, "is"),
-          );
+  const companies = await getMobileCompaniesForUser(user);
 
   const activeCompany =
     companies.find(

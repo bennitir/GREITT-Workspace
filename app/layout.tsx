@@ -115,7 +115,11 @@ export default async function RootLayout({
     !sessionUser.mustChangePassword &&
     pathname === "/skipta-lykilordi"
   ) {
-    redirect("/");
+    const postPasswordChangePath =
+      cookieStore.get("postPasswordChangePath")?.value === "/mobile"
+        ? "/mobile"
+        : "/";
+    redirect(postPasswordChangePath);
   }
 
   const activeCompanyId =
@@ -246,7 +250,7 @@ export default async function RootLayout({
                 interfaceLanguage={userSettings?.interfaceLanguage ?? "is"}
               />
             }
-            topClock={<TopClock />}
+            topClock={<TopClock interfaceLanguage={userSettings?.interfaceLanguage ?? "is"} />}
           >
             {activeUserId &&
               sessionUser.role === "ADMIN" && (

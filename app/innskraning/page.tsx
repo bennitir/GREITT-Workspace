@@ -4,10 +4,18 @@ import { loginUser } from "@/app/actions/userActions";
 export default async function InnskraningPage({
   searchParams,
 }: {
-  searchParams: Promise<{ next?: string }>;
+  searchParams: Promise<{ next?: string; error?: string }>;
 }) {
   const params = await searchParams;
   const next = params.next?.startsWith("/mobile") ? "/mobile" : "";
+  const errorMessage =
+    params.error === "missing"
+      ? "Netfang og lykilorð vantar."
+      : params.error === "invalid"
+        ? "Netfang eða lykilorð er rangt."
+        : params.error === "inactive"
+          ? "Aðgangurinn er óvirkur. Hafðu samband við stjórnanda."
+          : null;
   return (
     <main className="flex min-h-screen bg-slate-100">
       {/* Vinstri GLÖGGT rammi */}
@@ -44,6 +52,12 @@ export default async function InnskraningPage({
             <p className="mt-2 text-sm text-slate-500">
               Skráðu þig inn til að halda áfram
             </p>
+
+            {errorMessage && (
+              <div className="mt-5 rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-sm font-semibold text-red-800">
+                {errorMessage}
+              </div>
+            )}
 
             <form action={loginUser} className="mt-8 space-y-5">
               <input type="hidden" name="next" value={next} />

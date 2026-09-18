@@ -10,6 +10,7 @@ import { redirect } from "next/navigation";
 import { prisma } from "@/lib/prisma";
 import { getEffectiveUser } from "@/lib/core/access-control";
 import { sendTemporaryPasswordEmail } from "@/lib/email";
+import { getSingleMobileCompanyIdForUser } from "@/lib/core/mobile-company";
 
 async function requireEffectiveAdmin() {
   const user = await getEffectiveUser();
@@ -610,7 +611,25 @@ export async function loginUser(
   });
 
   cookieStore.delete("activeUserId");
-  cookieStore.delete("activeCompanyId");
+
+  if (next === "/mobile") {
+    const singleCompanyId = await getSingleMobileCompanyIdForUser(user);
+
+    if (singleCompanyId) {
+      cookieStore.set("activeCompanyId", String(singleCompanyId), {
+        httpOnly: true,
+        sameSite: "lax",
+        path: "/",
+        secure: process.env.NODE_ENV === "production",
+      });
+    } else {
+      // Ef starfsmaður hefur aðgang að fleiri en einu fyrirtæki
+      // velur hann fyrirtæki inni í Mobile.
+      cookieStore.delete("activeCompanyId");
+    }
+  } else {
+    cookieStore.delete("activeCompanyId");
+  }
 
   if (user.mustChangePassword) {
     if (next === "/mobile") {
@@ -625,7 +644,7 @@ export async function loginUser(
     }
 
     cookieStore.delete("loginDestination");
-    redirect("/skipta-lykilordi");
+    redirect(next === "/mobile" ? "/skipta-lykilordi?next=mobile" : "/skipta-lykilordi");
   }
 
   cookieStore.delete("postPasswordChangePath");
