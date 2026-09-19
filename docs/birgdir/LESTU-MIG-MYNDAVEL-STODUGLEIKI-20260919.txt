@@ -1,0 +1,22 @@
+GLÖGGT – Vörutalning í handtölvu – stöðugri strikamerkjaskönnun
+Dagsetning: 19.09.2026
+
+Ástæða
+------
+Fyrsta myndavélaútgáfan kallaði BarcodeDetector beint á lifandi <video> ramma eins hratt og requestAnimationFrame leyfði. Á prófunarsíma lokaðist vefsíðan með tölulegum browser/renderer error áður en vara hafði verið fundin.
+
+Breyting
+--------
+- BarcodeDetector er ekki lengur keyrður beint á lifandi video element.
+- Mynd úr video er tekin yfir í ósýnilegt canvas og skönnuð þaðan.
+- Skönnun er takmörkuð við u.þ.b. 2,5 ramma á sekúndu (400 ms bil).
+- Hámarks vinnslubreidd er 960 px til að minnka álag.
+- Aðeins eitt detect-kall má vera í gangi í einu.
+- Myndavélinni er lokað ef síðan fer í bakgrunn.
+- Beðið er sérstaklega um algeng vörustrikamerkjasnið: EAN-13, EAN-8, UPC-A, UPC-E, Code 128, Code 39 og ITF.
+
+Mikilvægt
+---------
+Skortur á strikamerki á vöru í GLÖGGT getur ekki valdið því að vefsíðan sjálf lokist. Slíkt kemur aðeins í ljós eftir að skanni hefur lesið kóða og GLÖGGT reynir að finna samsvarandi vöru.
+
+Engin Prisma migration fylgir þessari breytingu.

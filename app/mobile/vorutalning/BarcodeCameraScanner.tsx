@@ -18,14 +18,19 @@ type BarcodeResult = {
 };
 
 type BarcodeDetectorLike = {
-  detect(source: HTMLVideoElement): Promise<BarcodeResult[]>;
+  detect(source: HTMLCanvasElement): Promise<BarcodeResult[]>;
 };
 
-type BarcodeDetectorConstructor = new () => BarcodeDetectorLike;
+type BarcodeDetectorConstructor = new (options?: {
+  formats?: string[];
+}) => BarcodeDetectorLike;
 
 type WindowWithBarcodeDetector = Window & {
   BarcodeDetector?: BarcodeDetectorConstructor;
 };
+
+const SCAN_INTERVAL_MS = 400;
+const TARGET_WIDTH = 960;
 
 export default function BarcodeCameraScanner({
   sessionId,
@@ -36,25 +41,33 @@ export default function BarcodeCameraScanner({
 }) {
   const router = useRouter();
   const videoRef = useRef<HTMLVideoElement | null>(null);
+  const canvasRef = useRef<HTMLCanvasElement | null>(null);
   const streamRef = useRef<MediaStream | null>(null);
-  const frameRef = useRef<number | null>(null);
+  const timerRef = useRef<number | null>(null);
   const detectorRef = useRef<BarcodeDetectorLike | null>(null);
   const foundRef = useRef(false);
+  const scanningRef = useRef(false);
 
   const [isOpen, setIsOpen] = useState(false);
   const [isSearching, setIsSearching] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
-  function stopCamera() {
-    if (frameRef.current !== null) {
-      cancelAnimationFrame(frameRef.current);
-      frameRef.current = null;
+  function clearTimer() {
+    if (timerRef.current !== null) {
+      window.clearTimeout(timerRef.current);
+      timerRef.current = null;
     }
+  }
+
+  function stopCamera() {
+    clearTimer();
+    scanningRef.current = false;
 
     streamRef.current?.getTracks().forEach((track) => track.stop());
     streamRef.current = null;
 
     if (videoRef.current) {
+      videoRef.current.pause();
       videoRef.current.srcObject = null;
     }
 
@@ -64,44 +77,88 @@ export default function BarcodeCameraScanner({
     setIsOpen(false);
   }
 
-  useEffect(() => stopCamera, []);
+  useEffect(() => {
+    const onVisibilityChange = () => {
+      if (document.hidden && streamRef.current) stopCamera();
+    };
+
+    document.addEventListener("visibilitychange", onVisibilityChange);
+    return () => {
+      document.removeEventListener("visibilitychange", onVisibilityChange);
+      stopCamera();
+    };
+  }, []);
+
+  function scheduleNextScan() {
+    clearTimer();
+    if (foundRef.current || !streamRef.current) return;
+
+    timerRef.current = window.setTimeout(() => {
+      void scanFrame();
+    }, SCAN_INTERVAL_MS);
+  }
 
   async function scanFrame() {
+    if (scanningRef.current || foundRef.current) return;
+
     const video = videoRef.current;
+    const canvas = canvasRef.current;
     const detector = detectorRef.current;
 
-    if (!video || !detector || foundRef.current) return;
+    if (!video || !canvas || !detector || !streamRef.current) return;
 
-    try {
-      if (video.readyState >= 2) {
-        const results = await detector.detect(video);
-        const rawValue = results.find((result) => result.rawValue?.trim())?.rawValue?.trim();
-
-        if (rawValue) {
-          foundRef.current = true;
-          if (frameRef.current !== null) {
-            cancelAnimationFrame(frameRef.current);
-            frameRef.current = null;
-          }
-          streamRef.current?.getTracks().forEach((track) => track.stop());
-          streamRef.current = null;
-          setIsSearching(false);
-          router.push(`/mobile/vorutalning?session=${sessionId}&k=${encodeURIComponent(rawValue)}`);
-          return;
-        }
-      }
-    } catch {
-      // A single undecodable frame is normal. Keep scanning.
+    if (video.readyState < HTMLMediaElement.HAVE_CURRENT_DATA || !video.videoWidth || !video.videoHeight) {
+      scheduleNextScan();
+      return;
     }
 
-    frameRef.current = requestAnimationFrame(() => {
-      void scanFrame();
-    });
+    scanningRef.current = true;
+
+    try {
+      const scale = Math.min(1, TARGET_WIDTH / video.videoWidth);
+      const width = Math.max(1, Math.round(video.videoWidth * scale));
+      const height = Math.max(1, Math.round(video.videoHeight * scale));
+
+      if (canvas.width !== width) canvas.width = width;
+      if (canvas.height !== height) canvas.height = height;
+
+      const context = canvas.getContext("2d", {
+        alpha: false,
+        willReadFrequently: false,
+      });
+
+      if (!context) {
+        stopCamera();
+        setError(labels.cameraUnavailable);
+        return;
+      }
+
+      context.drawImage(video, 0, 0, width, height);
+      const results = await detector.detect(canvas);
+      const rawValue = results.find((result) => result.rawValue?.trim())?.rawValue?.trim();
+
+      if (rawValue) {
+        foundRef.current = true;
+        clearTimer();
+        streamRef.current?.getTracks().forEach((track) => track.stop());
+        streamRef.current = null;
+        setIsSearching(false);
+        router.push(`/mobile/vorutalning?session=${sessionId}&k=${encodeURIComponent(rawValue)}`);
+        return;
+      }
+    } catch {
+      // A frame can fail to decode without meaning that the camera session has failed.
+    } finally {
+      scanningRef.current = false;
+    }
+
+    scheduleNextScan();
   }
 
   async function startCamera() {
     setError(null);
     foundRef.current = false;
+    scanningRef.current = false;
 
     if (!navigator.mediaDevices?.getUserMedia) {
       setError(labels.cameraUnavailable);
@@ -119,15 +176,19 @@ export default function BarcodeCameraScanner({
         audio: false,
         video: {
           facingMode: { ideal: "environment" },
+          width: { ideal: 1280 },
+          height: { ideal: 720 },
         },
       });
 
       streamRef.current = stream;
-      detectorRef.current = new Detector();
+      detectorRef.current = new Detector({
+        formats: ["ean_13", "ean_8", "upc_a", "upc_e", "code_128", "code_39", "itf"],
+      });
       setIsOpen(true);
       setIsSearching(true);
 
-      await new Promise<void>((resolve) => requestAnimationFrame(() => resolve()));
+      await new Promise<void>((resolve) => window.requestAnimationFrame(() => resolve()));
 
       const video = videoRef.current;
       if (!video) {
@@ -138,9 +199,7 @@ export default function BarcodeCameraScanner({
 
       video.srcObject = stream;
       await video.play();
-      frameRef.current = requestAnimationFrame(() => {
-        void scanFrame();
-      });
+      scheduleNextScan();
     } catch (cameraError) {
       stopCamera();
       const name = cameraError instanceof DOMException ? cameraError.name : "";
@@ -171,6 +230,7 @@ export default function BarcodeCameraScanner({
               playsInline
               className="aspect-[4/3] w-full object-cover"
             />
+            <canvas ref={canvasRef} className="hidden" aria-hidden="true" />
             <div className="pointer-events-none absolute inset-x-[12%] top-1/2 h-24 -translate-y-1/2 rounded-xl border-2 border-white/90 shadow-[0_0_0_999px_rgba(0,0,0,0.25)]" />
           </div>
           <p className="mt-3 text-center text-sm font-semibold text-white">
