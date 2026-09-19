@@ -2,6 +2,7 @@ import Link from "next/link";
 
 import { work10PriorityText, work10StatusText } from "@/lib/i18n/work10";
 import { workMobileText } from "@/lib/i18n/work-mobile";
+import { workResourceOperationsText } from "@/lib/i18n/work-resource-operations";
 import { prisma } from "@/lib/prisma";
 import { projectWorkPartsForDisplay } from "@/lib/work10/display-parts";
 import { getMobileWorkActor } from "@/lib/work10/mobile-access";
@@ -9,6 +10,7 @@ import { projectPersistedWorkOrderText } from "@/lib/work10/work-order-text";
 import { resolveWork10LocalizedText } from "@/lib/work10/operational-text";
 import { deriveWork10Status } from "@/lib/work10/status";
 import { isWork10PartTerminalStatus } from "@/lib/work10/workflow";
+import ResourceQrScanner from "./ResourceQrScanner";
 
 type Props = {
   searchParams: Promise<{ q?: string }>;
@@ -32,6 +34,7 @@ export default async function MobileVerkPage({ searchParams }: Props) {
   const params = await searchParams;
   const query = String(params.q ?? "").trim();
   const t = workMobileText(actor.language);
+  const ops = workResourceOperationsText(actor.language);
 
   const [workOrders, activeFact] = await Promise.all([
     prisma.workOrder.findMany({
@@ -263,6 +266,8 @@ export default async function MobileVerkPage({ searchParams }: Props) {
               <p className="mt-3 text-sm font-semibold text-emerald-800">{t.continue} →</p>
             </Link>
           ) : null}
+
+          <ResourceQrScanner labels={ops} />
 
           <form className="mt-5" method="get">
             <label className="grid gap-1.5 text-sm font-semibold text-slate-700">

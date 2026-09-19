@@ -12,6 +12,7 @@ import {
   work10UnitText,
 } from "@/lib/i18n/work10";
 import { workMobileText } from "@/lib/i18n/work-mobile";
+import { workResourceOperationsText } from "@/lib/i18n/work-resource-operations";
 import { prisma } from "@/lib/prisma";
 import { projectWorkPartsForDisplay } from "@/lib/work10/display-parts";
 import { getMobileWorkActor } from "@/lib/work10/mobile-access";
@@ -58,6 +59,7 @@ export default async function MobileWorkDetailPage({ params }: Props) {
 
   const actor = await getMobileWorkActor();
   const t = workMobileText(actor.language);
+  const ops = workResourceOperationsText(actor.language);
   const moduleSettings = await getCompanyModuleSettings(actor.companyId);
   const inventoryEnabled = isCompanyModuleEnabled("birgdir", moduleSettings);
 
@@ -90,6 +92,7 @@ export default async function MobileWorkDetailPage({ params }: Props) {
                     customUnit: true,
                     meterUnit: true,
                     meterValue: true,
+                    qrToken: true,
                   },
                 },
               },
@@ -319,6 +322,7 @@ export default async function MobileWorkDetailPage({ params }: Props) {
                               <div>
                                 <p className="font-semibold text-slate-900">{resource.name}</p>
                                 <p className="mt-1 text-xs text-slate-500">{workResourceKindText(resource.kind, actor.language)} · {resource.code}</p>
+                                {resource.qrToken ? <Link href={`/mobile/verk/tilfong/${resource.qrToken}`} className="mt-2 inline-block text-xs font-bold text-blue-700">{ops.openResource} →</Link> : null}
                               </div>
                               <span className="rounded-full bg-white px-2 py-1 text-[11px] font-semibold text-slate-600">{workResourceStatusText(resource.status, actor.language)}</span>
                             </div>
@@ -368,6 +372,10 @@ export default async function MobileWorkDetailPage({ params }: Props) {
                               <button type="submit" className="rounded-lg bg-slate-900 px-3 py-2 text-sm font-semibold text-white">{t.recordMeter}</button>
                             </div>
                             <input name="note" maxLength={500} placeholder={t.note} className="mt-2 w-full rounded-lg border bg-white px-3 py-2 text-sm" />
+                            <label className="mt-2 grid gap-1 text-xs font-semibold text-slate-600">
+                              <span>{ops.meterPhoto}</span>
+                              <input type="file" name="photo" accept="image/*" capture="environment" className="rounded-lg border bg-white px-3 py-2 text-sm" />
+                            </label>
                           </form>
                         ))}
                       </div>

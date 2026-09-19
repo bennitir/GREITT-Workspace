@@ -3,7 +3,10 @@
 import { revalidatePath } from "next/cache";
 
 import { workMobileText } from "@/lib/i18n/work-mobile";
+import { workResourceOperationsText } from "@/lib/i18n/work-resource-operations";
 import { prisma } from "@/lib/prisma";
+import { nextMaintenanceDueValue } from "@/lib/work10/maintenance";
+import { removeWorkResourceMedia, saveWorkResourceMeterPhoto } from "@/lib/work10/resource-media";
 import { requireMobileWorkEmployee } from "@/lib/work10/mobile-access";
 import {
   defaultResourceUnit,
@@ -582,9 +585,11 @@ export async function recordMobileMeterReading(formData: FormData) {
   const workResourceId = numberField(formData, "workResourceId");
   const value = nonNegativeNumber(formData.get("value"));
   const note = String(formData.get("note") ?? "").trim();
+  const photo = formData.get("photo");
 
   const actor = await requireMobileWorkEmployee();
   const t = workMobileText(actor.language);
+  const ops = workResourceOperationsText(actor.language);
 
   if (!workOrderId || !workPartId || !workResourceId || value === null) {
     throw new Error(t.errors.invalidQuantity);
@@ -631,43 +636,124 @@ export async function recordMobileMeterReading(formData: FormData) {
 
   const unit = resource.meterUnit?.trim() || resource.baseUnit?.trim() || defaultResourceUnit(resource.kind as "MACHINE" | "VEHICLE" | "TOOL");
   const now = new Date();
+  const photoPath = await saveWorkResourceMeterPhoto(photo instanceof File ? photo : null, actor.companyId, workResourceId);
 
-  await prisma.$transaction(async (tx) => {
-    const reading = await tx.workResourceMeterReading.create({
-      data: {
-        companyId: actor.companyId,
-        workResourceId,
-        workPartId,
-        readingAt: now,
-        value,
-        unit,
-        note: note || null,
-        source: "MOBILE",
-        createdById: actor.user.id,
-      },
-    });
+  try {
+    await prisma.$transaction(async (tx) => {
+      const reading = await tx.workResourceMeterReading.create({
+        data: {
+          companyId: actor.companyId,
+          workResourceId,
+          workPartId,
+          readingAt: now,
+          value,
+          unit,
+          photoPath,
+          note: note || null,
+          source: "MOBILE",
+          createdById: actor.user.id,
+        },
+      });
 
-    await tx.workResource.update({
-      where: { id: workResourceId },
-      data: { meterValue: value, updatedById: actor.user.id },
-    });
+      await tx.workResource.update({
+        where: { id: workResourceId },
+        data: { meterValue: value, updatedById: actor.user.id },
+      });
 
-    await tx.auditEvent.create({
-      data: {
-        companyId: actor.companyId,
-        userId: actor.user.id,
-        entityType: "WORK_RESOURCE_METER_READING",
-        entityId: reading.id,
-        parentEntityType: "WORK_ORDER",
-        parentEntityId: workOrderId,
-        action: "MOBILE_METER_READING_RECORDED",
-        source: "MOBILE",
-        description: t.audit.meter,
-        afterData: { workResourceId, workPartId, value, unit },
-      },
+      await tx.auditEvent.create({
+        data: {
+          companyId: actor.companyId,
+          userId: actor.user.id,
+          entityType: "WORK_RESOURCE_METER_READING",
+          entityId: reading.id,
+          parentEntityType: "WORK_ORDER",
+          parentEntityId: workOrderId,
+          action: "MOBILE_METER_READING_RECORDED",
+          source: "MOBILE",
+          description: photoPath ? ops.audit.meterPhotoAdded : t.audit.meter,
+          afterData: { workResourceId, workPartId, value, unit, photoPath: photoPath ?? undefined },
+        },
+      });
     });
-  });
+  } catch (error) {
+    await removeWorkResourceMedia(photoPath);
+    throw error;
+  }
 
   revalidateMobileWork(workOrderId);
+  revalidatePath("/verk/tilfong");
+}
+
+export async function recordScannedResourceMeterReading(formData: FormData) {
+  const qrToken = String(formData.get("qrToken") ?? "").trim().toLowerCase();
+  const value = nonNegativeNumber(formData.get("value"));
+  const note = String(formData.get("note") ?? "").trim();
+  const photo = formData.get("photo");
+  const actor = await requireMobileWorkEmployee();
+  const t = workMobileText(actor.language);
+  const ops = workResourceOperationsText(actor.language);
+  if (!/^[0-9a-f]{16}$/.test(qrToken)) throw new Error(ops.errors.invalidQr);
+  if (value === null) throw new Error(t.errors.invalidQuantity);
+  if (note.length > 500) throw new Error(t.errors.noteTooLong);
+
+  const resource = await prisma.workResource.findFirst({
+    where: { companyId: actor.companyId, qrToken, kind: { in: ["MACHINE", "VEHICLE", "TOOL"] }, isActive: true },
+    select: { id: true, kind: true, baseUnit: true, meterUnit: true, meterValue: true },
+  });
+  if (!resource) throw new Error(ops.errors.resourceMissing);
+  if (resource.meterValue !== null && value + 1e-9 < resource.meterValue) throw new Error(t.errors.meterLower);
+  const unit = resource.meterUnit?.trim() || resource.baseUnit?.trim() || defaultResourceUnit(resource.kind as "MACHINE" | "VEHICLE" | "TOOL");
+  const photoPath = await saveWorkResourceMeterPhoto(photo instanceof File ? photo : null, actor.companyId, resource.id);
+  const now = new Date();
+
+  try {
+    await prisma.$transaction(async (tx) => {
+      const reading = await tx.workResourceMeterReading.create({
+        data: { companyId: actor.companyId, workResourceId: resource.id, readingAt: now, value, unit, photoPath, note: note || null, source: "MOBILE", createdById: actor.user.id },
+      });
+      await tx.workResource.update({ where: { id: resource.id }, data: { meterValue: value, updatedById: actor.user.id } });
+      await tx.auditEvent.create({
+        data: { companyId: actor.companyId, userId: actor.user.id, entityType: "WORK_RESOURCE_METER_READING", entityId: reading.id, parentEntityType: "WORK_RESOURCE", parentEntityId: resource.id, action: "MOBILE_METER_READING_RECORDED", source: "MOBILE", description: photoPath ? ops.audit.meterPhotoAdded : t.audit.meter, afterData: { value, unit, photoPath: photoPath ?? undefined } },
+      });
+    });
+  } catch (error) {
+    await removeWorkResourceMedia(photoPath);
+    throw error;
+  }
+  revalidatePath(`/mobile/verk/tilfong/${qrToken}`);
+  revalidatePath("/verk/tilfong");
+}
+
+export async function completeMobileResourceMaintenance(formData: FormData) {
+  const maintenanceKeyId = numberField(formData, "maintenanceKeyId");
+  const qrToken = String(formData.get("qrToken") ?? "").trim().toLowerCase();
+  const note = String(formData.get("note") ?? "").trim();
+  const actor = await requireMobileWorkEmployee();
+  const ops = workResourceOperationsText(actor.language);
+  if (!maintenanceKeyId || !/^[0-9a-f]{16}$/.test(qrToken)) throw new Error(ops.errors.invalidMaintenance);
+  if (note.length > 1000) throw new Error(ops.errors.noteTooLong);
+
+  const key = await prisma.workResourceMaintenanceKey.findFirst({
+    where: { id: maintenanceKeyId, companyId: actor.companyId, isActive: true, workResource: { qrToken, isActive: true } },
+    include: { workResource: { select: { id: true, meterValue: true } } },
+  });
+  if (!key) throw new Error(ops.errors.invalidMaintenance);
+  const completedAt = new Date();
+  const meterValue = key.workResource.meterValue;
+  const nextDueMeterValue = nextMaintenanceDueValue(meterValue, key.intervalValue);
+
+  await prisma.$transaction(async (tx) => {
+    const log = await tx.workResourceMaintenanceLog.create({
+      data: { companyId: actor.companyId, workResourceId: key.workResourceId, maintenanceKeyId: key.id, completedAt, meterValue, note: note || null, source: "MOBILE", createdById: actor.user.id },
+    });
+    await tx.workResourceMaintenanceKey.update({
+      where: { id: key.id },
+      data: { lastCompletedAt: completedAt, lastCompletedMeterValue: meterValue, nextDueMeterValue, updatedById: actor.user.id },
+    });
+    await tx.auditEvent.create({
+      data: { companyId: actor.companyId, userId: actor.user.id, entityType: "WORK_RESOURCE_MAINTENANCE_LOG", entityId: log.id, parentEntityType: "WORK_RESOURCE", parentEntityId: key.workResourceId, action: "MAINTENANCE_COMPLETED", source: "MOBILE", description: ops.audit.maintenanceCompleted, afterData: { maintenanceKeyId: key.id, meterValue, nextDueMeterValue } },
+    });
+  });
+  revalidatePath(`/mobile/verk/tilfong/${qrToken}`);
   revalidatePath("/verk/tilfong");
 }

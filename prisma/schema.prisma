@@ -71,6 +71,8 @@ model Company {
   workResources WorkResource[]
   workResourceMembers WorkResourceMember[]
   workResourceMeterReadings WorkResourceMeterReading[]
+  workResourceMaintenanceKeys WorkResourceMaintenanceKey[]
+  workResourceMaintenanceLogs WorkResourceMaintenanceLog[]
   inventoryItems InventoryItem[]
   inventoryLocations InventoryLocation[]
   inventoryMovements InventoryMovement[]
@@ -1034,6 +1036,8 @@ model WorkResource {
   usageFacts WorkPartUsageFact[]
   members WorkResourceMember[]
   meterReadings WorkResourceMeterReading[]
+  maintenanceKeys WorkResourceMaintenanceKey[]
+  maintenanceLogs WorkResourceMaintenanceLog[]
 
   @@unique([companyId, code])
   @@index([companyId, kind, isActive])
@@ -1082,6 +1086,64 @@ model WorkResourceMeterReading {
   createdBy    User? @relation("WorkResourceMeterReadingCreatedBy", fields: [createdById], references: [id], onDelete: SetNull)
 
   @@index([companyId, workResourceId, readingAt])
+  @@index([workPartId])
+}
+
+model WorkResourceMaintenanceKey {
+  id             Int @id @default(autoincrement())
+  companyId      Int
+  workResourceId Int
+
+  code        String
+  name        String
+  description String?
+
+  // Viðhald getur verið reglubundið eftir mæli (t.d. 250 klst.).
+  // nextDueMeterValue er geymd staða svo breyting á intervali breyti ekki
+  // sögulegum viðhaldsatburðum.
+  intervalValue          Float?
+  warningLeadValue       Float?
+  lastCompletedMeterValue Float?
+  nextDueMeterValue      Float?
+  lastCompletedAt        DateTime?
+
+  isActive Boolean @default(true)
+
+  createdById Int?
+  updatedById Int?
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  company      Company @relation(fields: [companyId], references: [id], onDelete: Cascade)
+  workResource WorkResource @relation(fields: [workResourceId], references: [id], onDelete: Cascade)
+  logs         WorkResourceMaintenanceLog[]
+
+  @@unique([workResourceId, code])
+  @@index([companyId, workResourceId, isActive])
+  @@index([companyId, nextDueMeterValue])
+}
+
+model WorkResourceMaintenanceLog {
+  id               Int @id @default(autoincrement())
+  companyId        Int
+  workResourceId   Int
+  maintenanceKeyId Int
+  workPartId       Int?
+
+  completedAt DateTime
+  meterValue   Float?
+  note         String?
+  source       String @default("MANUAL") // MANUAL | MOBILE | IMPORTED | API
+
+  createdById Int?
+  createdAt DateTime @default(now())
+
+  company        Company @relation(fields: [companyId], references: [id], onDelete: Cascade)
+  workResource   WorkResource @relation(fields: [workResourceId], references: [id], onDelete: Cascade)
+  maintenanceKey WorkResourceMaintenanceKey @relation(fields: [maintenanceKeyId], references: [id], onDelete: Cascade)
+
+  @@index([companyId, workResourceId, completedAt])
+  @@index([maintenanceKeyId, completedAt])
   @@index([workPartId])
 }
 

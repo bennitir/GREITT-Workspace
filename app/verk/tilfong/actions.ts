@@ -1,12 +1,15 @@
 "use server";
 
-import { randomUUID } from "node:crypto";
+import { randomBytes } from "node:crypto";
 import { revalidatePath } from "next/cache";
 
 import { getEffectiveUser, requireActiveCompanyWriteAccess } from "@/lib/core/access-control";
 import { normalizeUiLanguage } from "@/lib/i18n/ui";
 import { workResourceText } from "@/lib/i18n/work-resources";
+import { workResourceOperationsText } from "@/lib/i18n/work-resource-operations";
 import { prisma } from "@/lib/prisma";
+import { nextMaintenanceDueValue } from "@/lib/work10/maintenance";
+import { removeWorkResourceMedia, saveWorkResourceMeterPhoto } from "@/lib/work10/resource-media";
 import {
   WORK10_RESOURCE_UNITS,
   defaultResourceUnit,
@@ -37,6 +40,16 @@ function dateOnly(value: FormDataEntryValue | null, errors: ResourceErrors) {
   return new Date(Date.UTC(Number(match[1]), Number(match[2]) - 1, Number(match[3]), 12));
 }
 
+
+function optionalMaintenanceNumber(value: FormDataEntryValue | null, errorMessage: string) {
+  const raw = String(value ?? "").trim().replace(/\s/g, "").replace(",", ".");
+  if (!raw) return null;
+  if (!/^\d+(?:\.\d+)?$/.test(raw)) throw new Error(errorMessage);
+  const parsed = Number(raw);
+  if (!Number.isFinite(parsed) || parsed < 0) throw new Error(errorMessage);
+  return parsed;
+}
+
 function normalizeCode(value: string) {
   return value.trim().replace(/\s+/g, "-").toUpperCase();
 }
@@ -44,6 +57,7 @@ function normalizeCode(value: string) {
 function revalidateResources() {
   revalidatePath("/verk");
   revalidatePath("/verk/tilfong");
+  revalidatePath("/mobile/verk");
 }
 
 async function resourceActionContext() {
@@ -101,7 +115,7 @@ export async function createWorkResource(formData: FormData) {
         costRateIsk,
         saleRateIsk,
         meterUnit: meterUnit || (kind === "MACHINE" || kind === "VEHICLE" ? baseUnit : null),
-        qrToken: kind === "TEAM" || kind === "CONTRACTOR" ? null : randomUUID(),
+        qrToken: kind === "TEAM" || kind === "CONTRACTOR" ? null : randomBytes(8).toString("hex"),
         createdById: userId,
         updatedById: userId,
       },
@@ -302,11 +316,13 @@ export async function removeWorkResourceMember(formData: FormData) {
 }
 
 export async function addWorkResourceMeterReading(formData: FormData) {
-  const { effectiveUser, t } = await resourceActionContext();
+  const { effectiveUser, language, t } = await resourceActionContext();
+  const ops = workResourceOperationsText(language);
   const resourceId = Number(formData.get("resourceId"));
   const readingAt = dateOnly(formData.get("readingAt"), t.errors);
   const value = positiveNumber(formData.get("value"), t.errors);
   const note = String(formData.get("note") ?? "").trim();
+  const photo = formData.get("photo");
   if (!Number.isInteger(resourceId)) throw new Error(t.errors.invalidResource);
   if (note.length > 500) throw new Error(t.errors.noteTooLong);
 
@@ -316,25 +332,152 @@ export async function addWorkResourceMeterReading(formData: FormData) {
     select: { id: true, kind: true, baseUnit: true, customUnit: true, meterUnit: true, meterValue: true },
   });
   if (!resource) throw new Error(t.errors.meterUnsupported);
+  if (resource.meterValue !== null && value + 1e-9 < resource.meterValue) throw new Error(t.errors.invalidNumber);
   const unit = resource.meterUnit?.trim() || resource.baseUnit?.trim() || defaultResourceUnit(resource.kind as "MACHINE" | "VEHICLE" | "TOOL");
+  const photoPath = await saveWorkResourceMeterPhoto(photo instanceof File ? photo : null, companyId, resourceId);
 
-  await prisma.$transaction(async (tx) => {
-    const reading = await tx.workResourceMeterReading.create({
-      data: { companyId, workResourceId: resourceId, readingAt, value, unit, note: note || null, createdById: effectiveUser?.id ?? null },
+  try {
+    await prisma.$transaction(async (tx) => {
+      const reading = await tx.workResourceMeterReading.create({
+        data: { companyId, workResourceId: resourceId, readingAt, value, unit, note: note || null, photoPath, createdById: effectiveUser?.id ?? null },
+      });
+      await tx.workResource.update({ where: { id: resourceId }, data: { meterValue: value, updatedById: effectiveUser?.id ?? null } });
+      await tx.auditEvent.create({
+        data: {
+          companyId,
+          userId: effectiveUser?.id ?? null,
+          entityType: "WORK_RESOURCE_METER_READING",
+          entityId: reading.id,
+          parentEntityType: "WORK_RESOURCE",
+          parentEntityId: resourceId,
+          action: "CREATED",
+          source: "USER",
+          description: photoPath ? ops.audit.meterPhotoAdded : t.auditMeterReadingCreated,
+          afterData: { value, unit, readingAt: readingAt.toISOString(), photoPath: photoPath ?? undefined },
+        },
+      });
     });
-    await tx.workResource.update({ where: { id: resourceId }, data: { meterValue: value, updatedById: effectiveUser?.id ?? null } });
+  } catch (error) {
+    await removeWorkResourceMedia(photoPath);
+    throw error;
+  }
+  revalidateResources();
+}
+
+export async function createWorkResourceMaintenanceKey(formData: FormData) {
+  const { effectiveUser, language } = await resourceActionContext();
+  const ops = workResourceOperationsText(language);
+  const resourceId = Number(formData.get("resourceId"));
+  const code = normalizeCode(String(formData.get("code") ?? ""));
+  const name = String(formData.get("name") ?? "").trim();
+  const description = String(formData.get("description") ?? "").trim();
+  const intervalValue = optionalMaintenanceNumber(formData.get("intervalValue"), ops.errors.invalidInterval);
+  const warningLeadValue = optionalMaintenanceNumber(formData.get("warningLeadValue"), ops.errors.invalidInterval);
+
+  if (!Number.isInteger(resourceId) || !code || code.length > 60) throw new Error(ops.errors.invalidMaintenance);
+  if (!name || name.length > 160) throw new Error(ops.errors.maintenanceNameRequired);
+  if (description.length > 1000) throw new Error(ops.errors.noteTooLong);
+  if (intervalValue !== null && intervalValue <= 0) throw new Error(ops.errors.invalidInterval);
+  if (warningLeadValue !== null && warningLeadValue < 0) throw new Error(ops.errors.invalidInterval);
+
+  const companyId = await requireActiveCompanyWriteAccess();
+  const resource = await prisma.workResource.findFirst({
+    where: { id: resourceId, companyId, kind: { in: ["MACHINE", "VEHICLE", "TOOL"] } },
+    select: { id: true, meterValue: true },
+  });
+  if (!resource) throw new Error(ops.errors.resourceMissing);
+  const duplicate = await prisma.workResourceMaintenanceKey.findFirst({
+    where: { companyId, workResourceId: resourceId, code },
+    select: { id: true },
+  });
+  if (duplicate) throw new Error(ops.errors.duplicateMaintenanceCode);
+
+  const nextDueMeterValue = nextMaintenanceDueValue(resource.meterValue, intervalValue);
+  await prisma.$transaction(async (tx) => {
+    const key = await tx.workResourceMaintenanceKey.create({
+      data: {
+        companyId,
+        workResourceId: resourceId,
+        code,
+        name,
+        description: description || null,
+        intervalValue,
+        warningLeadValue,
+        nextDueMeterValue,
+        createdById: effectiveUser?.id ?? null,
+        updatedById: effectiveUser?.id ?? null,
+      },
+    });
     await tx.auditEvent.create({
       data: {
         companyId,
         userId: effectiveUser?.id ?? null,
-        entityType: "WORK_RESOURCE_METER_READING",
-        entityId: reading.id,
+        entityType: "WORK_RESOURCE_MAINTENANCE_KEY",
+        entityId: key.id,
         parentEntityType: "WORK_RESOURCE",
         parentEntityId: resourceId,
         action: "CREATED",
         source: "USER",
-        description: t.auditMeterReadingCreated,
-        afterData: { value, unit, readingAt: readingAt.toISOString() },
+        description: ops.audit.maintenanceKeyCreated,
+        afterData: { code, name, intervalValue, warningLeadValue, nextDueMeterValue },
+      },
+    });
+  });
+  revalidateResources();
+}
+
+export async function completeWorkResourceMaintenance(formData: FormData) {
+  const { effectiveUser, language } = await resourceActionContext();
+  const ops = workResourceOperationsText(language);
+  const maintenanceKeyId = Number(formData.get("maintenanceKeyId"));
+  const note = String(formData.get("note") ?? "").trim();
+  if (!Number.isInteger(maintenanceKeyId)) throw new Error(ops.errors.invalidMaintenance);
+  if (note.length > 1000) throw new Error(ops.errors.noteTooLong);
+
+  const companyId = await requireActiveCompanyWriteAccess();
+  const key = await prisma.workResourceMaintenanceKey.findFirst({
+    where: { id: maintenanceKeyId, companyId, isActive: true },
+    include: { workResource: { select: { id: true, meterValue: true } } },
+  });
+  if (!key) throw new Error(ops.errors.invalidMaintenance);
+  const completedAt = new Date();
+  const meterValue = key.workResource.meterValue;
+  const nextDueMeterValue = nextMaintenanceDueValue(meterValue, key.intervalValue);
+
+  await prisma.$transaction(async (tx) => {
+    const log = await tx.workResourceMaintenanceLog.create({
+      data: {
+        companyId,
+        workResourceId: key.workResourceId,
+        maintenanceKeyId: key.id,
+        completedAt,
+        meterValue,
+        note: note || null,
+        source: "MANUAL",
+        createdById: effectiveUser?.id ?? null,
+      },
+    });
+    await tx.workResourceMaintenanceKey.update({
+      where: { id: key.id },
+      data: {
+        lastCompletedAt: completedAt,
+        lastCompletedMeterValue: meterValue,
+        nextDueMeterValue,
+        updatedById: effectiveUser?.id ?? null,
+      },
+    });
+    await tx.auditEvent.create({
+      data: {
+        companyId,
+        userId: effectiveUser?.id ?? null,
+        entityType: "WORK_RESOURCE_MAINTENANCE_LOG",
+        entityId: log.id,
+        parentEntityType: "WORK_RESOURCE",
+        parentEntityId: key.workResourceId,
+        action: "MAINTENANCE_COMPLETED",
+        source: "USER",
+        description: ops.audit.maintenanceCompleted,
+        afterData: { maintenanceKeyId: key.id, meterValue, nextDueMeterValue },
       },
     });
   });
