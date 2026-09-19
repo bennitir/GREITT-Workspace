@@ -1,0 +1,47 @@
+GLÖGGT – Fylgiskjöl / Innsýn / Birgðir / AI-kostnaður
+19. september 2026
+
+Markmið þessarar viðbótar:
+
+1. Sama fylgiskjal á ekki að fara sjálfkrafa í annað fullt AI-lestur hjá Innsýn
+   þegar fyrsta fylgiskjalagreining hefur þegar náð kjarna staðreyndum.
+
+2. Sjálfvirk Innsýn er idempotent fyrir sömu vinnsluútgáfu. Handvirkt
+   „Lesa með Innsýn“ má áfram óska eftir nýrri/dýpri greiningu.
+
+3. Birgðayfirferð úr fylgiskjali á aðeins að vera virk þegar fyrirtækið hefur
+   GLÖGGT-eininguna „birgdir“ virka.
+   - UI hafði þegar þessa sýnileikavörn.
+   - Nú er sama regla einnig í sjálfri móttöku/vistun vörulína og í server actions.
+   - Ef Birgðir eru óvirkar verða engar DocumentInventoryLine-færslur stofnaðar.
+   - Canonical purchaseLines úr fyrstu skjalagreiningu mega þó áfram varðveitast
+     í extraction metadata þannig að frumniðurstaðan tapist ekki.
+
+4. Kostnaðarsíða GLÖGGT sýnir nú einnig sundurliðun eftir vinnslustigi og aðgerð,
+   m.a.:
+   - Fylgiskjöl / RECEIPT_ANALYSIS
+   - Innsýn / INSIGHT_DOCUMENT_ANALYSIS
+   Þetta gerir production-próf skýr: við þurfum ekki lengur að álykta um
+   tvöfaldan AI-lestur eingöngu út frá heildarfjölda aðgerða.
+
+Engin migration fylgir þessum pakka. Hann gerir ráð fyrir að stóra data-first
+migration-lotan 19.09.2026 sé þegar komin inn.
+
+Próf eftir afritun:
+
+  npx tsc --noEmit
+
+Síðan production-próf:
+
+A. Setja inn 2 venjuleg fylgiskjöl og skoða Kostnað.
+   Vænt: 2 RECEIPT_ANALYSIS og engin INSIGHT_DOCUMENT_ANALYSIS nema skjal hafi
+   raunverulega þurft dýpri Innsýn.
+
+B. Prófa trygging/afborgunarskjal sem fyrsta lestur nær vel.
+   Vænt: Innsýn úr canonical staðreyndum án annars fulls AI-kalls.
+
+C. Fyrirtæki með Birgðir virkar:
+   „Birgðir úr fylgiskjali“ má birtast þegar vörulínur eru til.
+
+D. Fyrirtæki með Birgðir óvirkar:
+   Birgðaboðið má ekki birtast og server action má ekki geta stofnað vörumóttöku.

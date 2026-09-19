@@ -220,13 +220,20 @@ export async function queueInsightForDocument(
     };
   }
 
+  const isAutomaticRequest =
+    (input.source?.trim() || "SYSTEM") !== "USER_REQUEST";
+
   const existingItem =
     await prisma.insightProcessingItem.findFirst({
       where: {
         documentId: document.id,
         processingVersion: INSIGHT_PROCESSING_VERSION,
         status: {
-          in: ["PENDING", "PROCESSING"],
+          // Sjálfvirkt flæði er idempotent líka eftir að vinnsla hefur lokið.
+          // Handvirkur "Lesa með Innsýn" má hins vegar stofna nýja keyrslu.
+          in: isAutomaticRequest
+            ? ["PENDING", "PROCESSING", "COMPLETED"]
+            : ["PENDING", "PROCESSING"],
         },
         job: {
           companyId: document.receipt.companyId,
@@ -250,7 +257,10 @@ export async function queueInsightForDocument(
       jobId: existingItem.jobId,
       itemId: existingItem.id,
       status: existingItem.status,
-      message: "Skjalið er þegar í Innsýn-vinnslu.",
+      message:
+        existingItem.status === "COMPLETED"
+          ? "Sjálfvirk Innsýn fyrir þessa vinnsluútgáfu hefur þegar lokið."
+          : "Skjalið er þegar í Innsýn-vinnslu.",
     };
   }
 

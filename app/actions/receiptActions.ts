@@ -34,8 +34,26 @@ import path from "path";
 import os from "os";
 import crypto from "crypto";
 import { prisma } from "@/lib/prisma";
+import { GLOGGT_MODULES } from "@/lib/core/modules";
 import { supabaseAdmin } from "@/lib/supabase";
 import { revalidatePath } from "next/cache";
+
+async function isInventoryModuleEnabled(companyId: number) {
+  const setting = await prisma.companyModule.findUnique({
+    where: {
+      companyId_moduleId: { companyId, moduleId: "birgdir" },
+    },
+    select: { enabled: true },
+  });
+
+  return setting?.enabled ?? GLOGGT_MODULES.birgdir.available;
+}
+
+async function requireInventoryModuleEnabled(companyId: number) {
+  if (!(await isInventoryModuleEnabled(companyId))) {
+    throw new Error("Birgðakerfi er ekki virkt fyrir þetta fyrirtæki.");
+  }
+}
 
 async function saveReceiptFile(
   file: File,
@@ -216,6 +234,8 @@ async function runAutomaticInsightForDocuments(documentIds: number[]) {
           documentRole: true,
           classificationConfidence: true,
           environmentReviewRequired: true,
+          paymentSchedule: true,
+          extractionMetadata: true,
         },
       });
 
@@ -1963,6 +1983,7 @@ await recordAiUsage({
 });
 
 const createdDocumentIds: number[] = [];
+const inventoryModuleEnabled = await isInventoryModuleEnabled(receipt.companyId);
 
   await prisma.$transaction(async (tx) => {
     await tx.receipt.update({
@@ -2229,6 +2250,25 @@ if (hasInvalidDate) {
                 source: "RECEIPT_ANALYSIS",
                 sourceTextHash: receipt.sourceTextHash ?? null,
                 sourceTextSource: receipt.sourceTextSource ?? null,
+                canonicalExtraction: {
+                  loanInfo:
+                    document.loanInfo && typeof document.loanInfo === "object"
+                      ? document.loanInfo
+                      : null,
+                  insuranceInfo:
+                    document.insuranceInfo && typeof document.insuranceInfo === "object"
+                      ? document.insuranceInfo
+                      : null,
+                  insurancePolicies: Array.isArray(document.insurancePolicies)
+                    ? document.insurancePolicies
+                    : [],
+                  purchaseLines: Array.isArray(document.purchaseLines)
+                    ? document.purchaseLines
+                    : [],
+                  bookingEntries: Array.isArray(document.bookingEntries)
+                    ? document.bookingEntries
+                    : [],
+                },
               },
 
               date: parsedDocumentDate,
@@ -2418,7 +2458,7 @@ if (hasInvalidDate) {
             ? document.purchaseLines
             : [];
 
-          if (rawPurchaseLines.length > 0) {
+          if (inventoryModuleEnabled && rawPurchaseLines.length > 0) {
             const inventoryItems = await tx.inventoryItem.findMany({
               where: {
                 companyId: receipt.companyId,
@@ -3929,6 +3969,7 @@ async function materializeReviewedPaymentSchedule(
 
 export async function receiveDocumentInventoryLine(formData: FormData) {
   const companyId = await requireActiveCompanyWriteAccess();
+  await requireInventoryModuleEnabled(companyId);
   const user = await getEffectiveUser();
 
   const lineId = Number(formData.get("lineId"));
@@ -4073,6 +4114,7 @@ export async function receiveDocumentInventoryLine(formData: FormData) {
 
 export async function skipDocumentInventoryLine(formData: FormData) {
   const companyId = await requireActiveCompanyWriteAccess();
+  await requireInventoryModuleEnabled(companyId);
   const user = await getEffectiveUser();
   const lineId = Number(formData.get("lineId"));
   const reason = String(formData.get("reason") ?? "").trim();
@@ -4124,6 +4166,7 @@ export async function skipDocumentInventoryLine(formData: FormData) {
 
 export async function reopenDocumentInventoryLine(formData: FormData) {
   const companyId = await requireActiveCompanyWriteAccess();
+  await requireInventoryModuleEnabled(companyId);
   const lineId = Number(formData.get("lineId"));
   if (!Number.isInteger(lineId)) throw new Error("Ógild vörulína.");
 

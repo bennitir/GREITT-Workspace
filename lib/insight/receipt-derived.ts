@@ -9,6 +9,20 @@ function normalizeKennitala(value: string | null) {
   return /^\d{10}$/.test(normalized) ? normalized : null;
 }
 
+function asObject(value: unknown): Record<string, unknown> | null {
+  return value && typeof value === "object" && !Array.isArray(value)
+    ? (value as Record<string, unknown>)
+    : null;
+}
+
+function asFiniteNumber(value: unknown) {
+  return typeof value === "number" && Number.isFinite(value) ? value : null;
+}
+
+function asNonEmptyString(value: unknown) {
+  return typeof value === "string" && value.trim() ? value.trim() : null;
+}
+
 /**
  * Venjulegt bókhaldsskjal þarf ekki annað vision-AI kall bara til þess að
  * Innsýn fái þær staðreyndir sem fylgiskjalagreiningin er þegar búin að lesa.
@@ -109,6 +123,144 @@ export async function persistReceiptDerivedInsight(documentId: number) {
         textValue: document.documentRole,
         confidence: document.classificationConfidence,
       });
+    }
+
+    if (document.summary?.trim()) {
+      facts.push({
+        factType: "DOCUMENT_SUMMARY",
+        label: "Samantekt úr fylgiskjalslestri",
+        textValue: document.summary.trim(),
+        confidence: document.classificationConfidence,
+      });
+    }
+
+    const extractionMetadata = asObject(document.extractionMetadata);
+    const canonicalExtraction = asObject(extractionMetadata?.canonicalExtraction);
+    const loanInfo = asObject(canonicalExtraction?.loanInfo);
+    const insuranceInfo = asObject(canonicalExtraction?.insuranceInfo);
+
+    const loanNumber = asNonEmptyString(loanInfo?.loanNumber);
+    const collectionLetterNumber = asNonEmptyString(loanInfo?.collectionLetterNumber);
+    const lenderName = asNonEmptyString(loanInfo?.lenderName);
+    const principalAmount = asFiniteNumber(loanInfo?.principalAmount);
+
+    if (lenderName) {
+      facts.push({
+        factType: "LOAN_LENDER",
+        label: "Lánveitandi",
+        textValue: lenderName,
+        confidence: document.classificationConfidence,
+      });
+    }
+
+    if (loanNumber) {
+      facts.push({
+        factType: "LOAN_NUMBER",
+        label: "Lánsnúmer",
+        textValue: loanNumber,
+        confidence: document.classificationConfidence,
+      });
+    }
+
+    if (collectionLetterNumber) {
+      facts.push({
+        factType: "COLLECTION_LETTER_NUMBER",
+        label: "Innheimtubréfsnúmer",
+        textValue: collectionLetterNumber,
+        confidence: document.classificationConfidence,
+      });
+    }
+
+    if (principalAmount !== null) {
+      facts.push({
+        factType: "LOAN_PRINCIPAL",
+        label: "Höfuðstóll / afborgun höfuðstóls",
+        numberValue: principalAmount,
+        confidence: document.classificationConfidence,
+        metadata: { currency: "ISK" },
+      });
+    }
+
+    const insurerName = asNonEmptyString(insuranceInfo?.insurerName);
+    const policyNumber = asNonEmptyString(insuranceInfo?.policyNumber);
+    const insuranceType = asNonEmptyString(insuranceInfo?.insuranceType);
+
+    if (insurerName) {
+      facts.push({
+        factType: "INSURER",
+        label: "Tryggingafélag",
+        textValue: insurerName,
+        confidence: document.classificationConfidence,
+      });
+    }
+
+    if (policyNumber) {
+      facts.push({
+        factType: "INSURANCE_POLICY_NUMBER",
+        label: "Skírteinisnúmer",
+        textValue: policyNumber,
+        confidence: document.classificationConfidence,
+      });
+    }
+
+    if (insuranceType) {
+      facts.push({
+        factType: "INSURANCE_TYPE",
+        label: "Tegund tryggingar",
+        textValue: insuranceType,
+        confidence: document.classificationConfidence,
+      });
+    }
+
+    const paymentSchedule = asObject(document.paymentSchedule);
+    if (paymentSchedule) {
+      const scheduleType = asNonEmptyString(paymentSchedule.scheduleType);
+      const totalAmount = asFiniteNumber(paymentSchedule.totalAmount);
+      const currency = asNonEmptyString(paymentSchedule.currency) ?? "ISK";
+
+      if (scheduleType) {
+        facts.push({
+          factType: "PAYMENT_SCHEDULE_TYPE",
+          label: "Tegund greiðsluáætlunar",
+          textValue: scheduleType,
+          confidence: document.classificationConfidence,
+        });
+      }
+
+      if (totalAmount !== null) {
+        facts.push({
+          factType: "PAYMENT_SCHEDULE_TOTAL",
+          label: "Heildarskuldbinding samkvæmt greiðsluáætlun",
+          numberValue: totalAmount,
+          confidence: document.classificationConfidence,
+          metadata: { currency },
+        });
+      }
+
+      const installments = Array.isArray(paymentSchedule.installments)
+        ? paymentSchedule.installments
+        : [];
+
+      for (const rawInstallment of installments.slice(0, 60)) {
+        const installment = asObject(rawInstallment);
+        const amount = asFiniteNumber(installment?.amount);
+        const dueDate = asNonEmptyString(installment?.dueDate);
+        if (amount === null || !dueDate) continue;
+
+        const parsedDueDate = new Date(dueDate);
+        facts.push({
+          factType: "PAYMENT_SCHEDULE_INSTALLMENT",
+          label: "Gjalddagi samkvæmt greiðsluáætlun",
+          numberValue: amount,
+          dateValue: Number.isNaN(parsedDueDate.getTime()) ? undefined : parsedDueDate,
+          confidence: document.classificationConfidence,
+          metadata: {
+            currency,
+            sequence: asFiniteNumber(installment?.sequence),
+            externalReference: asNonEmptyString(installment?.externalReference),
+          },
+        });
+      }
     }
 
     for (const fact of facts) {

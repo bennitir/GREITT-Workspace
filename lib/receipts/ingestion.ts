@@ -263,33 +263,85 @@ export function shouldRunDeepInsight(document: DetectedDocumentLike) {
       : 0;
   const summary = normalizeIdentityText(document.summary);
 
-  const alwaysDeepTypes = new Set([
-    "STATEMENT",
-    "OFFER",
-    "CONTRACT",
-    "INFORMATION",
-    "PAYMENT_NOTICE",
-    "UNKNOWN",
-  ]);
+  const extractionMetadata =
+    document.extractionMetadata &&
+    typeof document.extractionMetadata === "object" &&
+    !Array.isArray(document.extractionMetadata)
+      ? (document.extractionMetadata as Record<string, unknown>)
+      : null;
 
-  if (alwaysDeepTypes.has(type) || role === "INSIGHT_SOURCE" || role === "REVIEW") {
-    return true;
-  }
+  const canonicalExtraction =
+    extractionMetadata?.canonicalExtraction &&
+    typeof extractionMetadata.canonicalExtraction === "object" &&
+    !Array.isArray(extractionMetadata.canonicalExtraction)
+      ? (extractionMetadata.canonicalExtraction as Record<string, unknown>)
+      : null;
 
-  // Lán, tryggingar og samningsskuldbindingar geta innihaldið miklu meira en
-  // bókunarlínuna sjálfa. Þau fá dýpri greiningu þótt skjalið sé bókanlegt.
-  if (
-    /\b(lan|lansnumer|hofudstoll|trygging|skirteini|samning|skuldbinding)\b/.test(
-      summary,
-    )
-  ) {
-    return true;
-  }
+  const hasCanonicalLoan = Boolean(
+    canonicalExtraction?.loanInfo &&
+      typeof canonicalExtraction.loanInfo === "object",
+  );
+  const canonicalInsurancePolicies = Array.isArray(
+    canonicalExtraction?.insurancePolicies,
+  )
+    ? canonicalExtraction.insurancePolicies
+    : [];
+  const hasCanonicalInsurance = Boolean(
+    (canonicalExtraction?.insuranceInfo &&
+      typeof canonicalExtraction.insuranceInfo === "object") ||
+      canonicalInsurancePolicies.length > 0,
+  );
+  const hasPaymentSchedule = Boolean(
+    document.paymentSchedule &&
+      typeof document.paymentSchedule === "object" &&
+      !Array.isArray(document.paymentSchedule),
+  );
 
   const hasCoreFacts =
     Boolean(normalizeIdentityText(document.merchantName)) &&
     Boolean(normalizeDate(document.date)) &&
     safeNumber(document.totalAmount) !== null;
+
+  /*
+   * Gögn fyrst, AI síðan:
+   * Fylgiskjalagreiningin hefur þegar séð frumskjalið. Við keyrum því ekki
+   * sjálfkrafa annað fullt AI-lestur bara vegna þess að skjalið var lán,
+   * trygging, afborgunartilkynning eða yfirlit. Ef fyrri greiningin skilaði
+   * canonical staðreyndum eiga Innsýn og bókun að deila þeim.
+   */
+  if (
+    (type === "PAYMENT_NOTICE" || type === "STATEMENT") &&
+    (hasPaymentSchedule || hasCanonicalLoan || hasCanonicalInsurance || hasCoreFacts)
+  ) {
+    return false;
+  }
+
+  if (
+    /\b(lan|lansnumer|hofudstoll|trygging|skirteini|samning|skuldbinding)\b/.test(
+      summary,
+    ) &&
+    (hasCanonicalLoan || hasCanonicalInsurance || hasPaymentSchedule)
+  ) {
+    return false;
+  }
+
+  // Skjöl sem eru sjálf fyrst og fremst merkingar-/skilmálagögn mega enn fá
+  // dýpri greiningu sjálfkrafa. Þetta er ekki venjulegt bókunarskjal.
+  if (
+    type === "CONTRACT" ||
+    type === "OFFER" ||
+    type === "INFORMATION" ||
+    type === "UNKNOWN" ||
+    role === "INSIGHT_SOURCE"
+  ) {
+    return true;
+  }
+
+  // REVIEW á ekki sjálfkrafa að þýða "borga fyrir annað AI-kall". Ef fyrri
+  // lestur hefur kjarna staðreyndir bíður skjalið frekar mannlegrar yfirferðar.
+  if (role === "REVIEW" && hasCoreFacts) {
+    return false;
+  }
 
   return !(confidence >= 0.82 && hasCoreFacts);
 }
