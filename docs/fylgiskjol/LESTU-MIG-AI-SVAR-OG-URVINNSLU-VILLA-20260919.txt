@@ -1,0 +1,16 @@
+GLÖGGT – AI svar vs. úrvinnsluvilla – 19.09.2026
+
+Markmið
+- Aðgreina raunverulegt OpenAI-kall frá vistun/úrvinnslu niðurstöðunnar.
+- Ekki merkja fylgiskjal sem „AI-lestur mistókst“ þegar AI-kallið sjálft tókst.
+- Varðveita nákvæma villu í Rekjanleika.
+- Minnka líkur á transaction-timeout við stór fjölskjal/fjölskírteina fylgiskjöl.
+
+Breytingar
+1. Bakgrunnsvinnslan athugar AiUsage úr sömu keyrslu þegar analyzeReceiptWithAI kastar villu.
+2. Ef AI-kall tókst en eftirvinnsla bilaði fær fylgiskjalið stöðuna:
+   „AI svaraði en úrvinnsla niðurstöðu mistókst“.
+3. AuditEvent er stofnað með aðgerðinni RECEIPT_ANALYSIS_POSTPROCESS_FAILED eða RECEIPT_ANALYSIS_FAILED og tæknilegri villu í metadata/description. Það birtist sjálfkrafa í Rekjanleika.
+4. Stóra Prisma transactionið sem varðveitir AI-niðurstöðuna fær maxWait=10s og timeout=30s. Þetta er sérstaklega mikilvægt fyrir fjölskírteina tryggingaskjöl þar sem margar entity-/link-aðgerðir fara fram í sömu transaction.
+
+Engin migration.

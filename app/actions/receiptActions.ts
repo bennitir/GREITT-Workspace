@@ -390,22 +390,77 @@ export async function createReceipt(formData: FormData) {
     throw error;
   }
 
+  const backgroundAnalysisStartedAt = new Date();
+
   after(async () => {
     try {
       const analysisResult = await analyzeReceiptWithAI(createdReceipt.id);
       await runAutomaticInsightForDocuments(analysisResult.createdDocumentIds);
     } catch (error) {
+      const errorMessage =
+        error instanceof Error ? error.message : String(error ?? "Óþekkt villa");
+
       console.error(
-        `AI-lestur mistókst fyrir fylgiskjal ${createdReceipt.id}:`,
+        `Vinnsla fylgiskjals mistókst fyrir fylgiskjal ${createdReceipt.id}:`,
         error,
       );
 
-      await prisma.receipt.update({
-        where: { id: createdReceipt.id },
-        data: {
-          status: "NEEDS_ATTENTION",
-          ocrStatus: "AI-lestur mistókst",
+      // AiUsage er skráð um leið og OpenAI hefur svarað og svarið hefur verið
+      // JSON-lesið. Ef slík færsla er til úr ÞESSARI keyrslu þá vitum við að
+      // kostnaðarsama AI-kallið tókst, en vistun/úrvinnsla niðurstöðunnar bilaði
+      // síðar. Þetta má ekki birtast sem „AI-lestur mistókst“.
+      const successfulAiCall = await prisma.aiUsage.findFirst({
+        where: {
+          receiptId: createdReceipt.id,
+          action: "RECEIPT_ANALYSIS",
+          success: true,
+          createdAt: { gte: backgroundAnalysisStartedAt },
         },
+        orderBy: { createdAt: "desc" },
+        select: { id: true, operationKey: true, createdAt: true },
+      });
+
+      const aiResponded = Boolean(successfulAiCall);
+      const visibleStatus = aiResponded
+        ? "AI svaraði en úrvinnsla niðurstöðu mistókst"
+        : "AI-lestur mistókst";
+      const auditAction = aiResponded
+        ? "RECEIPT_ANALYSIS_POSTPROCESS_FAILED"
+        : "RECEIPT_ANALYSIS_FAILED";
+      const auditDescription = aiResponded
+        ? `AI-kall tókst, en vistun eða úrvinnsla niðurstöðunnar mistókst: ${errorMessage}`
+        : `AI-lestur fylgiskjals mistókst: ${errorMessage}`;
+
+      await prisma.$transaction([
+        prisma.receipt.update({
+          where: { id: createdReceipt.id },
+          data: {
+            status: "NEEDS_ATTENTION",
+            ocrStatus: visibleStatus,
+          },
+        }),
+        prisma.auditEvent.create({
+          data: {
+            companyId,
+            entityType: "Receipt",
+            entityId: createdReceipt.id,
+            action: auditAction,
+            source: "SYSTEM",
+            description: auditDescription.slice(0, 1500),
+            metadata: {
+              processingVersion: RECEIPT_PROCESSING_VERSION,
+              aiCallSucceeded: aiResponded,
+              aiUsageId: successfulAiCall?.id ?? null,
+              operationKey: successfulAiCall?.operationKey ?? null,
+              errorMessage: errorMessage.slice(0, 4000),
+            },
+          },
+        }),
+      ]).catch((persistError) => {
+        console.error(
+          `Mistókst að varðveita villurekjanleika fyrir fylgiskjal ${createdReceipt.id}:`,
+          persistError,
+        );
       });
     }
   });
@@ -3114,6 +3169,13 @@ if (dateWarnings.length > 0) {
     },
   });
 }
+  }, {
+    // Fjölskjal/fjölskírteina fylgiskjöl geta krafist talsvert fleiri DB-aðgerða
+    // en einföld kvittun. Prisma interactive transaction er sjálfgefið aðeins
+    // 5 sekúndur; þá getur AI-kallið tekist en vistun niðurstöðunnar fallið á
+    // transaction-timeout. Gefum úrvinnslunni raunhæft svigrúm.
+    maxWait: 10_000,
+    timeout: 30_000,
   });
 
   
