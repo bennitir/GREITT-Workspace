@@ -4,7 +4,7 @@ import { extractTextFromPdfBuffer } from "@/lib/core/pdf-text";
 import { supabaseAdmin } from "@/lib/supabase";
 import { createInsightProcessingJob } from "@/lib/insight/processing-service";
 
-export const INSIGHT_PROCESSING_VERSION = "innsyn-v1";
+export const INSIGHT_PROCESSING_VERSION = "innsyn-v2-data-first";
 
 type QueueInsightForDocumentInput = {
   documentId: number;
@@ -17,7 +17,7 @@ type QueueInsightForDocumentInput = {
 
 type PrivacyPreflightResult = {
   text: string;
-  source: "PDF_SOURCE_TEXT" | "OCR_TEXT_FALLBACK";
+  source: "RECEIPT_SOURCE_TEXT" | "PDF_SOURCE_TEXT" | "OCR_TEXT_FALLBACK";
 };
 
 function isPdfDocument(input: {
@@ -42,8 +42,18 @@ async function getPrivacyPreflightText(input: {
   fileName: string | null;
   filePath: string | null;
   storagePath: string | null;
+  sourceText: string | null;
   ocrText: string | null;
 }): Promise<PrivacyPreflightResult> {
+  const receiptSourceText = input.sourceText?.trim() ?? "";
+
+  if (receiptSourceText) {
+    return {
+      text: receiptSourceText,
+      source: "RECEIPT_SOURCE_TEXT",
+    };
+  }
+
   if (isPdfDocument(input)) {
     if (!input.storagePath) {
       throw new Error(
@@ -152,6 +162,7 @@ export async function queueInsightForDocument(
           fileName: true,
           filePath: true,
           storagePath: true,
+          sourceText: true,
           ocrText: true,
         },
       },
@@ -176,6 +187,7 @@ export async function queueInsightForDocument(
       fileName: document.receipt.fileName,
       filePath: document.receipt.filePath,
       storagePath: document.receipt.storagePath,
+      sourceText: document.receipt.sourceText,
       ocrText: document.receipt.ocrText,
     });
 

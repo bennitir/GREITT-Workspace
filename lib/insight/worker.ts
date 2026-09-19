@@ -1,4 +1,5 @@
 import { prisma } from "@/lib/prisma";
+import { recordAiUsage } from "@/lib/ai/usage";
 
 import {
   analyzeDocumentForInsight,
@@ -797,6 +798,8 @@ export async function processNextInsightItem(
     };
   }
 
+  const insightStartedAt = Date.now();
+
   try {
     if (
       !item.receipt.filePath &&
@@ -861,6 +864,9 @@ export async function processNextInsightItem(
         storagePath:
           item.receipt.storagePath,
 
+        sourceText:
+          item.receipt.sourceText,
+
         processingVersion:
           item.processingVersion,
 
@@ -916,6 +922,31 @@ export async function processNextInsightItem(
               }
             : null,
       });
+
+    await recordAiUsage({
+      companyId: company.id,
+      userId: item.job.requestedById,
+      receiptId: item.receiptId,
+      action: "INSIGHT_DOCUMENT_ANALYSIS",
+      pipelineStage: "INSIGHT_DEEP",
+      operationKey: `INSIGHT:${item.documentId ?? `RECEIPT-${item.receiptId}`}:${item.processingVersion}`,
+      model: analysis.usage.model,
+      usage: {
+        inputTokens: analysis.usage.inputTokens,
+        cachedInputTokens: analysis.usage.cachedInputTokens,
+        outputTokens: analysis.usage.outputTokens,
+        totalTokens: analysis.usage.totalTokens,
+      },
+      durationMs: Date.now() - insightStartedAt,
+      metadata: {
+        processingVersion: item.processingVersion,
+        jobId: item.jobId,
+        itemId: item.id,
+        documentId: item.documentId,
+      },
+    }).catch((usageError) => {
+      console.error("Ekki tókst að skrá AI-kostnað Innsýnar:", usageError);
+    });
 
     const persisted =
       await persistInsightAnalysis({
@@ -1123,6 +1154,25 @@ export async function processNextInsightItem(
   } catch (error) {
     const errorMessage =
       cleanWorkerError(error);
+
+    await recordAiUsage({
+      companyId: item.job.companyId,
+      userId: item.job.requestedById,
+      receiptId: item.receiptId,
+      action: "INSIGHT_DOCUMENT_ANALYSIS",
+      pipelineStage: "INSIGHT_DEEP",
+      operationKey: `INSIGHT:${item.documentId ?? `RECEIPT-${item.receiptId}`}:${item.processingVersion}`,
+      model: "gpt-5.6",
+      durationMs: Date.now() - insightStartedAt,
+      success: false,
+      errorMessage,
+      metadata: {
+        processingVersion: item.processingVersion,
+        jobId: item.jobId,
+        itemId: item.id,
+        documentId: item.documentId,
+      },
+    }).catch(() => undefined);
 
     try {
       const failure =

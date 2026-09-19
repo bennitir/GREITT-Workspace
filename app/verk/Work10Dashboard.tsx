@@ -4,16 +4,18 @@ import Link from "next/link";
 import { useMemo, useState, type ReactNode } from "react";
 import { work10FormatDate, work10PriorityText, work10StatusText, work10Text } from "@/lib/i18n/work10";
 
-type WorkLogData = {
-  id: number;
+type ActualLaborData = {
+  id: string;
   userId: number | null;
   employeeId: number | null;
   userName: string | null;
   workDate: string;
   startedAt: string | null;
   endedAt: string | null;
-  durationMinutes: number | null;
+  durationMinutes: number;
   description: string | null;
+  source: "WORK_PART_FACT" | "LEGACY_WORK_LOG";
+  workPartId: number | null;
 };
 
 type WorkPartData = {
@@ -32,6 +34,9 @@ type WorkPartData = {
 
 type WorkOrderData = {
   id: number;
+  workNumber: string;
+  workKey: string | null;
+  externalId: string | null;
   title: string;
   description: string | null;
   address: string | null;
@@ -42,7 +47,7 @@ type WorkOrderData = {
   completedAt: string | null;
   createdByName: string | null;
   workParts: WorkPartData[];
-  workLogs: WorkLogData[];
+  actualLabor: ActualLaborData[];
 };
 
 type PersonData = {
@@ -165,18 +170,23 @@ export default function Work10Dashboard({ data }: { data: Work10DashboardData })
     return data.people.filter((person) => person.name.toLowerCase().includes(q));
   }, [data.people, search]);
 
-  const todayLogs = useMemo(
+  const selectedDayLabor = useMemo(
     () =>
       data.workOrders.flatMap((work) =>
-        work.workLogs
-          .filter((log) => log.startedAt && sameLocalDay(log.startedAt, selectedDate))
-          .map((log) => ({ ...log, workId: work.id, workTitle: work.title }))
+        work.actualLabor
+          .filter((entry) => sameLocalDay(entry.workDate, selectedDate))
+          .map((entry) => ({ ...entry, workId: work.id, workTitle: work.title }))
       ),
-    [data.workOrders, selectedDate]
+    [data.workOrders, selectedDate],
+  );
+
+  const timelineLabor = useMemo(
+    () => selectedDayLabor.filter((entry) => entry.startedAt),
+    [selectedDayLabor],
   );
 
   const activeEmployeeIds = new Set(
-    data.workOrders.flatMap((work) => work.workLogs.filter((log) => log.startedAt && !log.endedAt).map((log) => log.employeeId).filter((id): id is number => id !== null))
+    data.workOrders.flatMap((work) => work.actualLabor.filter((entry) => entry.startedAt && !entry.endedAt).map((entry) => entry.employeeId).filter((id): id is number => id !== null))
   );
 
   const personWorkRows = useMemo(() => {
@@ -185,8 +195,8 @@ export default function Work10Dashboard({ data }: { data: Work10DashboardData })
     for (const person of data.people) {
       const related = data.workOrders.filter((work) => {
         const assigned = work.workParts.some((part) => part.assignedEmployeeIds.includes(person.id));
-        const hasLoggedTime = work.workLogs.some((log) => log.employeeId === person.id);
-        return assigned || hasLoggedTime;
+        const hasActualLabor = work.actualLabor.some((entry) => entry.employeeId === person.id);
+        return assigned || hasActualLabor;
       });
       rows.set(person.id, related);
     }
@@ -195,9 +205,11 @@ export default function Work10Dashboard({ data }: { data: Work10DashboardData })
   }, [data.people, data.workOrders]);
 
   const inProgressCount = data.workOrders.filter((work) => work.status === "IN_PROGRESS").length;
-  const newCount = data.workOrders.filter((work) => work.status === "NEW").length;
+  const newCount = data.workOrders.filter(
+    (work) => work.status === "DRAFT" || work.status === "READY",
+  ).length;
   const completedCount = data.workOrders.filter((work) => work.status === "COMPLETED").length;
-  const uniqueLoggedPeople = new Set(todayLogs.map((log) => log.employeeId).filter((id): id is number => id !== null)).size;
+  const uniqueLoggedPeople = new Set(selectedDayLabor.map((entry) => entry.employeeId).filter((id): id is number => id !== null)).size;
 
   const shiftDate = (days: number) => {
     setSelectedDate((current) => {
@@ -387,13 +399,13 @@ export default function Work10Dashboard({ data }: { data: Work10DashboardData })
                             }`}
                           >
                             <span className="block truncate font-semibold text-slate-900">{work.title}</span>
-                            <span className="block truncate text-[10px] text-slate-500">#{work.id} · {work10StatusText(work.status, data.language)}</span>
+                            <span className="block truncate text-[10px] text-slate-500">#{work.workNumber} · {work10StatusText(work.status, data.language)}</span>
                           </button>
                         ))}
                       </div>
 
                       {(data.people.length ? data.people : [{ id: -1, name: t.noPeople, jobTitle: null, userId: null }]).slice(0, 7).map((person) => {
-                        const personLogs = todayLogs.filter((log) => log.employeeId === person.id && log.startedAt);
+                        const personLogs = timelineLabor.filter((log) => log.employeeId === person.id && log.startedAt);
                         return (
                           <div key={person.id} className="relative h-[58px]">
                             <span className="absolute left-2 top-2 z-10 rounded-md bg-white/90 px-2 py-1 text-[10px] font-medium text-slate-500 shadow-sm">{person.name}</span>
@@ -430,7 +442,7 @@ export default function Work10Dashboard({ data }: { data: Work10DashboardData })
                         <p className="text-xs font-semibold uppercase tracking-wide text-slate-400">{t.selectedWork}</p>
                         <Link href={`/verk/${selectedWork.id}`} className="group block">
                           <h2 className="mt-1 text-xl font-bold text-slate-950 group-hover:text-blue-700 group-hover:underline">{selectedWork.title}</h2>
-                          <p className="mt-1 text-xs text-slate-500">#{selectedWork.id}{selectedWork.address ? ` · ${selectedWork.address}` : ""}</p>
+                          <p className="mt-1 text-xs text-slate-500">#{selectedWork.workNumber}{selectedWork.workKey ? ` · ${selectedWork.workKey}` : ""}{selectedWork.address ? ` · ${selectedWork.address}` : ""}</p>
                         </Link>
                       </div>
                       <span className={`shrink-0 rounded-full px-2.5 py-1 text-xs font-semibold ${selectedWork.status === "COMPLETED" ? "bg-emerald-100 text-emerald-800" : selectedWork.status === "IN_PROGRESS" ? "bg-blue-100 text-blue-800" : "bg-slate-100 text-slate-700"}`}>{work10StatusText(selectedWork.status, data.language)}</span>
@@ -447,7 +459,7 @@ export default function Work10Dashboard({ data }: { data: Work10DashboardData })
 
                     <div className="mt-4 grid grid-cols-2 gap-2 text-xs">
                       <div className="rounded-xl bg-slate-50 p-3"><p className="text-slate-400">{t.priority}</p><p className="mt-1 font-semibold text-slate-800">{work10PriorityText(selectedWork.priority, data.language)}</p></div>
-                      <div className="rounded-xl bg-slate-50 p-3"><p className="text-slate-400">{t.timeEntries}</p><p className="mt-1 font-semibold text-slate-800">{selectedWork.workLogs.length}</p></div>
+                      <div className="rounded-xl bg-slate-50 p-3"><p className="text-slate-400">{t.timeEntries}</p><p className="mt-1 font-semibold text-slate-800">{selectedWork.actualLabor.length}</p></div>
                     </div>
 
                     <div className="mt-5 border-b">
@@ -460,10 +472,10 @@ export default function Work10Dashboard({ data }: { data: Work10DashboardData })
                     </div>
 
                     <div className="mt-3 space-y-2">
-                      {Array.from(new Map(selectedWork.workLogs.filter((log) => log.userId).map((log) => [log.userId, log])).values()).length === 0 ? (
+                      {Array.from(new Map(selectedWork.actualLabor.filter((log) => log.userId).map((log) => [log.userId, log])).values()).length === 0 ? (
                         <p className="rounded-xl border border-dashed p-3 text-xs leading-5 text-slate-500">{t.noFormalAssignments}</p>
                       ) : (
-                        Array.from(new Map(selectedWork.workLogs.filter((log) => log.userId).map((log) => [log.userId, log])).values()).map((log) => (
+                        Array.from(new Map(selectedWork.actualLabor.filter((log) => log.userId).map((log) => [log.userId, log])).values()).map((log) => (
                           <div key={log.userId} className="flex items-center gap-3 rounded-xl border p-2.5">
                             <div className="flex h-8 w-8 items-center justify-center rounded-full bg-blue-100 text-[11px] font-bold text-blue-700">{initials(log.userName ?? "?")}</div>
                             <div className="min-w-0 flex-1"><p className="truncate text-sm font-semibold">{log.userName ?? t.unknown}</p><p className="text-[11px] text-slate-500">{t.loggedOnWork}</p></div>
@@ -474,7 +486,7 @@ export default function Work10Dashboard({ data }: { data: Work10DashboardData })
 
                     <div className="mt-5 grid grid-cols-2 gap-2">
                       <div className="rounded-xl border p-3"><p className="text-xs text-slate-400">{t.plannedTime}</p><p className="mt-1 font-semibold text-slate-700">{t.notRegistered}</p></div>
-                      <div className="rounded-xl border p-3"><p className="text-xs text-slate-400">{t.actualTime}</p><p className="mt-1 font-semibold text-slate-700">{Math.round(selectedWork.workLogs.reduce((sum, log) => sum + (log.durationMinutes ?? 0), 0) / 60 * 10) / 10} {t.hoursShort}</p></div>
+                      <div className="rounded-xl border p-3"><p className="text-xs text-slate-400">{t.actualTime}</p><p className="mt-1 font-semibold text-slate-700">{Math.round(selectedWork.actualLabor.reduce((sum, log) => sum + (log.durationMinutes ?? 0), 0) / 60 * 10) / 10} {t.hoursShort}</p></div>
                     </div>
 
                     <div className="mt-5 rounded-xl border bg-slate-50 p-3">
@@ -522,7 +534,7 @@ export default function Work10Dashboard({ data }: { data: Work10DashboardData })
                   <div className="mt-5 divide-y overflow-hidden rounded-xl border bg-white">
                     {data.workOrders.map((work) => (
                       <Link key={work.id} href={`/verk/${work.id}`} className="flex w-full items-center justify-between gap-4 p-4 text-left hover:bg-slate-50">
-                        <div><p className="font-semibold text-slate-900">{work.title}</p><p className="text-sm text-slate-500">#{work.id}{work.address ? ` · ${work.address}` : ""}</p></div>
+                        <div><p className="font-semibold text-slate-900">{work.title}</p><p className="text-sm text-slate-500">#{work.workNumber}{work.workKey ? ` · ${work.workKey}` : ""}{work.address ? ` · ${work.address}` : ""}</p></div>
                         <span className="rounded-full bg-slate-100 px-2.5 py-1 text-xs font-medium text-slate-600">{work10StatusText(work.status, data.language)}</span>
                       </Link>
                     ))}

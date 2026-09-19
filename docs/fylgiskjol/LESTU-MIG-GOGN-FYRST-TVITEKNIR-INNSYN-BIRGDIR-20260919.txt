@@ -1,0 +1,99 @@
+GLÖGGT – Fylgiskjöl / Innsýn / Birgðir
+Gögn fyrst, AI síðan + tvíteknivörn + vörumóttaka úr fylgiskjali
+19. september 2026
+
+MARKMIÐ
+------
+Þessi uppfærsla styrkir inngang fylgiskjala áður en meiri sjálfvirkni er byggð ofan á hann.
+Meginreglan er:
+
+Frumskjal -> deterministic gögn -> tvíteknivörn -> staðreyndir og saga -> AI aðeins þar sem þarf -> Bókun / Innsýn / Birgðir.
+
+AI er ekki sannleikslag. Frumgögn, staðfestar reglur og rekjanleg notendastaðfesting hafa forgang.
+
+HELSTU BREYTINGAR
+-----------------
+1. Exact tvíteknivörn við innsendingu
+   - SHA-256 fileHash reiknast áður en skjal er vistað sem nýtt Receipt.
+   - ingestKey er unique og lokar líka race-condition ef sama skrá er send samtímis tvisvar.
+   - Orphan Supabase-upload er hreinsað ef unique-vörn vinnur keppnina.
+
+2. Gögn lesin áður en AI er kallað
+   - PDF-textalag er lesið deterministic þegar það er til.
+   - Canonical sourceText, sourceTextHash, sourceTextSource og deterministicData eru varðveitt á Receipt.
+   - Einfaldar vísbendingar úr texta, s.s. kennitölur, dagsetningar, tilvísanir og fjárhæðir, eru unnar áður en AI fær skjalið.
+   - Myndir/skönnuð PDF þurfa áfram sjónrænan lestur þegar ekkert deterministic textalag er til.
+
+3. Idempotency og tvítekin innri skjöl
+   - Hvert greint undirskjal fær documentFingerprint.
+   - Sama fingerprint má aðeins koma einu sinni fyrir innan sama Receipt.
+   - Duplicates sem sama greining skilar tvisvar/þrisvar eru felld saman áður en þau verða AiDetectedDocument.
+   - Sterkar cross-upload vísbendingar (t.d. birgir/kennitala + skjalanúmer ásamt samhengi dagsetningar/fjárhæðar) geta merkt mögulegt tvírit.
+   - Líklegt tvírit er merkt til yfirferðar; það er ekki eytt sjálfkrafa.
+
+4. Samhliða AI-lestur varinn
+   - analysisLeaseUntil kemur í veg fyrir tvö full AI-köll á sama Receipt á sama tíma.
+   - processingVersion varðveitir hvaða vinnsluleið bjó til niðurstöðuna.
+
+5. Innsýn endurnýtir fylgiskjalslestur
+   - Venjuleg, örugg bókhaldsskjöl fara ekki sjálfkrafa í annan fullan vision-lestur hjá Innsýn.
+   - Innsýn fær canonical staðreyndir úr fylgiskjalagreiningunni og varðveitir þær með insightMode=RECEIPT_DERIVED.
+   - Dýpri Innsýn (DEEP_AI) er áfram notuð þegar skjal er óljóst eða inniheldur m.a. samning, lán, tryggingar, yfirlit, skuldbindingu eða annað sem þarf raunverulega merkingargreiningu.
+   - PDF sourceText er endurnýtt í dýpri Innsýn þegar það er til.
+
+6. AI-kostnaður rekjanlegri
+   - Sameiginlegt usage-lag skráir pipelineStage, operationKey og metadata.
+   - Fylgiskjalagreining er merkt RECEIPT_ANALYSIS.
+   - Dýpri Innsýn er merkt INSIGHT_DEEP og kostnaður hennar er nú skráður líka.
+   - Markmið: Kostnaðarsíðan geti síðar sundurliðað kostnað eftir vinnslustigi.
+
+7. Vörulínur úr fylgiskjali -> Birgðir
+   - AI-schema les purchaseLines þegar línur sjást á innkaupaskjali.
+   - Engin birgðahreyfing verður til við lestur einn og sér.
+   - GLÖGGT reynir fyrst deterministic pörun við lagerhaldna vöru eftir:
+       a) einstöku strikamerki,
+       b) vörunúmeri/SKU,
+       c) einstöku nákvæmu normalíseruðu heiti,
+       d) fyrri mannlega staðfestri birgir + vörunúmer pörun.
+   - Ef fleiri en ein vara passar sama barcode/heiti er ekki sjálfvirkt valið.
+   - Í yfirferð fylgiskjals velur/staðfestir notandi vöru, lagerstað, magn á lager og innkaupsverð á einingu.
+   - Aðeins eftir þá staðfestingu stofnast InventoryMovement af gerð RECEIPT.
+   - Hreyfingin tengist nákvæmlega DocumentInventoryLine og verður því ekki stofnuð tvisvar fyrir sömu línu.
+   - Skjal merkt tvírit má ekki hækka lager aftur.
+   - Kreditnótur/vöruskil eru ekki sjálfkrafa lagerfærð í þessari leið.
+   - Línan varðveitir lesið magn/einingu sérstaklega svo notandi geti staðfest rétta lager-einingu; enginn einingaumreikningur er giskaður.
+   - purchaseUnitCost á InventoryItem er ekki yfirskrifað sjálfkrafa; uppruni kostnaðar varðveitist á línu/hreyfingu.
+
+8. Endurlestur eftir vörumóttöku
+   - Ef DocumentInventoryLine hefur þegar verið RECEIVED má endurlestur ekki eyða skjalinu/línunni og rjúfa rekjanleika.
+
+MIKILVÆG MÖRK
+--------------
+- Þetta er EKKI sjálfvirk bókun.
+- Þetta er EKKI sjálfvirk vörumóttaka.
+- Þetta stofnar EKKI nýja InventoryItem sjálfkrafa.
+- Sérstakt kaup-/vörumóttökuflæði (t.d. pöntun áður en reikningur berst) er ekki komið í þessari uppfærslu. Þegar það kemur þarf reikningsyfirferð að geta tengst þeirri móttöku í stað þess að tvöfalda lager.
+- Myndir og skönnuð skjöl án textalags þurfa enn sjónræna lesningu; kostnaðarlækkunin kemur nú m.a. frá tvíteknivörn, endurnýtingu staðreynda og því að Innsýn les ekki venjulegt skjal aftur að óþörfu.
+
+MIGRATION
+---------
+20260919153000_add_data_first_receipt_processing
+20260919161000_add_document_inventory_receipt_lines
+
+PRÓF EFTIR AFRITUN
+-------------------
+Keyra úr C:\GLÖGGT:
+
+npx prisma validate
+npx prisma generate
+npx prisma migrate deploy
+npx tsc --noEmit
+
+Raunpróf eftir deploy:
+1. Senda nákvæmlega sömu skrá tvisvar -> seinni innsending á að stöðvast.
+2. Prófa bunka sem áður gaf sama undirskjal 2–3 sinnum -> aðeins eitt canonical skjal á að verða til fyrir sama fingerprint.
+3. Venjulegt bókhaldsskjal -> Innsýn á að geta notað receipt-derived staðreyndir án annars fulls AI-lesturs.
+4. Samningur/yfirlit/óvissa -> dýpri Innsýn má enn keyra og AI-kostnaður á að skrást.
+5. Innkaupareikningur með vörulínu -> Birgðir-kafli birtist í yfirferð ef Birgðir eru virkar.
+6. Staðfesta vöru + lagerstað + magn -> ein RECEIPT birgðahreyfing verður til.
+7. Reyna að móttaka sömu línu aftur -> á að stöðvast.

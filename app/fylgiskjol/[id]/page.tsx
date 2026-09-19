@@ -24,6 +24,7 @@ import {
   repairDeleteLegacyReceipt,
 } from "@/app/actions/receiptActions";
 import DetectedDocumentEntriesEditor from "@/components/DetectedDocumentEntriesEditor";
+import DocumentInventoryReview from "@/components/DocumentInventoryReview";
 import { submitSuggestion } from "@/app/actions/suggestionActions";
 import TraceDetails from "./TraceDetails";
 
@@ -39,6 +40,7 @@ import { notFound, redirect } from "next/navigation";
 import { cookies } from "next/headers";
 import { getCompanyModuleSettings } from "@/lib/core/company-module-repository";
 import { getEnabledCompanyModules } from "@/lib/core/company-modules";
+import { getCurrentInterfaceLanguage } from "@/lib/i18n/current-language";
 export default async function ReceiptPage({
     params,
   searchParams,
@@ -47,6 +49,7 @@ export default async function ReceiptPage({
   searchParams: Promise<{ document?: string; insightPrivacy?: string }>;
 }) {
     const cookieStore = await cookies();
+  const interfaceLanguage = await getCurrentInterfaceLanguage();
   const activeUserId = cookieStore.get("activeUserId")?.value;
 
   const activeCompanyId = cookieStore.get("activeCompanyId")?.value;
@@ -109,6 +112,14 @@ const canEdit = companyAccess.canWrite ?? false;
     aiDetectedDocuments: {
       include: {
         bookingEntries: true,
+        inventoryLines: {
+          orderBy: { lineIndex: "asc" },
+          include: {
+            matchedItem: { select: { id: true, sku: true, name: true, baseUnit: true } },
+            location: { select: { id: true, code: true, name: true } },
+            movement: { select: { id: true, quantityDelta: true, unitCost: true } },
+          },
+        },
         insightProcessingItems: {
           orderBy: {
             createdAt: "desc",
@@ -333,6 +344,22 @@ const enabledModuleIds = getEnabledCompanyModules(moduleSettings).map(
 if (!enabledModuleIds.includes("bokhald")) {
   redirect("/");
 }
+
+const inventoryEnabled = enabledModuleIds.includes("birgdir");
+const [inventoryItems, inventoryLocations] = inventoryEnabled
+  ? await Promise.all([
+      prisma.inventoryItem.findMany({
+        where: { companyId: receipt.companyId, isActive: true, isStockTracked: true },
+        select: { id: true, sku: true, barcode: true, name: true, baseUnit: true },
+        orderBy: [{ name: "asc" }, { sku: "asc" }],
+      }),
+      prisma.inventoryLocation.findMany({
+        where: { companyId: receipt.companyId, isActive: true },
+        select: { id: true, code: true, name: true },
+        orderBy: [{ name: "asc" }, { code: "asc" }],
+      }),
+    ])
+  : [[], []];
 
 if (activeUser && activeUser.role !== "ADMIN") {
   const hasAccess = await prisma.userCompany.findFirst({
@@ -1572,6 +1599,17 @@ const getNextUnresolvedDocument = (currentDocumentId: number) =>
                             </div>
                           );
                         })()}
+
+                      {inventoryEnabled && document.inventoryLines.length > 0 && (
+                        <DocumentInventoryReview
+                          language={interfaceLanguage}
+                          lines={document.inventoryLines}
+                          items={inventoryItems}
+                          locations={inventoryLocations}
+                          duplicateBlocked={Boolean(document.duplicateMarkedAt)}
+                          canEdit={canEdit}
+                        />
+                      )}
 
                       {document.disposedAt ? (
   <div className="mt-4 rounded border border-slate-300 bg-slate-50 p-4">

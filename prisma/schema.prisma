@@ -76,6 +76,7 @@ model Company {
   inventoryCommitments InventoryCommitment[]
   inventoryCountSessions InventoryCountSession[]
   inventoryCountLines InventoryCountLine[]
+  documentInventoryLines DocumentInventoryLine[]
   bankAccounts BankAccount[]
   vatPeriods   VatPeriod[]
 
@@ -225,6 +226,20 @@ model Receipt {
   fileName               String?
   filePath               String?
   fileHash               String?
+  // Stöðugur innlesturslykill fyrir ný fylgiskjöl. Gamlar færslur mega vera null.
+  // Þetta lokar race-condition þar sem sama skrá gæti annars stofnast tvisvar.
+  ingestKey              String?   @unique
+  // Deterministic frumgögn lesin áður en AI er kallað. PDF-textalag er varðveitt
+  // svo Bókun og Innsýn geti deilt sama lestri í stað tvöfaldrar vinnslu.
+  sourceText             String?
+  sourceTextHash         String?
+  sourceTextSource       String?
+  deterministicData     Json?
+  processingVersion     String?
+  lastAnalyzedAt        DateTime?
+  // Stutt lease lokar fyrir tvö samtímis full AI-köll á sama fylgiskjali.
+  // Lease rennur sjálfkrafa út ef worker deyr áður en hann losar það.
+  analysisLeaseUntil    DateTime?
   status                 String    @default("NEW")
   receiptNumber          String?
   voucherNumber          Int?
@@ -258,6 +273,8 @@ model Receipt {
   @@index([companyId])
   @@index([companyId, status])
   @@index([companyId, voucherNumber])
+  @@index([companyId, fileHash])
+  @@index([sourceTextHash])
 }
 
 model ReceiptEntry {
@@ -301,6 +318,15 @@ model AiDetectedDocument {
   duplicateVoucherNumber Int?
   merchantKennitala      String?
 
+  // Canonical auðkenni niðurstöðu úr innlestri. Notað til idempotency og
+  // tvíteknivarna innan sama frumskjals/endurlesturs.
+  documentFingerprint    String?
+  processingVersion     String?
+  extractionMetadata    Json?
+  // RECEIPT_DERIVED = Innsýn nýtti þegar lesin fylgiskjalsgögn;
+  // DEEP_AI = sérstakur dýpri Innsýn-lestur var raunverulega nauðsynlegur.
+  insightMode           String?
+
   // Skipulögð framtíðargreiðsla sem AI les af frumskjalinu.
   // Þetta er uppbyggð heimild fyrir FinancialEvent; ekki bókunarlínur.
   paymentSchedule         Json?
@@ -335,9 +361,13 @@ model AiDetectedDocument {
   insightFacts              InsightFact[]
   insightProcessingItems    InsightProcessingItem[]
   accountingPatternEvidence AccountingPatternEvidence[]
+  inventoryLines            DocumentInventoryLine[]
 
+  @@unique([receiptId, documentFingerprint])
   @@index([receiptId])
   @@index([voucherNumber])
+  @@index([documentFingerprint])
+  @@index([insightMode])
 }
 
 model AiDetectedDocumentEntry {
@@ -400,6 +430,7 @@ model User {
   createdWorkParts               WorkPart[] @relation("WorkPartCreatedBy")
   updatedWorkParts               WorkPart[] @relation("WorkPartUpdatedBy")
   createdWorkPartTranslations    WorkPartTranslation[] @relation("WorkPartTranslationCreatedBy")
+  createdWorkPartDependencies    WorkPartDependency[] @relation("WorkPartDependencyCreatedBy")
   workPartAssignments            WorkPartAssignment[] @relation("WorkPartAssignmentUser")
   createdWorkPartAssignments     WorkPartAssignment[] @relation("WorkPartAssignmentCreatedBy")
   removedWorkPartAssignments     WorkPartAssignment[] @relation("WorkPartAssignmentRemovedBy")
@@ -419,6 +450,7 @@ model User {
   releasedInventoryCommitments      InventoryCommitment[] @relation("InventoryCommitmentReleasedBy")
   createdInventoryCountSessions      InventoryCountSession[] @relation("InventoryCountSessionCreatedBy")
   reviewedInventoryCountSessions     InventoryCountSession[] @relation("InventoryCountSessionReviewedBy")
+  receivedDocumentInventoryLines     DocumentInventoryLine[] @relation("DocumentInventoryLineReceivedBy")
   countedInventoryCountLines         InventoryCountLine[] @relation("InventoryCountLineCountedBy")
   voidedInventoryCountLines          InventoryCountLine[] @relation("InventoryCountLineVoidedBy")
   vatSubmissions                 VatSubmission[]
@@ -646,6 +678,11 @@ model AiUsage {
   userId            Int?
   receiptId         Int?
   action            String
+  // Sýnilegt vinnslustig svo allur AI-kostnaður sé rekjanlegur eftir því
+  // hvort hann kom frá Fylgiskjölum, Innsýn, Banka, þýðingum o.s.frv.
+  pipelineStage     String?
+  operationKey     String?
+  metadata          Json?
   model             String
   inputTokens       Int      @default(0)
   cachedInputTokens Int      @default(0)
@@ -663,6 +700,9 @@ model AiUsage {
 
   @@index([companyId])
   @@index([createdAt])
+  @@index([pipelineStage, createdAt])
+  @@index([receiptId, createdAt])
+  @@index([operationKey])
 }
 
 model CompanyModule {
@@ -753,6 +793,14 @@ model WorkOrder {
   companyId   Int
   createdById Int?
   sourceLanguage String @default("is")
+
+  // Verknúmer auðkennir ákveðna framkvæmd. Verklykill er endurnýtanlegt
+  // flokkunar-/uppgjörssamhengi og má því koma fyrir á mörgum Verkum.
+  // externalId varðveitir auðkenni úr eldra/ytra kerfi án endurnúmerunar.
+  workNumber  String?
+  workKey     String?
+  externalId  String?
+
   title       String
   description String?
   address     String?
@@ -768,7 +816,10 @@ model WorkOrder {
   company      Company   @relation(fields: [companyId], references: [id], onDelete: Cascade)
   createdBy User?     @relation(fields: [createdById], references: [id])
 
+  @@unique([companyId, workNumber])
   @@index([companyId])
+  @@index([companyId, workKey])
+  @@index([companyId, externalId])
   @@index([status])
   @@index([createdById])
 }
@@ -850,11 +901,34 @@ model WorkPart {
   laborFacts   WorkPartLaborFact[]
   usageFacts   WorkPartUsageFact[]
   inventoryMovements InventoryMovement[]
+  predecessorDependencies WorkPartDependency[] @relation("WorkPartDependencyPredecessor")
+  successorDependencies   WorkPartDependency[] @relation("WorkPartDependencySuccessor")
 
   @@unique([workOrderId, sequence])
   @@index([companyId])
   @@index([workOrderId])
   @@index([status])
+}
+
+
+model WorkPartDependency {
+  id                Int      @id @default(autoincrement())
+  companyId         Int
+  workOrderId       Int
+  predecessorPartId Int
+  successorPartId   Int
+  relationType      String   @default("FINISH_TO_START")
+  createdById       Int?
+  createdAt         DateTime @default(now())
+
+  predecessor WorkPart @relation("WorkPartDependencyPredecessor", fields: [predecessorPartId], references: [id], onDelete: Cascade)
+  successor   WorkPart @relation("WorkPartDependencySuccessor", fields: [successorPartId], references: [id], onDelete: Cascade)
+  createdBy   User?    @relation("WorkPartDependencyCreatedBy", fields: [createdById], references: [id], onDelete: SetNull)
+
+  @@unique([predecessorPartId, successorPartId])
+  @@index([companyId, workOrderId])
+  @@index([predecessorPartId])
+  @@index([successorPartId])
 }
 
 model WorkPartTranslation {
@@ -1034,6 +1108,7 @@ model InventoryItem {
   transfers InventoryTransfer[]
   commitments InventoryCommitment[]
   countLines InventoryCountLine[]
+  documentInventoryLines DocumentInventoryLine[]
 
   @@unique([companyId, sku])
   @@index([companyId, barcode])
@@ -1063,6 +1138,7 @@ model InventoryLocation {
   transfersTo InventoryTransfer[] @relation("InventoryTransferToLocation")
   commitments InventoryCommitment[]
   countSessions InventoryCountSession[]
+  documentInventoryLines DocumentInventoryLine[]
 
   @@unique([companyId, code])
   @@index([companyId, isActive])
@@ -1088,6 +1164,7 @@ model InventoryMovement {
   stocktakeId Int? @unique
   inventoryTransferId Int?
   transferLeg String? // OUT | IN
+  documentInventoryLineId Int? @unique
 
   createdById Int?
   voidedAt    DateTime?
@@ -1102,6 +1179,7 @@ model InventoryMovement {
   usageFact WorkPartUsageFact? @relation(fields: [usageFactId], references: [id], onDelete: SetNull)
   stocktake InventoryStocktake? @relation(fields: [stocktakeId], references: [id], onDelete: SetNull)
   inventoryTransfer InventoryTransfer? @relation(fields: [inventoryTransferId], references: [id], onDelete: SetNull)
+  documentInventoryLine DocumentInventoryLine? @relation(fields: [documentInventoryLineId], references: [id], onDelete: SetNull)
   createdBy User? @relation("InventoryMovementCreatedBy", fields: [createdById], references: [id], onDelete: SetNull)
   voidedBy  User? @relation("InventoryMovementVoidedBy", fields: [voidedById], references: [id], onDelete: SetNull)
 
@@ -1111,6 +1189,55 @@ model InventoryMovement {
   @@index([movementType])
   @@index([reasonCode])
   @@index([inventoryTransferId])
+  @@index([documentInventoryLineId])
+}
+
+model DocumentInventoryLine {
+  id        Int @id @default(autoincrement())
+  companyId Int
+  documentId Int
+  lineIndex Int
+
+  description               String
+  normalizedDescription     String
+  supplierItemCode          String?
+  normalizedSupplierItemCode String?
+  barcode                   String?
+  quantity                  Float?
+  unit                      String?
+  unitPrice                 Float?
+  lineTotal                 Float?
+  stockCandidate            Boolean @default(false)
+  extractionSource          String @default("AI")
+  extractionConfidence      Float?
+
+  matchedItemId Int?
+  matchSource   String?
+  matchConfidence Float?
+  locationId    Int?
+
+  status       String @default("PENDING") // PENDING | RECEIVED | SKIPPED
+  receivedAt   DateTime?
+  receivedById Int?
+  skipReason   String?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  company    Company @relation(fields: [companyId], references: [id], onDelete: Cascade)
+  document   AiDetectedDocument @relation(fields: [documentId], references: [id], onDelete: Cascade)
+  matchedItem InventoryItem? @relation(fields: [matchedItemId], references: [id], onDelete: SetNull)
+  location    InventoryLocation? @relation(fields: [locationId], references: [id], onDelete: SetNull)
+  receivedBy  User? @relation("DocumentInventoryLineReceivedBy", fields: [receivedById], references: [id], onDelete: SetNull)
+  movement    InventoryMovement?
+
+  @@unique([documentId, lineIndex])
+  @@index([companyId, status])
+  @@index([companyId, barcode])
+  @@index([companyId, normalizedSupplierItemCode])
+  @@index([companyId, normalizedDescription])
+  @@index([matchedItemId])
+  @@index([locationId])
 }
 
 model InventoryStocktake {

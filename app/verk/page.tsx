@@ -35,6 +35,20 @@ export default async function Verk10Page() {
               where: { removedAt: null, resourceKind: "PERSON" },
               select: { employeeId: true, userId: true },
             },
+            laborFacts: {
+              where: { voidedAt: null },
+              include: {
+                employee: { select: { id: true, fullName: true } },
+                user: { select: { id: true, name: true } },
+              },
+              orderBy: [{ workDate: "desc" }, { createdAt: "desc" }],
+            },
+            predecessorDependencies: {
+              select: { predecessorPartId: true, successorPartId: true },
+            },
+            successorDependencies: {
+              select: { predecessorPartId: true, successorPartId: true },
+            },
           },
           orderBy: { sequence: "asc" },
         },
@@ -93,9 +107,51 @@ export default async function Verk10Page() {
       }));
 
       const effectiveStatus = effectiveWork10Status(work.status, work.workParts);
+      const canonicalLabor = work.workParts.flatMap((part) =>
+        part.laborFacts.map((fact) => ({
+          id: `FACT-${fact.id}`,
+          userId: fact.userId,
+          employeeId:
+            fact.employeeId ??
+            (fact.userId ? employeeByUserId.get(fact.userId) ?? null : null),
+          userName:
+            fact.employee?.fullName ??
+            fact.user?.name ??
+            fact.resourceLabel ??
+            null,
+          workDate: iso(fact.workDate)!,
+          startedAt: iso(fact.startedAt),
+          endedAt: iso(fact.endedAt),
+          durationMinutes: fact.durationMinutes,
+          description: fact.note,
+          source: "WORK_PART_FACT" as const,
+          workPartId: part.id,
+        })),
+      );
+
+      // Legacy WorkLog er aðeins read-only brú fyrir gömul Verk sem eiga enn
+      // engar canonical WorkPartLaborFact-staðreyndir. Um leið og nýi kjarninn
+      // hefur raunvinnu fyrir Verk verður hann eini sannleikurinn á dashboardi;
+      // þannig tvíteljum við ekki sömu vinnu úr tveimur tímakerfum.
+      const legacyLabor = work.workLogs.map((log) => ({
+        id: `LEGACY-${log.id}`,
+        userId: log.userId,
+        employeeId: log.userId ? employeeByUserId.get(log.userId) ?? null : null,
+        userName: log.user?.name ?? null,
+        workDate: iso(log.workDate)!,
+        startedAt: iso(log.startedAt),
+        endedAt: iso(log.endedAt),
+        durationMinutes: log.durationMinutes ?? 0,
+        description: log.description,
+        source: "LEGACY_WORK_LOG" as const,
+        workPartId: null,
+      }));
 
       return {
       id: work.id,
+      workNumber: work.workNumber ?? String(work.id),
+      workKey: work.workKey,
+      externalId: work.externalId,
       title: localizedTitle.text,
       description: localizedDescription?.text ?? null,
       address: work.address,
@@ -106,17 +162,7 @@ export default async function Verk10Page() {
       completedAt: iso(work.completedAt),
       createdByName: work.createdBy?.name ?? null,
       workParts,
-      workLogs: work.workLogs.map((log) => ({
-        id: log.id,
-        userId: log.userId,
-        employeeId: log.userId ? employeeByUserId.get(log.userId) ?? null : null,
-        userName: log.user?.name ?? null,
-        workDate: iso(log.workDate)!,
-        startedAt: iso(log.startedAt),
-        endedAt: iso(log.endedAt),
-        durationMinutes: log.durationMinutes,
-        description: log.description,
-      })),
+      actualLabor: canonicalLabor.length > 0 ? canonicalLabor : legacyLabor,
     };
     }),
     people: companyEmployees.map((employee) => ({

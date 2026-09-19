@@ -19,6 +19,14 @@ export type PersistedWorkPartRow = {
     description: string | null;
     source: string;
   }>;
+  predecessorDependencies?: Array<{
+    predecessorPartId: number;
+    successorPartId: number;
+  }>;
+  successorDependencies?: Array<{
+    predecessorPartId: number;
+    successorPartId: number;
+  }>;
 };
 
 export type Work10PersistedPartProjection = Work10Part & {
@@ -101,7 +109,22 @@ export function projectPersistedWorkPart(
       : null,
     status: partStatus(row.status),
     order: row.sequence,
-    dependencies: [],
+    dependencies: [
+      ...(row.predecessorDependencies ?? []),
+      ...(row.successorDependencies ?? []),
+    ]
+      .filter(
+        (dependency, index, all) =>
+          all.findIndex(
+            (candidate) =>
+              candidate.predecessorPartId === dependency.predecessorPartId &&
+              candidate.successorPartId === dependency.successorPartId,
+          ) === index,
+      )
+      .map((dependency) => ({
+        predecessorPartId: `work-part-${dependency.predecessorPartId}`,
+        successorPartId: `work-part-${dependency.successorPartId}`,
+      })),
     source: {
       kind: "WORK_PART",
       sourceId: String(row.id),

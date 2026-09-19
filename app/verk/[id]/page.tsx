@@ -70,6 +70,12 @@ export default async function Verk10DetailPage({ params }: Props) {
         workParts: {
           include: {
             translations: true,
+            predecessorDependencies: {
+              select: { predecessorPartId: true, successorPartId: true },
+            },
+            successorDependencies: {
+              select: { predecessorPartId: true, successorPartId: true },
+            },
             assignments: {
               where: { removedAt: null, resourceKind: "PERSON" },
               include: { employee: true, user: true },
@@ -155,6 +161,9 @@ export default async function Verk10DetailPage({ params }: Props) {
   );
   const workParts = projectWorkPartsForDisplay(work, language);
   const hasPersistedWorkParts = work.workParts.length > 0;
+  const hasCanonicalLaborFacts = work.workParts.some((part) =>
+    part.laborFacts.some((fact) => fact.voidedAt === null),
+  );
   const companyPeople = companyEmployees.map((employee) => ({
     id: employee.id,
     name: employee.fullName,
@@ -254,11 +263,11 @@ export default async function Verk10DetailPage({ params }: Props) {
           <dl className="mt-4 space-y-4 text-sm">
             <div>
               <dt className="text-slate-500">{t.workNumber}</dt>
-              <dd className="mt-1 font-semibold">#{work.id}</dd>
+              <dd className="mt-1 font-semibold">#{work.workNumber ?? work.id}</dd>
             </div>
             <div>
               <dt className="text-slate-500">{t.workKey}</dt>
-              <dd className="mt-1 font-semibold text-slate-500">{t.unknown}</dd>
+              <dd className="mt-1 font-semibold text-slate-500">{work.workKey || t.unknown}</dd>
             </div>
             <div>
               <dt className="text-slate-500">{t.status}</dt>
@@ -949,11 +958,9 @@ export default async function Verk10DetailPage({ params }: Props) {
         </div>
       </div>
 
-      <Card>
-        <h2 className="text-lg font-bold">{t.workHistory}</h2>
-        {work.workLogs.length === 0 ? (
-          <p className="mt-4 text-sm text-slate-500">{t.noLogs}</p>
-        ) : (
+      {!hasCanonicalLaborFacts && work.workLogs.length > 0 && (
+        <Card>
+          <h2 className="text-lg font-bold">{t.workHistory}</h2>
           <div className="mt-4 divide-y rounded-xl border">
             {work.workLogs.map((log) => (
               <div
@@ -975,8 +982,8 @@ export default async function Verk10DetailPage({ params }: Props) {
               </div>
             ))}
           </div>
-        )}
-      </Card>
+        </Card>
+      )}
     </main>
   );
 }

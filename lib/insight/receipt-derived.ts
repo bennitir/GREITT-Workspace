@@ -1,0 +1,225 @@
+import { prisma } from "@/lib/prisma";
+import { RECEIPT_PROCESSING_VERSION } from "@/lib/receipts/ingestion";
+
+export const RECEIPT_DERIVED_INSIGHT_SOURCE =
+  `RECEIPT_EXTRACTION:${RECEIPT_PROCESSING_VERSION}`;
+
+function normalizeKennitala(value: string | null) {
+  const normalized = value?.replace(/\D/g, "") ?? "";
+  return /^\d{10}$/.test(normalized) ? normalized : null;
+}
+
+/**
+ * Venjulegt bókhaldsskjal þarf ekki annað vision-AI kall bara til þess að
+ * Innsýn fái þær staðreyndir sem fylgiskjalagreiningin er þegar búin að lesa.
+ * Þetta lag varðveitir einfaldar canonical staðreyndir og sterka entity-tengingu
+ * án þess að gera nýja faglega ályktun.
+ */
+export async function persistReceiptDerivedInsight(documentId: number) {
+  const document = await prisma.aiDetectedDocument.findUnique({
+    where: { id: documentId },
+    include: {
+      receipt: {
+        select: {
+          id: true,
+          companyId: true,
+          processingVersion: true,
+        },
+      },
+    },
+  });
+
+  if (!document) {
+    throw new Error("Greint fylgiskjal fannst ekki.");
+  }
+
+  const companyId = document.receipt.companyId;
+  const receiptId = document.receiptId;
+  const source = RECEIPT_DERIVED_INSIGHT_SOURCE;
+
+  return prisma.$transaction(async (tx) => {
+    await tx.insightFact.deleteMany({
+      where: {
+        companyId,
+        receiptId,
+        documentId,
+        source,
+      },
+    });
+
+    await tx.documentEntityLink.deleteMany({
+      where: {
+        receiptId,
+        documentId,
+        source,
+      },
+    });
+
+    const facts: Array<{
+      factType: string;
+      label: string;
+      numberValue?: number;
+      textValue?: string;
+      dateValue?: Date;
+      confidence?: number | null;
+      metadata?: Record<string, unknown>;
+    }> = [];
+
+    if (document.date) {
+      facts.push({
+        factType: "DOCUMENT_DATE",
+        label: "Dagsetning skjals",
+        dateValue: document.date,
+        confidence: document.classificationConfidence,
+      });
+    }
+
+    if (document.totalAmount !== null) {
+      facts.push({
+        factType: "DOCUMENT_TOTAL",
+        label: "Heildarfjárhæð skjals",
+        numberValue: document.totalAmount,
+        confidence: document.classificationConfidence,
+        metadata: { currency: "ISK" },
+      });
+    }
+
+    if (document.receiptNumber?.trim()) {
+      facts.push({
+        factType: "DOCUMENT_REFERENCE",
+        label: "Reiknings-/skjalanúmer",
+        textValue: document.receiptNumber.trim(),
+        confidence: document.classificationConfidence,
+      });
+    }
+
+    if (document.documentType) {
+      facts.push({
+        factType: "DOCUMENT_TYPE",
+        label: "Skjalategund",
+        textValue: document.documentType,
+        confidence: document.classificationConfidence,
+      });
+    }
+
+    if (document.documentRole) {
+      facts.push({
+        factType: "DOCUMENT_ROLE",
+        label: "Hlutverk skjals",
+        textValue: document.documentRole,
+        confidence: document.classificationConfidence,
+      });
+    }
+
+    for (const fact of facts) {
+      await tx.insightFact.create({
+        data: {
+          companyId,
+          receiptId,
+          documentId,
+          factType: fact.factType,
+          label: fact.label,
+          numberValue: fact.numberValue,
+          textValue: fact.textValue,
+          dateValue: fact.dateValue,
+          confidence: fact.confidence ?? null,
+          source,
+          metadata: {
+            processingVersion:
+              document.receipt.processingVersion ?? RECEIPT_PROCESSING_VERSION,
+            derivedFrom: "RECEIPT_ANALYSIS",
+            ...(fact.metadata ?? {}),
+          },
+        },
+      });
+    }
+
+    const merchantKennitala = normalizeKennitala(document.merchantKennitala);
+    let merchantEntityId: number | null = null;
+
+    if (merchantKennitala && document.merchantName?.trim()) {
+      let entity = await tx.insightEntity.findFirst({
+        where: {
+          companyId,
+          entityType: "ORGANIZATION",
+          identifierType: "KENNITALA",
+          identifierValue: merchantKennitala,
+          status: "ACTIVE",
+        },
+      });
+
+      if (!entity) {
+        entity = await tx.insightEntity.create({
+          data: {
+            companyId,
+            entityType: "ORGANIZATION",
+            name: document.merchantName.trim(),
+            identifierType: "KENNITALA",
+            identifierValue: merchantKennitala,
+            relationshipStatus: "UNCONFIRMED",
+            metadata: {
+              source,
+              firstSeenReceiptId: receiptId,
+              firstSeenDocumentId: documentId,
+            },
+          },
+        });
+      }
+
+      merchantEntityId = entity.id;
+
+      const existingIssuerLink = await tx.documentEntityLink.findFirst({
+        where: {
+          documentId,
+          entityId: entity.id,
+          role: "ISSUER",
+        },
+        select: { id: true },
+      });
+
+      if (!existingIssuerLink) {
+        await tx.documentEntityLink.create({
+          data: {
+            receiptId,
+            documentId,
+            entityId: entity.id,
+            role: "ISSUER",
+            confidence: document.classificationConfidence,
+            source,
+          },
+        });
+      }
+    }
+
+    await tx.aiDetectedDocument.update({
+      where: { id: documentId },
+      data: {
+        insightMode: "RECEIPT_DERIVED",
+      },
+    });
+
+    await tx.auditEvent.create({
+      data: {
+        companyId,
+        entityType: "AiDetectedDocument",
+        entityId: documentId,
+        action: "PERSIST_RECEIPT_DERIVED_INSIGHT",
+        parentEntityType: "Receipt",
+        parentEntityId: receiptId,
+        source: "SYSTEM",
+        description:
+          "Innsýn-staðreyndir varðveittar úr þegar lesnum fylgiskjalsgögnum án annars AI-lesturs á frumskjalinu.",
+        metadata: {
+          source,
+          factCount: facts.length,
+          merchantEntityId,
+        },
+      },
+    });
+
+    return {
+      factCount: facts.length,
+      merchantEntityId,
+    };
+  });
+}

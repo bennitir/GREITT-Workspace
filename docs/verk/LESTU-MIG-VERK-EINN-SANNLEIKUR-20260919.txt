@@ -1,0 +1,77 @@
+GLÖGGT – Verk
+Einn sannleikur / hreinsun kjarnans
+19. september 2026
+
+MARKMIÐ
+------
+Verk hefur þróast úr tilraun yfir í aðal-Verk GLÖGGT. Þessi uppfærsla minnkar samkeppni milli gamla WorkLog-lagsins og nýju Verkþátta-/staðreyndalagsins áður en vélar, teymi, dependencies, Sala og fleiri einingar bætast við.
+
+GRUNNREGLA
+----------
+Verk -> Verkþættir -> Úthlutun -> raunverulegar staðreyndir -> Afleiðingar -> síðar kostnaður / sala / bókhald.
+
+Úthlutun er ekki raunvinna.
+Raunvinna er ekki reikningsfærður tími.
+Efnisnotkun er ekki sama og birgðahreyfing eða sölulína.
+Afleiðing má reiknast út en verður ekki sjálfkrafa bókun eða reikningur.
+
+HELSTU BREYTINGAR
+-----------------
+1. WorkPartLaborFact er canonical raunvinnustaðreynd
+   - Verk-yfirlit og detail nota WorkPartLaborFact þegar slík gögn eru til.
+   - Eldri WorkLog er aðeins read-only fallback fyrir gömul Verk sem eiga ekki canonical labor facts.
+   - Þegar canonical raunvinna er til er eldri WorkLog-saga ekki sýnd sem samkeppnissannleikur.
+
+2. Verkstaða afleidd úr Verkþáttum
+   - Persistent Verkþættir ráða framkvæmdastöðu Verks.
+   - CANCELLED á WorkOrder er áfram meðvituð heildarstöðvun.
+   - Fyrir eldri Verk án Verkþátta er legacy status notaður sem brú.
+   - NEW er kortlagt yfir í DRAFT í domain-laginu.
+
+3. Raunverulegt verknúmer og verklykill
+   - WorkOrder fær workNumber, workKey og externalId.
+   - Eldri Verk fá workNumber = núverandi id við migration.
+   - workNumber er einstakt innan fyrirtækis.
+   - workKey er endurnýtanlegt flokkunar-/uppgjörssamhengi og má koma fyrir á mörgum Verkum.
+   - externalId varðveitir auðkenni úr ytra/eldra kerfi.
+   - Nýtt Verk má fá handvirkt verknúmer eða GLÖGGT úthlutar fallback númeri.
+
+4. Dependency-grunnur
+   - WorkPartDependency er varanlegt gagnalag milli predecessor og successor Verkþátta.
+   - Röð (sequence) og dependency eru ekki sami hluturinn.
+   - UI fyrir fulla dependency-stýringu kemur síðar; grunnurinn er nú tilbúinn án þess að hardkóða raðverk í WorkPart sjálft.
+
+5. Hreinsun notendatexta
+   - Sýnileg „Verk 10“, „reynsluakstur“, „test drive“ og „new core“ orð eru tekin úr viðmóti.
+   - Innri Work10 skráar-/gerðarnöfn mega lifa tímabundið til að forðast óþarfa risarefactor; þau eru ekki lengur vörumerki eða notendahugtak.
+
+6. Birgðahugtök
+   - Notendaviðmót notar „Lagerstaða“ í stað „Líkamleg staða“.
+   - Frátekið/skuldbundið og tiltækt eru áfram sjálfstæð hugtök.
+
+MIGRATION
+---------
+20260919154500_add_work_identity_and_dependencies
+
+MIKILVÆG MÖRK
+--------------
+- WorkLog er ekki eytt í migration; eldri saga varðveitist.
+- Engin gömul raunvinna er sjálfkrafa umrituð yfir í WorkPartLaborFact.
+- Dependencies eru gagnagrunnsgrunnur í þessari lotu, ekki full ný verkflæðisvél.
+- Vélar/teymi/verktakar eiga síðar að verða raunverulegar auðlindir; ekki festa þau sem órekjanlega strengi bara til að klára UI.
+
+PRÓF EFTIR AFRITUN
+-------------------
+Keyra úr C:\GLÖGGT:
+
+npx prisma validate
+npx prisma generate
+npx prisma migrate deploy
+npx tsc --noEmit
+
+Raunpróf eftir deploy:
+1. Eldra Verk án WorkPartLaborFact sýnir legacy tímagögn.
+2. Verk með WorkPartLaborFact notar canonical raunvinnu og tvítelur ekki WorkLog.
+3. WorkOrder sem áður er COMPLETED en á opinn Verkþátt birtist samkvæmt afleiddri stöðu.
+4. Nýtt Verk fær verknúmer; handvirkt verknúmer má ekki tvíteknast innan fyrirtækis.
+5. Verklykill má endurtaka sig á mörgum Verkum.

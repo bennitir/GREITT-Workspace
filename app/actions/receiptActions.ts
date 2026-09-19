@@ -1,6 +1,20 @@
 "use server";
 import { queueInsightForDocument } from "@/lib/insight/auto-enqueue";
 import { runInsightWorker } from "@/lib/insight/worker";
+import { persistReceiptDerivedInsight } from "@/lib/insight/receipt-derived";
+import { recordAiUsage } from "@/lib/ai/usage";
+import {
+  RECEIPT_PROCESSING_VERSION,
+  buildDetectedDocumentFingerprint,
+  buildReceiptIngestKey,
+  buildReceiptSourceSnapshot,
+  dedupeDetectedDocuments,
+  normalizeIdentityText,
+  normalizePurchaseLine,
+  normalizeReference,
+  matchPurchaseLineToInventory,
+  shouldRunDeepInsight,
+} from "@/lib/receipts/ingestion";
 import {
   requireActiveCompanyWriteAccess,
   requireCompanyBookAccess,
@@ -23,9 +37,12 @@ import { prisma } from "@/lib/prisma";
 import { supabaseAdmin } from "@/lib/supabase";
 import { revalidatePath } from "next/cache";
 
-async function saveReceiptFile(file: File, companyId: number) {
-  const bytes = await file.arrayBuffer();
-  const buffer = Buffer.from(bytes);
+async function saveReceiptFile(
+  file: File,
+  companyId: number,
+  providedBuffer?: Buffer,
+) {
+  const buffer = providedBuffer ?? Buffer.from(await file.arrayBuffer());
   const safeFileName = file.name
     .replace(/ð/gi, "d")
     .replace(/þ/gi, "th")
@@ -85,43 +102,6 @@ async function downloadReceiptBuffer(receipt: {
   }
 
   throw new Error("Ekkert stafrænt frumskjal er tengt þessu fylgiskjali.");
-}
-
-async function backfillMissingReceiptHashes() {
-  const receipts = await prisma.receipt.findMany({
-    where: {
-      fileHash: null,
-    },
-    select: {
-      id: true,
-      filePath: true,
-      storagePath: true,
-    },
-  });
-
-  for (const receipt of receipts) {
-    try {
-      const buffer = await downloadReceiptBuffer(receipt);
-      const fileHash = crypto
-        .createHash("sha256")
-        .update(buffer)
-        .digest("hex");
-
-      await prisma.receipt.update({
-        where: {
-          id: receipt.id,
-        },
-        data: {
-          fileHash,
-        },
-      });
-    } catch (error) {
-      console.error(
-        `Gat ekki búið til hash fyrir fylgiskjal ${receipt.id}:`,
-        error
-      );
-    }
-  }
 }
 
 async function archiveReceiptFile(receiptId: number) {
@@ -222,6 +202,40 @@ async function archiveReceiptFile(receiptId: number) {
 async function runAutomaticInsightForDocuments(documentIds: number[]) {
   for (const documentId of documentIds) {
     try {
+      const document = await prisma.aiDetectedDocument.findUnique({
+        where: { id: documentId },
+        select: {
+          id: true,
+          merchantName: true,
+          merchantKennitala: true,
+          date: true,
+          receiptNumber: true,
+          totalAmount: true,
+          summary: true,
+          documentType: true,
+          documentRole: true,
+          classificationConfidence: true,
+          environmentReviewRequired: true,
+        },
+      });
+
+      if (!document) continue;
+
+      const deepInsightRequired = shouldRunDeepInsight({
+        ...document,
+        date: document.date?.toISOString() ?? null,
+      });
+
+      if (!deepInsightRequired) {
+        await persistReceiptDerivedInsight(documentId);
+        continue;
+      }
+
+      await prisma.aiDetectedDocument.update({
+        where: { id: documentId },
+        data: { insightMode: "DEEP_AI" },
+      });
+
       const insightResult = await queueInsightForDocument({
         documentId,
         enabled: true,
@@ -246,105 +260,127 @@ async function runAutomaticInsightForDocuments(documentIds: number[]) {
 
 export async function createReceipt(formData: FormData) {
   await requireActiveCompanyWriteAccess();
+
   const file = formData.get("file") as File;
-    if (!(file instanceof File) || file.size === 0) {
+  if (!(file instanceof File) || file.size === 0) {
     throw new Error("Ekkert fylgiskjal var valið.");
   }
-    const bytes = await file.arrayBuffer();
+
+  const buffer = Buffer.from(await file.arrayBuffer());
   const fileHash = crypto
     .createHash("sha256")
-    .update(Buffer.from(bytes))
+    .update(buffer)
     .digest("hex");
 
+  const receiptNumber = String(formData.get("receiptNumber") || "").trim();
+  const cookieStore = await cookies();
+  const activeCompanyId = cookieStore.get("activeCompanyId")?.value;
 
-    await backfillMissingReceiptHashes();
+  if (!activeCompanyId) {
+    throw new Error("Ekkert virkt fyrirtæki er valið.");
+  }
 
+  const companyId = Number(activeCompanyId);
+  if (!Number.isInteger(companyId)) {
+    throw new Error("Ógilt fyrirtækjaauðkenni.");
+  }
 
-const receiptNumber =
-  String(formData.get("receiptNumber") || "").trim();
-const cookieStore = await cookies();
-const activeCompanyId = cookieStore.get("activeCompanyId")?.value;
+  const ingestKey = buildReceiptIngestKey(companyId, fileHash);
 
-if (!activeCompanyId) {
-  throw new Error("Ekkert virkt fyrirtæki er valið.");
-}
-
-const companyId = Number(activeCompanyId);
-const existingFile = await prisma.receipt.findFirst({
-  where: {
-    companyId,
-    fileHash,
-  },
-});
-console.log("DUPLICATE CHECK", {
-  companyId,
-  fileHash,
-  existingFile,
-});
-if (existingFile) {
-  throw new Error("Þetta skjal hefur þegar verið sótt fyrir þetta fyrirtæki.");
-}
-if (receiptNumber) {
-  const existingReceipt = await prisma.receipt.findFirst({
+  const existingFile = await prisma.receipt.findFirst({
     where: {
-      receiptNumber,
-    },
-  });
-
-  if (existingReceipt) {
-    throw new Error("Þetta fylgiskjal er þegar skráð.");
-  }
-}
-
-  const uploaded = await saveReceiptFile(file, companyId);
-
-  const createdReceipt = await prisma.receipt.create({
-    data: {
-      date: formData.get("date")
-  ? new Date(String(formData.get("date")))
-  : null,
-
-description:
-  String(formData.get("description") || "").trim() ||
-  "Ólesið fylgiskjal",
-
-amount: formData.get("amount")
-  ? Number(formData.get("amount"))
-    : 0,
-      receiptNumber: receiptNumber || null,
       companyId,
-      fileName: uploaded.fileName,
-      filePath: uploaded.filePath,
-      storagePath: uploaded.storagePath,
-      fileHash,
+      OR: [{ fileHash }, { ingestKey }],
     },
+    select: { id: true },
   });
-after(async () => {
-  try {
-    const analysisResult = await analyzeReceiptWithAI(createdReceipt.id);
-    await runAutomaticInsightForDocuments(analysisResult.createdDocumentIds);
-  } catch (error) {
-    console.error(
-      `AI-lestur mistókst fyrir fylgiskjal ${createdReceipt.id}:`,
-      error
-    );
 
-    await prisma.receipt.update({
-      where: {
-        id: createdReceipt.id,
-      },
-      data: {
-        status: "NEEDS_ATTENTION",
-        ocrStatus: "AI-lestur mistókst",
-      },
-    });
+  if (existingFile) {
+    throw new Error("Þetta skjal hefur þegar verið sótt fyrir þetta fyrirtæki.");
   }
-});
+
+  // Gögn fyrst: PDF-textalag og einfaldar deterministic vísbendingar eru lesnar
+  // áður en nokkurt AI-kall fer af stað. Myndir/skönnuð PDF halda áfram örugglega
+  // með tómt snapshot og fá sjónrænan lestur síðar.
+  const sourceSnapshot = await buildReceiptSourceSnapshot({
+    fileName: file.name,
+    buffer,
+  });
+
+  const uploaded = await saveReceiptFile(file, companyId, buffer);
+
+  let createdReceipt: { id: number };
+
+  try {
+    createdReceipt = await prisma.receipt.create({
+      data: {
+        date: formData.get("date")
+          ? new Date(String(formData.get("date")))
+          : null,
+        description:
+          String(formData.get("description") || "").trim() ||
+          "Ólesið fylgiskjal",
+        amount: formData.get("amount") ? Number(formData.get("amount")) : 0,
+        receiptNumber: receiptNumber || null,
+        companyId,
+        fileName: uploaded.fileName,
+        filePath: uploaded.filePath,
+        storagePath: uploaded.storagePath,
+        fileHash,
+        ingestKey,
+        sourceText: sourceSnapshot.sourceText,
+        sourceTextHash: sourceSnapshot.sourceTextHash,
+        sourceTextSource: sourceSnapshot.sourceTextSource,
+        deterministicData: sourceSnapshot.deterministicData,
+        processingVersion: RECEIPT_PROCESSING_VERSION,
+      },
+      select: { id: true },
+    });
+  } catch (error) {
+    // Race-safe vörn: ingestKey er unique. Ef sama skrá kemur samtímis inn
+    // vinnur aðeins önnur færslan; orphan upload er hreinsaður strax.
+    const code =
+      error && typeof error === "object" && "code" in error
+        ? String((error as { code?: unknown }).code ?? "")
+        : "";
+
+    if (code === "P2002") {
+      await supabaseAdmin.storage
+        .from("fylgiskjol")
+        .remove([uploaded.storagePath])
+        .catch(() => undefined);
+
+      throw new Error("Þetta skjal hefur þegar verið sótt fyrir þetta fyrirtæki.");
+    }
+
+    throw error;
+  }
+
+  after(async () => {
+    try {
+      const analysisResult = await analyzeReceiptWithAI(createdReceipt.id);
+      await runAutomaticInsightForDocuments(analysisResult.createdDocumentIds);
+    } catch (error) {
+      console.error(
+        `AI-lestur mistókst fyrir fylgiskjal ${createdReceipt.id}:`,
+        error,
+      );
+
+      await prisma.receipt.update({
+        where: { id: createdReceipt.id },
+        data: {
+          status: "NEEDS_ATTENTION",
+          ocrStatus: "AI-lestur mistókst",
+        },
+      });
+    }
+  });
+
   revalidatePath("/fylgiskjol");
 
   return {
-  receiptId: createdReceipt.id,
-};
+    receiptId: createdReceipt.id,
+  };
 }
 
 export async function createManualReceipt(formData: FormData) {
@@ -1089,6 +1125,32 @@ async function analyzeReceiptWithAIInternal(
   const isImage = [".jpg", ".jpeg", ".png", ".webp"].includes(extension);
   const sourceBuffer = await downloadReceiptBuffer(receipt);
 
+  // Eldri fylgiskjöl geta vantað deterministic snapshot. Endurlestur býr það
+  // þá til einu sinni og varðveitir fyrir Bókun, Innsýn og tvíteknivarnir.
+  let sourceTextForAnalysis = receipt.sourceText?.trim() || null;
+  let deterministicDataForAnalysis = receipt.deterministicData ?? null;
+
+  if (!receipt.processingVersion || (!sourceTextForAnalysis && extension === ".pdf")) {
+    const snapshot = await buildReceiptSourceSnapshot({
+      fileName: sourceName,
+      buffer: sourceBuffer,
+    });
+
+    sourceTextForAnalysis = snapshot.sourceText;
+    deterministicDataForAnalysis = snapshot.deterministicData;
+
+    await prisma.receipt.update({
+      where: { id: receiptId },
+      data: {
+        sourceText: snapshot.sourceText,
+        sourceTextHash: snapshot.sourceTextHash,
+        sourceTextSource: snapshot.sourceTextSource,
+        deterministicData: snapshot.deterministicData,
+        processingVersion: RECEIPT_PROCESSING_VERSION,
+      },
+    });
+  }
+
   let uploadedFileId: string | null = null;
   let imageDataUrl: string | null = null;
 
@@ -1101,7 +1163,9 @@ async function analyzeReceiptWithAIInternal(
           : "image/jpeg";
 
     imageDataUrl = `data:${mimeType};base64,${sourceBuffer.toString("base64")}`;
-  } else {
+  } else if (!sourceTextForAnalysis) {
+    // PDF með textalagi þarf ekki að fara aftur inn sem heilt AI-file input.
+    // Þá notar greiningin canonical textann sem GLÖGGT las sjálft fyrst.
     const safeBaseName = path.basename(sourceName).replace(/[^a-zA-Z0-9._-]/g, "_");
     const temporaryPath = path.join(
       os.tmpdir(),
@@ -1120,6 +1184,8 @@ async function analyzeReceiptWithAIInternal(
       await unlink(temporaryPath).catch(() => undefined);
     }
   }
+
+  const analysisStartedAt = Date.now();
 
   const response = await openai.responses.create({
     model: "gpt-5.6",
@@ -1147,11 +1213,22 @@ async function analyzeReceiptWithAIInternal(
           {
             type: "input_text",
             text: `
+${sourceTextForAnalysis ? `GLÖGGT hefur þegar lesið eftirfarandi textalag úr PDF án AI. Notaðu þetta sem frumgagn og endurlesið ekki atriði sem eru skýr hér nema sjónrænt samhengi stangist á:
+--- BYRJUN PDF-TEXTA ---
+${sourceTextForAnalysis.slice(0, 50000)}
+--- ENDIR PDF-TEXTA ---
+
+Deterministic vísbendingar úr textanum: ${JSON.stringify(deterministicDataForAnalysis ?? {})}
+` : ""}
 Lestu þetta íslenska skjal vandlega.
 
 MIKILVÆGT – FLOKKAÐU SKJALIÐ ÁÐUR EN ÞÚ HUGSAR UM BÓKUN:
 
 Fyrir hvert sjálfstætt skjal skaltu ákveða documentType og documentRole.
+
+Lesðu einnig kennitölu útgefanda/birgja þegar hún kemur skýrt fram.
+merchantKennitala skal vera kennitala útgefanda/birgja, ekki kennitala kaupanda/móttakanda.
+Ef kennitala útgefanda er ekki skýr skal merchantKennitala vera null.
 
 documentType má aðeins vera eitt af:
 - ACCOUNTING_DOCUMENT: reikningur, sölukvittun eða annað sjálfstætt bókhaldsfylgiskjal
@@ -1422,6 +1499,19 @@ Mikilvæg VSK-regla:
 
 - Ef fyrirtækið er ekki VSK-skráð skal ekki krefjast sérstakrar staðfestingar á VSK-meðferð áður en bókunartillaga er búin til. Heildarupphæð kostnaðar skal fara á viðeigandi kostnaðar-, eigna- eða skuldareikning eftir eðli færslunnar.
 
+VÖRULÍNUR OG BIRGÐIR:
+
+- Ef skjalið sýnir sundurliðaðar vöru-/þjónustulínur skaltu skila þeim í purchaseLines.
+- purchaseLines er aðeins lestur á því sem stendur á skjalinu; þetta stofnar ALDREI birgðahreyfingu sjálfkrafa.
+- description skal varðveita heiti/lýsingu línunnar eins nákvæmlega og unnt er.
+- supplierItemCode skal aðeins fylla þegar vörunúmer/kóði birgja sést skýrt á línunni.
+- barcode skal aðeins fylla þegar raunverulegt strikamerkjanúmer/EAN/UPC sést skýrt. Ekki giska.
+- quantity, unitPrice og lineTotal skulu aðeins fyllt þegar þau eru lesanleg eða ótvírætt afleidd af línunni.
+- stockCandidate=true þegar línan lítur út fyrir áþreifanlega vöru/efni sem gæti eðlilega farið í lager.
+- stockCandidate=false fyrir þjónustu, vinnu, sendingargjald, afslátt, skatt, greiðslugjald og aðra línu sem er ekki lagerhlutur.
+- Ef skjalið er kreditnóta eða vöruskil skaltu samt lesa línurnar en stockCandidate=false; lagerleiðrétting vegna skila er sérstakt ferli og má ekki verða sjálfvirk hér.
+- confidence er 0-1 og lýsir vissu í sjálfri línulesningunni.
+
 Ekki færa virðisaukaskatt af fæðiskaupum, veitingum,
 kaffistofu eða mötuneyti sem innskatt nema fyrir liggi
 skýr heimild til þess, svo sem þegar fæðið er endurselt.
@@ -1474,6 +1564,10 @@ Ef dagsetning eða ártal er ólæsilegt eða óvíst skal skila date sem null.
 
                 properties: {
                   merchantName: {
+                    type: ["string", "null"],
+                  },
+
+                  merchantKennitala: {
                     type: ["string", "null"],
                   },
 
@@ -1622,6 +1716,36 @@ Ef dagsetning eða ártal er ólæsilegt eða óvíst skal skila date sem null.
                     additionalProperties: false,
                   },
 
+                  purchaseLines: {
+                    type: "array",
+                    items: {
+                      type: "object",
+                      properties: {
+                        description: { type: "string" },
+                        supplierItemCode: { type: ["string", "null"] },
+                        barcode: { type: ["string", "null"] },
+                        quantity: { type: ["number", "null"] },
+                        unit: { type: ["string", "null"] },
+                        unitPrice: { type: ["number", "null"] },
+                        lineTotal: { type: ["number", "null"] },
+                        stockCandidate: { type: "boolean" },
+                        confidence: { type: "number" },
+                      },
+                      required: [
+                        "description",
+                        "supplierItemCode",
+                        "barcode",
+                        "quantity",
+                        "unit",
+                        "unitPrice",
+                        "lineTotal",
+                        "stockCandidate",
+                        "confidence",
+                      ],
+                      additionalProperties: false,
+                    },
+                  },
+
                   bookingEntries: {
                     type: "array",
 
@@ -1666,6 +1790,7 @@ Ef dagsetning eða ártal er ólæsilegt eða óvíst skal skila date sem null.
 
                 required: [
                   "merchantName",
+                  "merchantKennitala",
                   "date",
                   "receiptNumber",
                   "totalAmount",
@@ -1679,6 +1804,7 @@ Ef dagsetning eða ártal er ólæsilegt eða óvíst skal skila date sem null.
                   "insuranceInfo",
                   "insurancePolicies",
                   "paymentSchedule",
+                  "purchaseLines",
                   "bookingEntries",
                   "pageNumber",
                 ],
@@ -1786,51 +1912,53 @@ const cachedInputTokens =
   response.usage?.input_tokens_details?.cached_tokens ?? 0;
 const outputTokens = response.usage?.output_tokens ?? 0;
 const totalTokens = response.usage?.total_tokens ?? 0;
-  const result = JSON.parse(
-    response.output_text
-  );
-  const actualDocumentCount = Array.isArray(result.documents)
-  ? result.documents.length
-  : 0;
 
-const reportedDocumentCount = Number(result.documentCount ?? 0);
+  const result = JSON.parse(response.output_text);
+  const rawDocuments = Array.isArray(result.documents) ? result.documents : [];
+  const dedupedDocuments = dedupeDetectedDocuments(rawDocuments);
+  result.documents = dedupedDocuments.documents;
 
-const documentCountMismatch =
-  reportedDocumentCount !== actualDocumentCount;
+  const actualDocumentCount = dedupedDocuments.documents.length;
+  const reportedDocumentCount = Number(result.documentCount ?? 0);
+  const documentCountMismatch = reportedDocumentCount !== rawDocuments.length;
 
   if (documentCountMismatch) {
-  console.warn(
-    `⚠️ Fjöldi fylgiskjala stemmir ekki. AI sagði ${reportedDocumentCount}, en documents inniheldur ${actualDocumentCount}.`
-  );
-}
-  const uncachedInputTokens = Math.max(
-  inputTokens - cachedInputTokens,
-  0
-);
+    console.warn(
+      `⚠️ Fjöldi fylgiskjala stemmir ekki. AI sagði ${reportedDocumentCount}, en documents inniheldur ${rawDocuments.length}.`,
+    );
+  }
 
+  if (dedupedDocuments.droppedCount > 0) {
+    console.warn(
+      `⚠️ GLÖGGT fjarlægði ${dedupedDocuments.droppedCount} tvítekna skjalaniðurstöðu áður en gagnagrunnsfærslur voru stofnaðar.`,
+    );
+  }
 
-
-const costUsd =
-  (uncachedInputTokens / 1_000_000) * 5 +
-  (cachedInputTokens / 1_000_000) * 0.5 +
-  (outputTokens / 1_000_000) * 30;
-
-const usdIskRate = 122.94;
-const costIsk = costUsd * usdIskRate;
-
-await prisma.aiUsage.create({
-  data: {
-    companyId: receipt.companyId,
-    receiptId,
-    action: "RECEIPT_ANALYSIS",
-    model: "gpt-5.6",
+await recordAiUsage({
+  companyId: receipt.companyId,
+  receiptId,
+  action: "RECEIPT_ANALYSIS",
+  pipelineStage: "RECEIPT_INGEST",
+  operationKey: `RECEIPT:${receiptId}:${RECEIPT_PROCESSING_VERSION}`,
+  model: "gpt-5.6",
+  usage: {
     inputTokens,
     cachedInputTokens,
     outputTokens,
     totalTokens,
-    costUsd,
-    costIsk,
-    usdIskRate,
+  },
+  durationMs: Date.now() - analysisStartedAt,
+  metadata: {
+    processingVersion: RECEIPT_PROCESSING_VERSION,
+    rawDocumentCount: rawDocuments.length,
+    persistedDocumentCount: actualDocumentCount,
+    droppedDuplicateDocuments: dedupedDocuments.droppedCount,
+    deterministicSourceTextAvailable: Boolean(sourceTextForAnalysis),
+    aiInputMode: isImage
+      ? "IMAGE"
+      : sourceTextForAnalysis
+        ? "PDF_TEXT_ONLY"
+        : "FILE_UPLOAD",
   },
 });
 
@@ -1844,10 +1972,25 @@ const createdDocumentIds: number[] = [];
 
       data: {
         merchantName: result.merchantName,
+        merchantKennitala: (() => {
+          const detected = result.documents?.find?.(
+            (item: { merchantKennitala?: string | null }) =>
+              Boolean(item?.merchantKennitala?.trim()),
+          )?.merchantKennitala;
+          const normalized = normalizeReference(detected);
+          return /^\d{10}$/.test(normalized)
+            ? normalized
+            : receipt.merchantKennitala ?? null;
+        })(),
         receiptNumber: result.receiptNumber,
         ocrConfidence: result.confidence,
         ocrText: result.summary,
-        ocrStatus: "Lesið með AI",
+        ocrStatus:
+          dedupedDocuments.droppedCount > 0
+            ? `Lesið með AI · ${dedupedDocuments.droppedCount} tvítekin skjalaniðurstaða sameinuð`
+            : "Lesið með AI",
+        processingVersion: RECEIPT_PROCESSING_VERSION,
+        lastAnalyzedAt: new Date(),
 
         aiDate: result.date
           ? new Date(result.date)
@@ -1925,6 +2068,19 @@ const createdDocumentIds: number[] = [];
         environmentConfirmationReason: true,
       },
     });
+
+    const receivedInventoryLineCount = await tx.documentInventoryLine.count({
+      where: {
+        status: "RECEIVED",
+        document: { receiptId },
+      },
+    });
+
+    if (receivedInventoryLineCount > 0) {
+      throw new Error(
+        "Ekki er hægt að endurlesa fylgiskjalið eftir að vörulína hefur verið móttekin í birgðir. Leiðrétta þarf vörumóttökuna fyrst svo rekjanleiki tapist ekki.",
+      );
+    }
 
     await tx.aiDetectedDocument.deleteMany({
       where: {
@@ -2051,11 +2207,29 @@ if (hasInvalidDate) {
               })
             : null;
 
+        const documentFingerprint = buildDetectedDocumentFingerprint({
+          ...document,
+          date: document.date ?? null,
+        });
+
         const createdDocument =
           await tx.aiDetectedDocument.create({
             data: {
               merchantName:
                 document.merchantName,
+
+              merchantKennitala: (() => {
+                const normalized = normalizeReference(document.merchantKennitala);
+                return /^\d{10}$/.test(normalized) ? normalized : null;
+              })(),
+
+              documentFingerprint,
+              processingVersion: RECEIPT_PROCESSING_VERSION,
+              extractionMetadata: {
+                source: "RECEIPT_ANALYSIS",
+                sourceTextHash: receipt.sourceTextHash ?? null,
+                sourceTextSource: receipt.sourceTextSource ?? null,
+              },
 
               date: parsedDocumentDate,
 
@@ -2110,7 +2284,229 @@ if (hasInvalidDate) {
             },
           });
 
+          // Sterk tvíteknivörn yfir mismunandi uploads. Reiknings-/skjalanúmer
+          // eitt og sér er ekki nóg; við krefjumst einnig sama útgefanda og
+          // styðjandi dagsetningar/upphæðar eða sterkrar kennitölu.
+          const normalizedReceiptNumber = normalizeReference(document.receiptNumber);
+          const normalizedMerchantKennitala = normalizeReference(
+            document.merchantKennitala,
+          );
+          const normalizedCreatedMerchant = normalizeIdentityText(
+            document.merchantName,
+          );
+
+          if (normalizedReceiptNumber && (normalizedMerchantKennitala || normalizedCreatedMerchant)) {
+            // Fyrsta vörn: sama canonical fingerprint yfir annað upload.
+            // Þetta nær m.a. sömu kvittun sem er tekin aftur sem önnur mynd.
+            const fingerprintDuplicate = await tx.aiDetectedDocument.findFirst({
+              where: {
+                id: { not: createdDocument.id },
+                receiptId: { not: receiptId },
+                documentFingerprint,
+                receipt: { companyId: receipt.companyId },
+              },
+              orderBy: { id: "desc" },
+              select: {
+                id: true,
+                receiptId: true,
+                merchantName: true,
+                merchantKennitala: true,
+                date: true,
+                totalAmount: true,
+                voucherNumber: true,
+              },
+            });
+
+            const duplicateCandidates = fingerprintDuplicate
+              ? [fingerprintDuplicate]
+              : await tx.aiDetectedDocument.findMany({
+                  where: {
+                    id: { not: createdDocument.id },
+                    receiptId: { not: receiptId },
+                    receiptNumber: { not: null },
+                    receipt: { companyId: receipt.companyId },
+                  },
+                  orderBy: { id: "desc" },
+                  take: 100,
+                  select: {
+                    id: true,
+                    receiptId: true,
+                    merchantName: true,
+                    merchantKennitala: true,
+                    date: true,
+                    totalAmount: true,
+                    voucherNumber: true,
+                    receiptNumber: true,
+                  },
+                });
+
+            const strongDuplicate = duplicateCandidates.find((candidate) => {
+              if (candidate.receiptId === receiptId) return false;
+              if (
+                "receiptNumber" in candidate &&
+                normalizeReference(candidate.receiptNumber) !== normalizedReceiptNumber
+              ) {
+                return false;
+              }
+
+              const candidateKennitala = normalizeReference(
+                candidate.merchantKennitala,
+              );
+              const candidateMerchant = normalizeIdentityText(candidate.merchantName);
+
+              const sameStrongMerchant =
+                Boolean(normalizedMerchantKennitala) &&
+                normalizedMerchantKennitala === candidateKennitala;
+              const sameNamedMerchant =
+                Boolean(normalizedCreatedMerchant) &&
+                normalizedCreatedMerchant === candidateMerchant;
+
+              if (!sameStrongMerchant && !sameNamedMerchant) return false;
+
+              const sameAmount =
+                document.totalAmount != null &&
+                candidate.totalAmount != null &&
+                Number(document.totalAmount) === Number(candidate.totalAmount);
+              const sameDate =
+                parsedDocumentDate != null &&
+                candidate.date != null &&
+                parsedDocumentDate.getTime() === candidate.date.getTime();
+
+              // Kennitala + sama reference er mjög sterk vísbending. Þegar aðeins
+              // nafn tengir skjölin krefjumst við einnig dagsetningar/upphæðar.
+              return sameStrongMerchant ? true : sameAmount || sameDate;
+            });
+
+            if (strongDuplicate) {
+              await tx.aiDetectedDocument.update({
+                where: { id: createdDocument.id },
+                data: {
+                  duplicateMarkedAt: new Date(),
+                  duplicateOfDocumentId: strongDuplicate.id,
+                  duplicateVoucherNumber: strongDuplicate.voucherNumber,
+                },
+              });
+
+              await tx.auditEvent.create({
+                data: {
+                  companyId: receipt.companyId,
+                  entityType: "AiDetectedDocument",
+                  entityId: createdDocument.id,
+                  action: "POSSIBLE_DUPLICATE_DETECTED_ON_INGEST",
+                  parentEntityType: "AiDetectedDocument",
+                  parentEntityId: strongDuplicate.id,
+                  source: "SYSTEM",
+                  description:
+                    "Sterk tvíteknivísbending fannst við innlestur áður en bókun var reynd.",
+                  metadata: {
+                    receiptNumber: document.receiptNumber ?? null,
+                    merchantName: document.merchantName ?? null,
+                    merchantKennitala: document.merchantKennitala ?? null,
+                    fingerprint: documentFingerprint,
+                  },
+                },
+              });
+            }
+          }
+
           createdDocumentIds.push(createdDocument.id);
+
+          // Vörulínur eru varðveittar sem sjálfstæðar staðreyndir úr skjalinu.
+          // Engin birgðahreyfing verður til hér. GLÖGGT parar aðeins örugglega
+          // við fyrirliggjandi vöruskrá og notandi staðfestir móttöku síðar.
+          const rawPurchaseLines = Array.isArray(document.purchaseLines)
+            ? document.purchaseLines
+            : [];
+
+          if (rawPurchaseLines.length > 0) {
+            const inventoryItems = await tx.inventoryItem.findMany({
+              where: {
+                companyId: receipt.companyId,
+                isActive: true,
+                isStockTracked: true,
+              },
+              select: {
+                id: true,
+                sku: true,
+                barcode: true,
+                name: true,
+                isStockTracked: true,
+              },
+            });
+
+            for (let lineIndex = 0; lineIndex < rawPurchaseLines.length; lineIndex += 1) {
+              const normalizedLine = normalizePurchaseLine(
+                rawPurchaseLines[lineIndex],
+                lineIndex,
+              );
+
+              if (!normalizedLine.description) continue;
+
+              let match = matchPurchaseLineToInventory(
+                normalizedLine,
+                inventoryItems,
+              );
+
+              // Þegar birgir + hans eigið vörunúmer hefur áður verið staðfest
+              // má endurnýta þá mannlegu staðfestingu án nýs AI-kalls.
+              if (
+                !match &&
+                normalizedLine.normalizedSupplierItemCode &&
+                normalizeReference(document.merchantKennitala)
+              ) {
+                const priorMapping = await tx.documentInventoryLine.findFirst({
+                  where: {
+                    companyId: receipt.companyId,
+                    status: "RECEIVED",
+                    normalizedSupplierItemCode:
+                      normalizedLine.normalizedSupplierItemCode,
+                    matchedItemId: { not: null },
+                    document: {
+                      merchantKennitala: document.merchantKennitala,
+                    },
+                  },
+                  orderBy: { receivedAt: "desc" },
+                  select: { matchedItemId: true },
+                });
+
+                if (priorMapping?.matchedItemId) {
+                  match = {
+                    itemId: priorMapping.matchedItemId,
+                    source: "PRIOR_CONFIRMED_SUPPLIER_CODE",
+                    confidence: 1,
+                  };
+                }
+              }
+
+              await tx.documentInventoryLine.create({
+                data: {
+                  companyId: receipt.companyId,
+                  documentId: createdDocument.id,
+                  lineIndex: normalizedLine.lineIndex,
+                  description: normalizedLine.description,
+                  normalizedDescription: normalizedLine.normalizedDescription,
+                  supplierItemCode: normalizedLine.supplierItemCode,
+                  normalizedSupplierItemCode:
+                    normalizedLine.normalizedSupplierItemCode,
+                  barcode: normalizedLine.barcode,
+                  quantity: normalizedLine.quantity,
+                  unit: normalizedLine.unit,
+                  unitPrice: normalizedLine.unitPrice,
+                  lineTotal: normalizedLine.lineTotal,
+                  stockCandidate:
+                    document.documentType === "ACCOUNTING_DOCUMENT" &&
+                    normalizedLine.stockCandidate,
+                  extractionSource: sourceTextForAnalysis
+                    ? "AI_FROM_SOURCE_TEXT"
+                    : "AI_VISION",
+                  extractionConfidence: normalizedLine.extractionConfidence,
+                  matchedItemId: match?.itemId ?? null,
+                  matchSource: match?.source ?? null,
+                  matchConfidence: match?.confidence ?? null,
+                },
+              });
+            }
+          }
 
         const rawInsurancePolicies = Array.isArray(document.insurancePolicies)
           ? document.insurancePolicies
@@ -2675,8 +3071,44 @@ if (dateWarnings.length > 0) {
   return { createdDocumentIds };
 }
 
+async function withReceiptAnalysisLease<T>(
+  receiptId: number,
+  callback: () => Promise<T>,
+) {
+  const now = new Date();
+  const leaseUntil = new Date(now.getTime() + 5 * 60 * 1000);
+
+  const claim = await prisma.receipt.updateMany({
+    where: {
+      id: receiptId,
+      OR: [
+        { analysisLeaseUntil: null },
+        { analysisLeaseUntil: { lt: now } },
+      ],
+    },
+    data: { analysisLeaseUntil: leaseUntil },
+  });
+
+  if (claim.count !== 1) {
+    throw new Error(
+      "Fylgiskjalið er þegar í greiningu. Bíddu þar til núverandi lestur lýkur.",
+    );
+  }
+
+  try {
+    return await callback();
+  } finally {
+    await prisma.receipt.updateMany({
+      where: { id: receiptId, analysisLeaseUntil: leaseUntil },
+      data: { analysisLeaseUntil: null },
+    }).catch(() => undefined);
+  }
+}
+
 export async function analyzeReceiptWithAI(receiptId: number) {
-  return analyzeReceiptWithAIInternal(receiptId);
+  return withReceiptAnalysisLease(receiptId, () =>
+    analyzeReceiptWithAIInternal(receiptId),
+  );
 }
 
 export async function analyzeReceiptWithAIForMaintenance(receiptId: number) {
@@ -2686,10 +3118,12 @@ export async function analyzeReceiptWithAIForMaintenance(receiptId: number) {
     );
   }
 
-  return analyzeReceiptWithAIInternal(receiptId, {
-    skipAccessCheck: true,
-    skipRevalidate: true,
-  });
+  return withReceiptAnalysisLease(receiptId, () =>
+    analyzeReceiptWithAIInternal(receiptId, {
+      skipAccessCheck: true,
+      skipRevalidate: true,
+    }),
+  );
 }
 
 export async function confirmMissingLoanDetails(
@@ -3491,6 +3925,227 @@ async function materializeReviewedPaymentSchedule(
       metadata: { sourceDocumentId: document.id },
     })),
   });
+}
+
+export async function receiveDocumentInventoryLine(formData: FormData) {
+  const companyId = await requireActiveCompanyWriteAccess();
+  const user = await getEffectiveUser();
+
+  const lineId = Number(formData.get("lineId"));
+  const itemId = Number(formData.get("itemId"));
+  const locationId = Number(formData.get("locationId"));
+  const quantity = Number(String(formData.get("quantity") ?? "").replace(",", "."));
+  const unitCostRaw = String(formData.get("unitCost") ?? "").trim().replace(",", ".");
+  const unitCost = unitCostRaw ? Number(unitCostRaw) : null;
+
+  if (!Number.isInteger(lineId) || !Number.isInteger(itemId) || !Number.isInteger(locationId)) {
+    throw new Error("Ógild vörumóttaka.");
+  }
+  if (!Number.isFinite(quantity) || quantity <= 0) {
+    throw new Error("Magn þarf að vera stærra en 0.");
+  }
+  if (unitCost !== null && (!Number.isFinite(unitCost) || unitCost < 0)) {
+    throw new Error("Ógilt innkaupsverð.");
+  }
+
+  const [line, item, location] = await Promise.all([
+    prisma.documentInventoryLine.findFirst({
+      where: { id: lineId, companyId },
+      include: {
+        movement: { select: { id: true } },
+        document: {
+          select: {
+            id: true,
+            receiptId: true,
+            date: true,
+            documentType: true,
+            documentRole: true,
+            disposition: true,
+            duplicateMarkedAt: true,
+            merchantName: true,
+            receiptNumber: true,
+          },
+        },
+      },
+    }),
+    prisma.inventoryItem.findFirst({
+      where: { id: itemId, companyId, isActive: true },
+    }),
+    prisma.inventoryLocation.findFirst({
+      where: { id: locationId, companyId, isActive: true },
+    }),
+  ]);
+
+  if (!line) throw new Error("Vörulína fannst ekki.");
+  if (!item) throw new Error("Valin vara fannst ekki.");
+  if (!item.isStockTracked) {
+    throw new Error("Valin vara er ekki lagerhaldin.");
+  }
+  if (!location) throw new Error("Valinn lagerstaður fannst ekki.");
+  if (line.status === "RECEIVED" || line.movement) {
+    throw new Error("Þessi vörulína hefur þegar verið móttekin í birgðir.");
+  }
+  if (line.document.duplicateMarkedAt) {
+    throw new Error("Skjalið er merkt sem tvírit. Birgðir verða ekki hækkaðar aftur.");
+  }
+  if (line.document.disposition) {
+    throw new Error("Afgreitt skjal getur ekki stofnað nýja vörumóttöku.");
+  }
+  if (line.document.documentType !== "ACCOUNTING_DOCUMENT") {
+    throw new Error("Vörumóttaka úr fylgiskjali er aðeins virk fyrir venjulegt innkaupaskjal.");
+  }
+
+  const receivedAt = line.document.date ?? new Date();
+  const effectiveUnitCost =
+    unitCost ?? (line.unitPrice !== null && line.unitPrice >= 0 ? line.unitPrice : null);
+
+  await prisma.$transaction(async (tx) => {
+    const movement = await tx.inventoryMovement.create({
+      data: {
+        companyId,
+        itemId: item.id,
+        locationId: location.id,
+        movementType: "RECEIPT",
+        quantityDelta: quantity,
+        unit: item.baseUnit,
+        unitCost: effectiveUnitCost,
+        movementAt: receivedAt,
+        note: `${line.description} · fylgiskjal ${line.document.receiptId}`,
+        reasonCode: "PURCHASE_DOCUMENT_RECEIPT",
+        source: "RECEIPT_REVIEW",
+        documentInventoryLineId: line.id,
+        createdById: user?.id ?? null,
+      },
+      select: { id: true },
+    });
+
+    await tx.documentInventoryLine.update({
+      where: { id: line.id },
+      data: {
+        matchedItemId: item.id,
+        matchSource:
+          line.matchedItemId === item.id
+            ? line.matchSource ?? "USER_CONFIRMED"
+            : "USER_OVERRIDE",
+        matchConfidence: 1,
+        locationId: location.id,
+        quantity,
+        unit: item.baseUnit,
+        unitPrice: effectiveUnitCost,
+        status: "RECEIVED",
+        receivedAt: new Date(),
+        receivedById: user?.id ?? null,
+        skipReason: null,
+      },
+    });
+
+    await tx.auditEvent.create({
+      data: {
+        companyId,
+        userId: user?.id ?? null,
+        entityType: "DocumentInventoryLine",
+        entityId: line.id,
+        action: "RECEIVE_INVENTORY_FROM_DOCUMENT",
+        parentEntityType: "AiDetectedDocument",
+        parentEntityId: line.document.id,
+        source: "USER",
+        description:
+          "Vörulína úr yfirfærðu fylgiskjali staðfest sem vörumóttaka í birgðir.",
+        metadata: {
+          movementId: movement.id,
+          receiptId: line.document.receiptId,
+          itemId: item.id,
+          itemSku: item.sku,
+          locationId: location.id,
+          quantity,
+          unit: item.baseUnit,
+          unitCost: effectiveUnitCost,
+          merchantName: line.document.merchantName,
+          receiptNumber: line.document.receiptNumber,
+        },
+      },
+    });
+  });
+
+  revalidatePath(`/fylgiskjol/${line.document.receiptId}`);
+  revalidatePath("/birgdir");
+}
+
+export async function skipDocumentInventoryLine(formData: FormData) {
+  const companyId = await requireActiveCompanyWriteAccess();
+  const user = await getEffectiveUser();
+  const lineId = Number(formData.get("lineId"));
+  const reason = String(formData.get("reason") ?? "").trim();
+
+  if (!Number.isInteger(lineId)) throw new Error("Ógild vörulína.");
+
+  const line = await prisma.documentInventoryLine.findFirst({
+    where: { id: lineId, companyId },
+    include: {
+      movement: { select: { id: true } },
+      document: { select: { id: true, receiptId: true } },
+    },
+  });
+
+  if (!line) throw new Error("Vörulína fannst ekki.");
+  if (line.movement || line.status === "RECEIVED") {
+    throw new Error("Móttekin vörulína verður ekki felld niður úr yfirferð.");
+  }
+
+  await prisma.$transaction(async (tx) => {
+    await tx.documentInventoryLine.update({
+      where: { id: line.id },
+      data: {
+        status: "SKIPPED",
+        skipReason: reason || "Ekki lagerfærsla",
+        receivedAt: null,
+        receivedById: null,
+      },
+    });
+
+    await tx.auditEvent.create({
+      data: {
+        companyId,
+        userId: user?.id ?? null,
+        entityType: "DocumentInventoryLine",
+        entityId: line.id,
+        action: "SKIP_DOCUMENT_INVENTORY_LINE",
+        parentEntityType: "AiDetectedDocument",
+        parentEntityId: line.document.id,
+        source: "USER",
+        description: "Vörulína merkt sem ekki lagerfærsla í yfirferð fylgiskjals.",
+        metadata: { reason: reason || "Ekki lagerfærsla" },
+      },
+    });
+  });
+
+  revalidatePath(`/fylgiskjol/${line.document.receiptId}`);
+}
+
+export async function reopenDocumentInventoryLine(formData: FormData) {
+  const companyId = await requireActiveCompanyWriteAccess();
+  const lineId = Number(formData.get("lineId"));
+  if (!Number.isInteger(lineId)) throw new Error("Ógild vörulína.");
+
+  const line = await prisma.documentInventoryLine.findFirst({
+    where: { id: lineId, companyId },
+    include: {
+      movement: { select: { id: true } },
+      document: { select: { receiptId: true } },
+    },
+  });
+
+  if (!line) throw new Error("Vörulína fannst ekki.");
+  if (line.movement || line.status === "RECEIVED") {
+    throw new Error("Móttekin vörulína verður ekki opnuð aftur hér.");
+  }
+
+  await prisma.documentInventoryLine.update({
+    where: { id: line.id },
+    data: { status: "PENDING", skipReason: null },
+  });
+
+  revalidatePath(`/fylgiskjol/${line.document.receiptId}`);
 }
 
   export async function reviewDetectedDocument(documentId: number) {

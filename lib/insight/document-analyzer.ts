@@ -46,6 +46,12 @@ export type InsightExistingDocumentContext = {
 export type AnalyzeInsightDocumentInput = {
   filePath: string;
   storagePath?: string | null;
+  /**
+   * Canonical text already extracted without a new AI read (for example a PDF text layer).
+   * When this exists for a non-image source, Innsýn should analyze the text instead of
+   * uploading and re-reading the same original document.
+   */
+  sourceText?: string | null;
   company: InsightCompanyContext;
   existingDocument?: InsightExistingDocumentContext | null;
   processingVersion: string;
@@ -645,17 +651,32 @@ export async function analyzeDocumentForInsight(
     );
   }
 
-  const preparedSource =
-    await prepareInsightSource(
-      input.filePath,
-      input.storagePath,
-    );
+  const sourceText = input.sourceText?.trim() || null;
+  const sourceName =
+    input.storagePath?.trim() || input.filePath?.trim() || "";
+  const sourceExtension = path.extname(sourceName).toLowerCase();
+  const sourceLooksLikeImage = [
+    ".jpg",
+    ".jpeg",
+    ".png",
+    ".webp",
+  ].includes(sourceExtension);
 
-  const fullPath = preparedSource.fullPath;
+  // Gögn fyrst: ef GLÖGGT hefur þegar lesið canonical texta úr non-image skjali
+  // þarf Innsýn ekki að sækja og hlaða sama frumskjalinu aftur inn í AI.
+  const shouldUseCanonicalTextOnly = Boolean(sourceText) && !sourceLooksLikeImage;
 
-  const extension = path
-    .extname(fullPath)
-    .toLowerCase();
+  const preparedSource = shouldUseCanonicalTextOnly
+    ? null
+    : await prepareInsightSource(
+        input.filePath,
+        input.storagePath,
+      );
+
+  const fullPath = preparedSource?.fullPath ?? null;
+  const extension = fullPath
+    ? path.extname(fullPath).toLowerCase()
+    : sourceExtension;
 
   const isImage = [
     ".jpg",
@@ -679,7 +700,7 @@ export async function analyzeDocumentForInsight(
     | string
     | null = null;
 
-  if (isImage) {
+  if (isImage && fullPath) {
     const imageBuffer =
       await readFile(fullPath);
 
@@ -694,7 +715,7 @@ export async function analyzeDocumentForInsight(
       `data:${mimeType};base64,${imageBuffer.toString(
         "base64",
       )}`;
-  } else {
+  } else if (fullPath) {
     const uploadedFile =
       await openai.files.create({
         file: createReadStream(
@@ -773,6 +794,12 @@ Bókun er aðeins ein möguleg niðurstaða úr því.
 ${companyText}
 
 ${existingDocumentText}
+
+${sourceText ? `CANONICAL TEXTI SEM GLÖGGT HEFUR ÞEGAR LESIÐ ÁN NÝS AI-KALLS
+
+Þessi texti er frumgagn úr fyrra deterministic lestri. Notaðu hann beint og ekki giska á atriði sem þar koma ekki fram.
+
+${sourceText.slice(0, 50000)}` : ""}
 
 SKJALAFLOKKUN
 
