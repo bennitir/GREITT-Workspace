@@ -1,13 +1,15 @@
 "use client";
 
 import { createReceipt } from "@/app/actions/receiptActions";
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 
 export default function MobileCapturePage() {
   const [imageUrl, setImageUrl] = useState<string | null>(null);
   const [isSending, setIsSending] = useState(false);
+  const [isSent, setIsSent] = useState(false);
   const [message, setMessage] = useState("");
   const [selectedFile, setSelectedFile] = useState<File | null>(null);
+  const sendLockedRef = useRef(false);
 
   useEffect(() => {
     return () => {
@@ -18,10 +20,11 @@ export default function MobileCapturePage() {
   }, [imageUrl]);
 
   async function handleSend() {
-    if (!selectedFile || isSending) {
+    if (!selectedFile || isSending || isSent || sendLockedRef.current) {
       return;
     }
 
+    sendLockedRef.current = true;
     setIsSending(true);
     setMessage("");
 
@@ -34,8 +37,10 @@ export default function MobileCapturePage() {
 
       await createReceipt(formData);
 
+      setIsSent(true);
       setMessage("Fylgiskjalið var sent í GLÖGGT.");
     } catch (error) {
+      sendLockedRef.current = false;
       setMessage(
         error instanceof Error
           ? error.message
@@ -70,11 +75,17 @@ export default function MobileCapturePage() {
               const file = event.target.files?.[0];
 
               if (!file) {
+                sendLockedRef.current = false;
+                setIsSending(false);
+                setIsSent(false);
                 setSelectedFile(null);
                 setImageUrl(null);
                 return;
               }
 
+              sendLockedRef.current = false;
+              setIsSending(false);
+              setIsSent(false);
               setMessage("");
               setSelectedFile(file);
               setImageUrl(URL.createObjectURL(file));
@@ -114,14 +125,21 @@ export default function MobileCapturePage() {
               </p>
             )}
 
-            <button
-              type="button"
-              onClick={handleSend}
-              disabled={isSending}
-              className="mt-4 w-full rounded-2xl bg-green-600 p-4 font-bold text-white shadow-sm disabled:cursor-not-allowed disabled:opacity-60"
-            >
-              {isSending ? "Sendi í GLÖGGT..." : "Senda í GLÖGGT"}
-            </button>
+            {isSending ? (
+              <div className="mt-4 w-full rounded-2xl bg-slate-100 p-4 text-center font-bold text-slate-700">
+                Sendi í GLÖGGT...
+              </div>
+            ) : null}
+
+            {!isSending && !isSent ? (
+              <button
+                type="button"
+                onClick={handleSend}
+                className="mt-4 w-full rounded-2xl bg-green-600 p-4 font-bold text-white shadow-sm"
+              >
+                Senda í GLÖGGT
+              </button>
+            ) : null}
           </div>
         )}
       </div>

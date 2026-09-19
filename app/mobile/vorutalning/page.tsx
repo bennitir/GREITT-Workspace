@@ -284,7 +284,10 @@ export default async function MobileStocktakePage({ searchParams }: Props) {
                 ) : null}
 
                 {selectedItem ? (
-                  <section className="mt-4 min-w-0 overflow-hidden rounded-2xl border-2 border-slate-300 bg-white p-5 shadow-sm">
+                  <section
+                    className="mt-4 box-border w-full min-w-0 max-w-full overflow-hidden rounded-2xl border-2 border-slate-300 bg-white p-4 shadow-sm sm:p-5"
+                    style={{ width: "100%", minWidth: 0, maxWidth: "100%", boxSizing: "border-box" }}
+                  >
                     <p className="break-words text-xl font-bold text-slate-950">{selectedItem.name}</p>
                     <p className="mt-1 break-all text-sm text-slate-500">
                       {selectedItem.sku}{selectedItem.barcode ? ` · ${selectedItem.barcode}` : ""}
@@ -295,11 +298,20 @@ export default async function MobileStocktakePage({ searchParams }: Props) {
                       </p>
                     ) : null}
 
-                    <form action={recordHandheldCount} className="mt-5 grid w-full min-w-0 gap-4">
+                    <form
+                      action={recordHandheldCount}
+                      className="mt-5 flex w-full min-w-0 max-w-full flex-col gap-4 overflow-hidden"
+                      style={{ width: "100%", minWidth: 0, maxWidth: "100%", boxSizing: "border-box" }}
+                    >
                       <input type="hidden" name="sessionId" value={session.id} />
                       <input type="hidden" name="itemId" value={selectedItem.id} />
-                      <label className="grid min-w-0 gap-2 text-sm font-semibold text-slate-800">
-                        <span>{t.countedQuantity} · {work10UnitText(selectedItem.baseUnit, selectedItem.customUnit, language)}</span>
+                      <label
+                        className="block w-full min-w-0 max-w-full text-sm font-semibold text-slate-800"
+                        style={{ width: "100%", minWidth: 0, maxWidth: "100%", boxSizing: "border-box" }}
+                      >
+                        <span className="mb-2 block break-words">
+                          {t.countedQuantity} · {work10UnitText(selectedItem.baseUnit, selectedItem.customUnit, language)}
+                        </span>
                         <input
                           name="countedQuantity"
                           type="number"
@@ -309,18 +321,26 @@ export default async function MobileStocktakePage({ searchParams }: Props) {
                           autoFocus
                           defaultValue={existingLine ? String(existingLine.countedQuantity) : ""}
                           inputMode="decimal"
-                          className="min-h-16 w-full min-w-0 max-w-full rounded-xl border-2 border-slate-300 px-4 text-3xl font-bold outline-none focus:border-blue-600"
+                          className="box-border block min-h-16 w-full min-w-0 max-w-full appearance-none rounded-xl border-2 border-slate-300 px-4 text-3xl font-bold outline-none focus:border-blue-600"
+                          style={{ width: "100%", minWidth: 0, maxWidth: "100%", boxSizing: "border-box" }}
                         />
                       </label>
-                      <label className="grid min-w-0 gap-2 text-sm font-semibold text-slate-800">
-                        <span>{t.note}</span>
+                      <label
+                        className="block w-full min-w-0 max-w-full text-sm font-semibold text-slate-800"
+                        style={{ width: "100%", minWidth: 0, maxWidth: "100%", boxSizing: "border-box" }}
+                      >
+                        <span className="mb-2 block break-words">{t.note}</span>
                         <input
                           name="note"
                           defaultValue={existingLine?.note ?? ""}
-                          className="min-h-12 w-full min-w-0 max-w-full rounded-xl border border-slate-300 px-3 text-base"
+                          className="box-border block min-h-12 w-full min-w-0 max-w-full rounded-xl border border-slate-300 px-3 text-base"
+                          style={{ width: "100%", minWidth: 0, maxWidth: "100%", boxSizing: "border-box" }}
                         />
                       </label>
-                      <button className="min-h-14 w-full min-w-0 max-w-full rounded-xl bg-emerald-600 px-4 text-lg font-bold text-white">
+                      <button
+                        className="box-border block min-h-14 w-full min-w-0 max-w-full rounded-xl bg-emerald-600 px-4 text-lg font-bold text-white"
+                        style={{ width: "100%", minWidth: 0, maxWidth: "100%", boxSizing: "border-box" }}
+                      >
                         {t.saveCount}
                       </button>
                     </form>

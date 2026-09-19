@@ -1,0 +1,32 @@
+GLÖGGT – Mobile lagfæring 19.09.2026
+
+Innihald
+1. Vörutalning í handtölvu
+   - Innri reitir vöruspjalds eru nú þvingaðir innan breiddar foreldris/spjalds.
+   - Talin staða, athugasemd og Vista talningu nota mobile-first fulla breidd.
+   - Bætt við min-width/max-width/box-sizing vörn og formið fært úr grid í einfalt lóðrétt flex-flæði.
+   - Engin breyting á talningarreglum eða gagnalíkani.
+
+2. Mobile myndataka fyrir fylgiskjöl
+   - Græni „Senda í GLÖGGT“ takkinn hverfur strax þegar sending hefst.
+   - Á meðan sending stendur yfir sést aðeins sendingarstaða, ekki senditakki.
+   - Eftir vel heppnaða sendingu birtist senditakkinn ekki aftur fyrir sömu mynd.
+   - Synchronous lock/ref kemur einnig í veg fyrir tvöfalda sendingu áður en React nær að endurteikna skjáinn.
+   - Ef sending mistekst losnar læsingin og senditakkinn kemur aftur svo hægt sé að reyna aftur.
+   - Þegar ný mynd er tekin er sendingarstaðan endurstillt fyrir nýja mynd.
+
+Skrár
+- app/mobile/vorutalning/page.tsx
+- app/mobile/myndataka/page.tsx
+
+Migration
+- Engin Prisma migration.
+
+Prófun eftir afritun
+1. npx tsc --noEmit
+2. Deploy/push þegar TypeScript er hreint.
+3. Í síma: skanna vöru og staðfesta að Talin staða, Athugasemd og Vista talningu haldist innan vöruspjalds.
+4. Í Mobile myndatöku: taka mynd og ýta einu sinni á Senda í GLÖGGT.
+   - græni takkinn á að hverfa samstundis,
+   - sendingarstaða á að sjást,
+   - eftir árangur má sami senditakki ekki birtast aftur fyrir sömu mynd.
