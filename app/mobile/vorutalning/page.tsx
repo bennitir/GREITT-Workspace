@@ -6,6 +6,7 @@ import { getEffectiveUser } from "@/lib/core/access-control";
 import { normalizeUiLanguage } from "@/lib/i18n/ui";
 import { stocktakeMobileText } from "@/lib/i18n/stocktake-mobile";
 import { work10UnitText } from "@/lib/i18n/work10";
+import BarcodeCameraScanner from "./BarcodeCameraScanner";
 import {
   cancelHandheldStocktake,
   recordHandheldCount,
@@ -244,6 +245,18 @@ export default async function MobileStocktakePage({ searchParams }: Props) {
                       {t.search}
                     </button>
                   </form>
+                  <BarcodeCameraScanner
+                    sessionId={session.id}
+                    labels={{
+                      openCamera: t.openCamera,
+                      closeCamera: t.closeCamera,
+                      cameraHelp: t.cameraHelp,
+                      cameraSearching: t.cameraSearching,
+                      cameraUnsupported: t.cameraUnsupported,
+                      cameraPermissionDenied: t.cameraPermissionDenied,
+                      cameraUnavailable: t.cameraUnavailable,
+                    }}
+                  />
                   <p className="mt-3 text-xs leading-5 text-slate-600">{t.handheldHint}</p>
                 </section>
 

@@ -1,0 +1,33 @@
+GLÖGGT – Vörutalning í handtölvu – myndavél og strikamerki
+Dagsetning: 19. september 2026
+
+Markmið
+- Tengja myndavél símans raunverulega við strikamerkjaleit í Mobile-vörutalningu.
+- Varðveita handskanna og handvirka leit sem fallback.
+- Breyta engu í talningargögnum eða Prisma schema.
+
+Ný hegðun
+1. Í virkri vörutalningu birtist „Skanna með myndavél“.
+2. Notandi veitir myndavélarheimild og bakmyndavél er opnuð.
+3. GLÖGGT leitar stöðugt að strikamerki í myndstraumnum.
+4. Þegar kóði finnst lokast myndavélin og GLÖGGT leitar að vörunni með sama kóða og handskanni/handvirk leit notar.
+5. Kerfisstaða, vænt staða og mismunur eru áfram falin fyrir talningarmanni.
+6. Ef vafri styður ekki BarcodeDetector eða myndavél fæst ekki opnuð er skýr fallback-skilaboð birt; handskanni og handvirk leit virka áfram.
+
+Tæknilegt
+- Engin Prisma migration.
+- Nýr client-component: app/mobile/vorutalning/BarcodeCameraScanner.tsx
+- app/mobile/vorutalning/page.tsx tengir componentinn við virka talningarlotu.
+- lib/i18n/stocktake-mobile.ts fær texta á íslensku, ensku, pólsku og serbnesku.
+- Myndavél þarf HTTPS og notandaheimild; production á Vercel uppfyllir HTTPS-skilyrðið.
+
+Próf eftir afritun
+npx tsc --noEmit
+
+Eftir push/deploy:
+- Opna Mobile → Vörutalning í handtölvu.
+- Velja Aðallager.
+- Ýta á „Skanna með myndavél“.
+- Veita myndavélarheimild.
+- Beina myndavél að strikamerki.
+- Staðfesta að vara opnist sjálfkrafa þegar kóðinn finnst.
