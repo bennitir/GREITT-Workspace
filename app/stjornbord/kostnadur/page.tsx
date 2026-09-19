@@ -86,6 +86,29 @@ export default async function KostnadurPage({
     return `${t.cost.actionOther} · ${action}`;
   };
 
+  const interfaceLocale =
+    language === "en" ? "en-GB" : language === "pl" ? "pl-PL" : language === "sr" ? "sr-RS" : "is-IS";
+
+  const recentUsage = [...allUsage]
+    .sort((a, b) => b.createdAt.getTime() - a.createdAt.getTime())
+    .slice(0, 100);
+
+  const usageDocumentLabel = (usage: (typeof recentUsage)[number]) => {
+    const metadata =
+      usage.metadata && typeof usage.metadata === "object" && !Array.isArray(usage.metadata)
+        ? (usage.metadata as Record<string, unknown>)
+        : null;
+    const documentId =
+      typeof metadata?.documentId === "number" && Number.isFinite(metadata.documentId)
+        ? Math.trunc(metadata.documentId)
+        : null;
+
+    if (usage.receiptId && documentId) return `#${usage.receiptId} · skjal ${documentId}`;
+    if (usage.receiptId) return `#${usage.receiptId}`;
+    if (documentId) return `skjal ${documentId}`;
+    return "—";
+  };
+
   const periodLink = (value: string, label: string) => (
     <a
       href={`?timabil=${value}`}
@@ -191,6 +214,77 @@ export default async function KostnadurPage({
           </table>
         </div>
       </section>
+      <section className="mt-8">
+        <h2 className="text-xl font-bold">{t.cost.recentTitle}</h2>
+        <div className="mt-3 overflow-x-auto rounded border bg-white">
+          <table className="w-full border-collapse text-left text-sm">
+            <thead className="bg-slate-100">
+              <tr>
+                <th className="border-b p-3">{t.cost.time}</th>
+                <th className="border-b p-3">{t.cost.company}</th>
+                <th className="border-b p-3">{t.cost.stage}</th>
+                <th className="border-b p-3">{t.cost.action}</th>
+                <th className="border-b p-3">{t.cost.document}</th>
+                <th className="border-b p-3">{t.cost.model}</th>
+                <th className="border-b p-3">{t.cost.tokens}</th>
+                <th className="border-b p-3">{t.cost.aiCost}</th>
+                <th className="border-b p-3">{t.cost.status}</th>
+              </tr>
+            </thead>
+            <tbody>
+              {recentUsage.map((usage) => (
+                <tr key={usage.id}>
+                  <td className="whitespace-nowrap border-b p-3">
+                    {usage.createdAt.toLocaleString(interfaceLocale, { hour12: false })}
+                  </td>
+                  <td className="border-b p-3 font-medium">{usage.companyName}</td>
+                  <td className="border-b p-3">{stageLabel(usage.pipelineStage ?? "OTHER")}</td>
+                  <td className="border-b p-3">
+                    <div>{actionLabel(usage.action)}</div>
+                    {usage.operationKey && (
+                      <div className="mt-1 max-w-[24rem] break-all text-xs text-slate-500" title={t.cost.operationKey}>
+                        {usage.operationKey}
+                      </div>
+                    )}
+                  </td>
+                  <td className="border-b p-3">
+                    <div>{usageDocumentLabel(usage)}</div>
+                    {usage.receiptId && (
+                      <a
+                        href={`/fylgiskjol/${usage.receiptId}`}
+                        className="mt-1 inline-block text-xs font-medium text-blue-700 hover:underline"
+                      >
+                        {t.cost.openReceipt}
+                      </a>
+                    )}
+                  </td>
+                  <td className="whitespace-nowrap border-b p-3">{usage.model}</td>
+                  <td className="whitespace-nowrap border-b p-3">{formatNumber(usage.totalTokens)}</td>
+                  <td className="whitespace-nowrap border-b p-3">
+                    {formatNumber(usage.costIsk, { maximumFractionDigits: 2 })} kr.
+                  </td>
+                  <td className="border-b p-3">
+                    <span className={usage.success ? "text-emerald-700" : "text-red-700"}>
+                      {usage.success ? t.cost.success : t.cost.failed}
+                    </span>
+                    {!usage.success && usage.errorMessage && (
+                      <div className="mt-1 max-w-[28rem] break-words text-xs text-red-700">
+                        {usage.errorMessage}
+                      </div>
+                    )}
+                  </td>
+                </tr>
+              ))}
+              {recentUsage.length === 0 && (
+                <tr>
+                  <td className="p-3 text-slate-500" colSpan={9}>—</td>
+                </tr>
+              )}
+            </tbody>
+          </table>
+        </div>
+      </section>
+
     </main>
   );
 }

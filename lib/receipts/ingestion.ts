@@ -179,6 +179,8 @@ export type DetectedDocumentLike = {
   summary?: unknown;
   documentType?: unknown;
   documentRole?: unknown;
+  disposition?: unknown;
+  bookingEntryCount?: unknown;
   classificationConfidence?: unknown;
   environmentReviewRequired?: unknown;
   [key: string]: unknown;
@@ -256,6 +258,12 @@ export function dedupeDetectedDocuments<T extends DetectedDocumentLike>(
 export function shouldRunDeepInsight(document: DetectedDocumentLike) {
   const type = String(document.documentType ?? "UNKNOWN");
   const role = String(document.documentRole ?? "REVIEW");
+  const disposition = String(document.disposition ?? "");
+  const bookingEntryCount =
+    typeof document.bookingEntryCount === "number" &&
+    Number.isFinite(document.bookingEntryCount)
+      ? Math.max(0, Math.trunc(document.bookingEntryCount))
+      : 0;
   const confidence =
     typeof document.classificationConfidence === "number" &&
     Number.isFinite(document.classificationConfidence)
@@ -303,6 +311,17 @@ export function shouldRunDeepInsight(document: DetectedDocumentLike) {
     safeNumber(document.totalAmount) !== null;
 
   /*
+   * Ef fyrri fylgiskjalagreining hefur þegar búið til bókunarlínur er skjalið
+   * fyrst og fremst bókhaldsskjal. Innsýn á þá að nýta canonical niðurstöðuna
+   * en EKKI lesa sama frumskjalið aftur sjálfkrafa, óháð því hvort flokkun
+   * skjalsins varð t.d. UNKNOWN/REVIEW/INSIGHT_SOURCE. Handvirkur
+   * "Lesa með Innsýn" er áfram leyfður fyrir dýpri rannsókn.
+   */
+  if (bookingEntryCount > 0 && disposition !== "INSIGHT_ONLY") {
+    return false;
+  }
+
+  /*
    * Gögn fyrst, AI síðan:
    * Fylgiskjalagreiningin hefur þegar séð frumskjalið. Við keyrum því ekki
    * sjálfkrafa annað fullt AI-lestur bara vegna þess að skjalið var lán,
@@ -325,25 +344,27 @@ export function shouldRunDeepInsight(document: DetectedDocumentLike) {
     return false;
   }
 
-  // Skjöl sem eru sjálf fyrst og fremst merkingar-/skilmálagögn mega enn fá
-  // dýpri greiningu sjálfkrafa. Þetta er ekki venjulegt bókunarskjal.
+  // Skjöl sem eru í raun bókuð/afgreidd sem INSIGHT_ONLY mega fá dýpri
+  // sjálfvirka rannsókn. Sama gildir um hreina samninga/tilboð/upplýsingaskjöl
+  // sem hafa engar bókunarlínur. UNKNOWN eitt og sér er EKKI lengur næg ástæða
+  // til að borga fyrir annað AI-kall.
   if (
-    type === "CONTRACT" ||
-    type === "OFFER" ||
-    type === "INFORMATION" ||
-    type === "UNKNOWN" ||
-    role === "INSIGHT_SOURCE"
+    disposition === "INSIGHT_ONLY" ||
+    ((type === "CONTRACT" || type === "OFFER" || type === "INFORMATION") &&
+      bookingEntryCount === 0) ||
+    (role === "INSIGHT_SOURCE" && bookingEntryCount === 0 && !hasCoreFacts)
   ) {
     return true;
   }
 
-  // REVIEW á ekki sjálfkrafa að þýða "borga fyrir annað AI-kall". Ef fyrri
-  // lestur hefur kjarna staðreyndir bíður skjalið frekar mannlegrar yfirferðar.
-  if (role === "REVIEW" && hasCoreFacts) {
+  // REVIEW eða óviss flokkun bíður mannlegrar yfirferðar þegar fyrri lestur
+  // hefur þegar gefið gagnlegar staðreyndir. AI má síðan keyra handvirkt ef
+  // notandi vill dýpri rannsókn.
+  if (hasCoreFacts || hasCanonicalLoan || hasCanonicalInsurance || hasPaymentSchedule) {
     return false;
   }
 
-  return !(confidence >= 0.82 && hasCoreFacts);
+  return confidence < 0.82 && bookingEntryCount === 0;
 }
 
 export type PurchaseLineLike = {

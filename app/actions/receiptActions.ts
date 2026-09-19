@@ -236,6 +236,10 @@ async function runAutomaticInsightForDocuments(documentIds: number[]) {
           environmentReviewRequired: true,
           paymentSchedule: true,
           extractionMetadata: true,
+          disposition: true,
+          _count: {
+            select: { bookingEntries: true },
+          },
         },
       });
 
@@ -243,6 +247,7 @@ async function runAutomaticInsightForDocuments(documentIds: number[]) {
 
       const deepInsightRequired = shouldRunDeepInsight({
         ...document,
+        bookingEntryCount: document._count.bookingEntries,
         date: document.date?.toISOString() ?? null,
       });
 

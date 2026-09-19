@@ -1,0 +1,38 @@
+GLÖGGT – AI rekjanleiki og strangari Innsýn-vörn
+Dagsetning: 19.09.2026
+
+Markmið
+- Sjá nákvæmlega hvert AI-kall á Kostnaðarsíðu: tími, fyrirtæki, vinnslustig, aðgerð,
+  receipt/document tenging, model, token, kostnaður, staða og operationKey.
+- Stöðva sjálfvirkan annan AI-lestur í Innsýn þegar fyrri fylgiskjalagreining hefur
+  þegar búið til bókunarlínur fyrir skjalið.
+- UNKNOWN/REVIEW/INSIGHT_SOURCE flokkun ein og sér á ekki lengur að kveikja dýrt
+  annað AI-kall ef skjalið er í reynd venjulegt bókhaldsskjal.
+
+Mikilvæg hegðun
+- Ef document hefur bookingEntries og er ekki sérstaklega INSIGHT_ONLY notar Innsýn
+  canonical niðurstöðu úr fylgiskjalagreiningu og keyrir ekki sjálfvirka deep-AI greiningu.
+- Samningar, tilboð og upplýsingaskjöl án bókunarlína geta áfram farið sjálfvirkt í
+  dýpri Innsýn þar sem það á við.
+- Handvirkur "Lesa með Innsýn" er áfram tiltækur fyrir dýpri rannsókn.
+- Kostnaðarsíðan sýnir nú allt að 100 nýjustu AI-köll innan valins tímabils og tengil
+  beint í fylgiskjal þegar receiptId er til.
+
+Skrár
+- app/actions/receiptActions.ts
+- app/stjornbord/kostnadur/page.tsx
+- lib/i18n/admin.ts
+- lib/receipts/ingestion.ts
+- docs/fylgiskjol/LESTU-MIG-AI-NYLEG-KOLL-OG-INNSYN-VORN-20260919.txt
+
+Migration
+- Engin.
+
+Prófun eftir afritun
+1. npx tsc --noEmit
+2. git diff --check
+3. Deploy production.
+4. Taka inn eitt venjulegt bókhaldsskjal með bókunarlínum.
+5. Á Kostnaður eiga nýleg AI-köll að sýna nákvæmlega eina RECEIPT_ANALYSIS línu fyrir
+   það skjal og enga INSIGHT_DOCUMENT_ANALYSIS línu nema sérstök deep-Innsýn hafi raunverulega verið nauðsynleg.
+6. Prófa hreinan samning/tilboð sérstaklega til að tryggja að dýpri Innsýn geti enn keyrt.
