@@ -41,6 +41,15 @@ function committedOf(item: { commitments: Array<{ quantity: number }> }) {
   return item.commitments.reduce((sum, commitment) => sum + commitment.quantity, 0);
 }
 
+function inventoryValueOf(item: {
+  isStockTracked: boolean;
+  purchaseUnitCost: number | null;
+  movements: Array<{ quantityDelta: number }>;
+}) {
+  if (!item.isStockTracked || item.purchaseUnitCost === null) return null;
+  return stockOf(item) * item.purchaseUnitCost;
+}
+
 export default async function BirgdirPage({ searchParams }: Props) {
   const companyId = await requireCompanyModule("birgdir");
   const effectiveUser = await getEffectiveUser();
@@ -131,6 +140,15 @@ export default async function BirgdirPage({ searchParams }: Props) {
     if (!item.isStockTracked || item.minStock === null) return false;
     return stockOf(item) - committedOf(item) < item.minStock;
   }).length;
+  const inventoryValue = items.reduce((sum, item) => {
+    const value = inventoryValueOf(item);
+    return value === null ? sum : sum + value;
+  }, 0);
+  const stockItemsMissingCost = items.filter((item) =>
+    item.isStockTracked &&
+    item.purchaseUnitCost === null &&
+    Math.abs(stockOf(item)) > 1e-9
+  ).length;
 
   const positionRows = items.flatMap((item) => {
     if (!item.isStockTracked) return [];
@@ -142,7 +160,8 @@ export default async function BirgdirPage({ searchParams }: Props) {
         .filter((commitment) => commitment.locationId === location.id)
         .reduce((sum, commitment) => sum + commitment.quantity, 0);
       if (Math.abs(onHand) <= 1e-9 && Math.abs(committed) <= 1e-9) return [];
-      return [{ item, location, onHand, committed, available: onHand - committed }];
+      const inventoryValue = item.purchaseUnitCost === null ? null : onHand * item.purchaseUnitCost;
+      return [{ item, location, onHand, committed, available: onHand - committed, inventoryValue }];
     });
   });
 
@@ -154,7 +173,7 @@ export default async function BirgdirPage({ searchParams }: Props) {
         <p className="mt-2 max-w-4xl text-sm text-slate-600">{t.intro}</p>
       </header>
 
-      <section className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
+      <section className="grid gap-3 sm:grid-cols-2 xl:grid-cols-5">
         {[
           [t.items, totalItems],
           [t.stockTracked, stockTracked],
@@ -166,6 +185,16 @@ export default async function BirgdirPage({ searchParams }: Props) {
             <p className="mt-1 text-2xl font-bold">{value}</p>
           </div>
         ))}
+        <div className="rounded-2xl border bg-white p-4">
+          <p className="text-xs font-medium text-slate-500">{t.inventoryValue}</p>
+          <p className="mt-1 text-2xl font-bold">{inventoryFormatMoney(inventoryValue, language)}</p>
+          <p className="mt-1 text-[11px] leading-4 text-slate-500">{t.inventoryValueHelp}</p>
+          {stockItemsMissingCost > 0 ? (
+            <p className="mt-2 text-[11px] font-semibold text-amber-700">
+              {t.inventoryValueMissingCost}: {stockItemsMissingCost}
+            </p>
+          ) : null}
+        </div>
       </section>
 
       <section className="rounded-2xl border border-blue-200 bg-blue-50 p-4 lg:p-5">
@@ -215,8 +244,10 @@ export default async function BirgdirPage({ searchParams }: Props) {
                   <th className="px-3 py-2 text-right">{t.onHand}</th>
                   <th className="px-3 py-2 text-right">{t.committed}</th>
                   <th className="px-3 py-2 text-right">{t.availableStock}</th>
+                  <th className="px-3 py-2 text-right">{t.inventoryValue}</th>
                   <th className="px-3 py-2 text-right">{t.minStock}</th>
                   <th className="px-3 py-2 text-right">{t.purchaseCost}</th>
+                  <th className="px-3 py-2 text-right">{t.inventoryValue}</th>
                   <th className="px-3 py-2 text-right">{t.salePrice}</th>
                   <th className="px-3 py-2"></th>
                 </tr>
@@ -226,6 +257,7 @@ export default async function BirgdirPage({ searchParams }: Props) {
                   const stock = stockOf(item);
                   const committed = committedOf(item);
                   const available = stock - committed;
+                  const itemInventoryValue = inventoryValueOf(item);
                   const isLow = item.minStock !== null && available < item.minStock;
                   return (
                     <tr key={item.id} className="hover:bg-slate-50">
@@ -252,6 +284,7 @@ export default async function BirgdirPage({ searchParams }: Props) {
                       </td>
                       <td className="px-3 py-3 text-right">{item.minStock === null ? "—" : inventoryFormatNumber(item.minStock, language)}</td>
                       <td className="px-3 py-3 text-right">{inventoryFormatMoney(item.purchaseUnitCost, language)}</td>
+                      <td className="px-3 py-3 text-right font-semibold">{inventoryFormatMoney(itemInventoryValue, language)}</td>
                       <td className="px-3 py-3 text-right">{inventoryFormatMoney(item.saleUnitPrice, language)}</td>
                       <td className="px-3 py-3 text-right">
                         {companyAccess.canWrite ? (
@@ -287,13 +320,14 @@ export default async function BirgdirPage({ searchParams }: Props) {
                 </tr>
               </thead>
               <tbody className="divide-y">
-                {positionRows.map(({ item, location, onHand, committed, available }) => (
+                {positionRows.map(({ item, location, onHand, committed, available, inventoryValue }) => (
                   <tr key={`${item.id}:${location.id}`}>
                     <td className="px-3 py-2"><span className="font-semibold">{item.name}</span><span className="ml-2 text-xs text-slate-500">{item.sku}</span></td>
                     <td className="px-3 py-2">{location.name}</td>
                     <td className="px-3 py-2 text-right font-semibold">{inventoryFormatNumber(onHand, language)}</td>
                     <td className="px-3 py-2 text-right">{inventoryFormatNumber(committed, language)}</td>
                     <td className={`px-3 py-2 text-right font-semibold ${available < 0 ? "text-rose-700" : ""}`}>{inventoryFormatNumber(available, language)}</td>
+                    <td className="px-3 py-2 text-right font-semibold">{inventoryFormatMoney(inventoryValue, language)}</td>
                   </tr>
                 ))}
               </tbody>

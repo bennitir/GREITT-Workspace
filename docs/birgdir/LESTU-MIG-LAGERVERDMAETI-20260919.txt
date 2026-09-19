@@ -1,0 +1,18 @@
+GLÖGGT – verðmæti vörulagers
+19. september 2026
+
+Markmið
+- Birgðasíða sýnir nú heildarverðmæti vörulagers.
+- Vöruskrá sýnir lagerverðmæti á hverri vörulínu.
+- Staða eftir staðsetningu sýnir verðmæti á hverjum lagerstað/vörulínu.
+- Ef vara hefur lagerstöðu en ekkert skráð innkaupsverð birtist viðvörun svo heildin sé ekki túlkuð sem fullkomin án fyrirvara.
+
+Reikniregla í þessari rekstrarsýn
+  lagerstaða × síðasta skráða innkaupsverð vörunnar
+
+Þetta er ekki formlegt bókhaldslegt birgðamat ársreiknings (t.d. FIFO eða vegið meðalverð). Slíkt þarf sér reglulag þegar bókhaldslegt birgðamat verður innleitt.
+
+Fylgiskjöl
+Þegar notandi staðfestir vörumóttöku úr fylgiskjali og einingarverð liggur fyrir verður það síðasta staðfesta innkaupsverð vörunnar. Þannig nýtist sama gögn einnig fyrir rekstrarlega lagerverðmætissýn og verðþróun.
+
+Engin Prisma migration fylgir þessari breytingu.

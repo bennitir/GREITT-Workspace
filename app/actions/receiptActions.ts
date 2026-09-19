@@ -4232,6 +4232,17 @@ export async function receiveDocumentInventoryLine(formData: FormData) {
 
     if (!item) throw new Error("Valin vara fannst ekki.");
 
+    // Þegar notandi staðfestir móttöku úr fylgiskjali verður einingarverðið
+    // síðasta staðfesta innkaupsverð vörunnar. Þetta styður rekstrarsýn á
+    // lagerverðmæti og verðþróun án þess að rugla því saman við formlegt
+    // bókhaldslegt birgðamat (FIFO/meðalverð o.s.frv.).
+    if (effectiveUnitCost !== null && item.purchaseUnitCost !== effectiveUnitCost) {
+      item = await tx.inventoryItem.update({
+        where: { id: item.id },
+        data: { purchaseUnitCost: effectiveUnitCost },
+      });
+    }
+
     const movementUnit =
       item.baseUnit === "CUSTOM"
         ? item.customUnit ?? line.unit ?? "CUSTOM"
