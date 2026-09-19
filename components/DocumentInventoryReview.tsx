@@ -8,6 +8,7 @@ import {
   inventoryFormatNumber,
 } from "@/lib/i18n/inventory";
 import { receiptInventoryText } from "@/lib/i18n/receipt-inventory";
+import { isInventoryEligiblePurchaseLine } from "@/lib/receipts/ingestion";
 
 type InventoryLine = {
   id: number;
@@ -66,7 +67,22 @@ export default function DocumentInventoryReview({
   duplicateBlocked,
   canEdit,
 }: Props) {
-  if (lines.length === 0) return null;
+  const visibleLines = lines.filter((line) =>
+    line.status === "RECEIVED" ||
+    isInventoryEligiblePurchaseLine({
+      description: line.description,
+      supplierItemCode: line.supplierItemCode,
+      barcode: line.barcode,
+      quantity: line.quantity,
+      unit: line.unit,
+      unitPrice: line.unitPrice,
+      lineTotal: line.lineTotal,
+      stockCandidate: line.stockCandidate,
+      matchedItemId: line.matchedItemId,
+    }),
+  );
+
+  if (visibleLines.length === 0) return null;
 
   const t = receiptInventoryText(language);
   const defaultLocationId = locations[0]?.id ?? "";
@@ -87,7 +103,7 @@ export default function DocumentInventoryReview({
       )}
 
       <div className="mt-4 space-y-3">
-        {lines.map((line) => {
+        {visibleLines.map((line) => {
           const matchedBy = matchLabel(line.matchSource, t);
           const received = line.status === "RECEIVED";
           const skipped = line.status === "SKIPPED";

@@ -13,6 +13,7 @@ import {
   normalizePurchaseLine,
   normalizeReference,
   matchPurchaseLineToInventory,
+  isInventoryEligiblePurchaseLine,
   shouldRunDeepInsight,
 } from "@/lib/receipts/ingestion";
 import {
@@ -2604,7 +2605,10 @@ if (hasInvalidDate) {
                   lineTotal: normalizedLine.lineTotal,
                   stockCandidate:
                     document.documentType === "ACCOUNTING_DOCUMENT" &&
-                    normalizedLine.stockCandidate,
+                    isInventoryEligiblePurchaseLine({
+                      ...normalizedLine,
+                      matchedItemId: match?.itemId ?? null,
+                    }),
                   extractionSource: sourceTextForAnalysis
                     ? "AI_FROM_SOURCE_TEXT"
                     : "AI_VISION",

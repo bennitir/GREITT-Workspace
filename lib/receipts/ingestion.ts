@@ -379,6 +379,103 @@ export type PurchaseLineLike = {
   stockCandidate?: unknown;
 };
 
+
+export type InventoryEligibilityLine = PurchaseLineLike & {
+  matchedItemId?: number | null;
+};
+
+const NON_STOCK_DESCRIPTION_PATTERNS = [
+  /\btrygging\b/,
+  /\btrygginga\w*/,
+  /\bskirteini\b/,
+  /\bidgjald\w*/,
+  /\bvaxt\w*/,
+  /\bverdbaet\w*/,
+  /\bafborgun\w*/,
+  /\bskatt\w*/,
+  /\bvsk\b/,
+  /\blaun\w*/,
+  /\bthjonust\w*/,
+  /\bvinna\b/,
+  /\bakstur\w*/,
+  /\bleiga\b/,
+  /\baskrift\w*/,
+  /\bsendingarkostnad\w*/,
+  /\bflutningskostnad\w*/,
+  /\bgreidsludreifing\w*/,
+  /\bgreidslugjald\w*/,
+  /\binnheimtugjald\w*/,
+  /\bafslatt\w*/,
+  /\bservice\b/,
+  /\binsurance\b/,
+  /\binterest\b/,
+  /\bfee\b/,
+  /\btax\b/,
+  /\bsubscription\b/,
+];
+
+const PHYSICAL_STOCK_UNITS = new Set([
+  "stk", "st", "pcs", "pc", "ea", "each",
+  "kg", "g", "mg", "tonn", "t",
+  "l", "ltr", "liter", "litri", "ml",
+  "m", "m2", "m3", "cm", "mm",
+  "pk", "pakki", "pakk", "box", "kassi",
+  "roll", "rulla", "rúlla", "sett", "set",
+]);
+
+function normalizeUnitForInventory(value: unknown) {
+  if (typeof value !== "string") return "";
+  return value
+    .toLocaleLowerCase("is-IS")
+    .normalize("NFKD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .replace(/²/g, "2")
+    .replace(/³/g, "3")
+    .replace(/[^a-z0-9]+/g, "")
+    .trim();
+}
+
+/**
+ * Varfærin deterministic sía fyrir tillögur um vörumóttöku úr fylgiskjali.
+ * AI má merkja línu sem stockCandidate, en sú merking ein og sér dugar ekki.
+ * Þekkt lagerhaldsvöruauðkenni eða raunhæf magn/eining þarf líka að liggja fyrir,
+ * og augljós þjónusta/gjöld/tryggingar eru alltaf útilokuð.
+ */
+export function isInventoryEligiblePurchaseLine(input: InventoryEligibilityLine) {
+  const description = normalizeIdentityText(input.description);
+
+  if (!description) return false;
+  if (NON_STOCK_DESCRIPTION_PATTERNS.some((pattern) => pattern.test(description))) {
+    return false;
+  }
+
+  if (typeof input.matchedItemId === "number" && Number.isInteger(input.matchedItemId)) {
+    return true;
+  }
+
+  const barcode =
+    typeof input.barcode === "string" ? input.barcode.replace(/\s+/g, "").trim() : "";
+  const supplierItemCode =
+    typeof input.supplierItemCode === "string" ? normalizeReference(input.supplierItemCode) : "";
+
+  if (barcode || supplierItemCode) {
+    return true;
+  }
+
+  const quantity =
+    typeof input.quantity === "number" && Number.isFinite(input.quantity)
+      ? input.quantity
+      : null;
+  const unit = normalizeUnitForInventory(input.unit);
+
+  return (
+    input.stockCandidate === true &&
+    quantity !== null &&
+    quantity > 0 &&
+    PHYSICAL_STOCK_UNITS.has(unit)
+  );
+}
+
 export type InventoryMatchItem = {
   id: number;
   sku: string;

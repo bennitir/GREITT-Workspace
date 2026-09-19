@@ -384,6 +384,11 @@ const visibleDocuments = selectedDocument
   ? [selectedDocument]
   : receipt.aiDetectedDocuments;
 
+const headerAmount =
+  selectedDocument?.totalAmount ??
+  receipt.aiAmount ??
+  receipt.amount;
+
 const getNextUnresolvedDocument = (currentDocumentId: number) =>
   receipt.aiDetectedDocuments
     .filter(
@@ -418,7 +423,7 @@ const getNextUnresolvedDocument = (currentDocumentId: number) =>
       )}
 
       <span className="font-semibold">
-  {formatNumber(receipt.amount)} kr.
+  {formatNumber(headerAmount)} kr.
 </span>
 
       {receipt.filePath && (

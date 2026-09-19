@@ -1,0 +1,17 @@
+GLÖGGT – Fylgiskjöl / Birgðir / fjárhæð
+19. september 2026
+
+Markmið
+- Birgðatillaga úr fylgiskjali birtist aðeins fyrir raunhæfar lagerhæfar vörulínur.
+- Tryggingar, skírteini, þjónusta, vextir, gjöld, skattar, áskriftir o.fl. eru síað út deterministic áður en notanda er boðin lagerfærsla.
+- Fyrir eldri DocumentInventoryLine gögn endurreiknar UI sömu varfærnu eligibility-reglu svo rangar tryggingalínur hverfi án þess að gömlum gögnum sé eytt.
+- Haus fylgiskjals notar greinda/valda fjárhæð þegar hún liggur fyrir í stað upphaflegrar 0 kr. placeholder-fjárhæðar.
+
+Reglur
+- Birgðir þurfa áfram að vera virkar hjá fyrirtækinu.
+- Sterk pörun við fyrirliggjandi lagerhaldna vöru, barcode eða vörunúmer er nægjanleg vísbending ef línan er ekki augljós þjónusta/gjald.
+- Annars þarf AI-stockCandidate + jákvætt magn + raunhæfa efnislega mælieiningu.
+- Engin birgðahreyfing verður til án staðfestingar notanda.
+- Engum eldri inventory-line gögnum er eytt með þessari breytingu.
+
+Engin migration.
