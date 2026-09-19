@@ -38,6 +38,7 @@ import { prisma } from "@/lib/prisma";
 import { GLOGGT_MODULES } from "@/lib/core/modules";
 import { supabaseAdmin } from "@/lib/supabase";
 import { revalidatePath } from "next/cache";
+import { receiptInventoryText } from "@/lib/i18n/receipt-inventory";
 
 async function isInventoryModuleEnabled(companyId: number) {
   const setting = await prisma.companyModule.findUnique({
@@ -4047,19 +4048,66 @@ async function materializeReviewedPaymentSchedule(
   });
 }
 
+function inventoryUnitFromDocumentLine(unit: string | null) {
+  const raw = String(unit ?? "").trim();
+  const normalized = raw
+    .toLowerCase()
+    .replace(/\s+/g, "")
+    .replace(/\./g, "");
+
+  if (!normalized || ["stk", "stykki", "pcs", "pc", "ea", "piece", "pieces"].includes(normalized)) {
+    return { baseUnit: "PCS", customUnit: null as string | null };
+  }
+  if (["kg", "kilo", "kíló"].includes(normalized)) {
+    return { baseUnit: "KG", customUnit: null as string | null };
+  }
+  if (["l", "ltr", "liter", "litre", "lítri", "litrar"].includes(normalized)) {
+    return { baseUnit: "L", customUnit: null as string | null };
+  }
+  if (["m", "meter", "metri", "metrar"].includes(normalized)) {
+    return { baseUnit: "M", customUnit: null as string | null };
+  }
+  if (["m2", "m²"].includes(normalized)) {
+    return { baseUnit: "M2", customUnit: null as string | null };
+  }
+  if (["m3", "m³"].includes(normalized)) {
+    return { baseUnit: "M3", customUnit: null as string | null };
+  }
+  if (["km", "kílómetri", "kilometer", "kilometre"].includes(normalized)) {
+    return { baseUnit: "KM", customUnit: null as string | null };
+  }
+  if (["klst", "hour", "hours", "hr", "hrs"].includes(normalized)) {
+    return { baseUnit: "HOUR", customUnit: null as string | null };
+  }
+  if (["mín", "min", "minute", "minutes"].includes(normalized)) {
+    return { baseUnit: "MINUTE", customUnit: null as string | null };
+  }
+
+  return {
+    baseUnit: "CUSTOM",
+    customUnit: raw.slice(0, 40) || "eining",
+  };
+}
+
 export async function receiveDocumentInventoryLine(formData: FormData) {
   const companyId = await requireActiveCompanyWriteAccess();
   await requireInventoryModuleEnabled(companyId);
   const user = await getEffectiveUser();
 
   const lineId = Number(formData.get("lineId"));
-  const itemId = Number(formData.get("itemId"));
+  const itemSelection = String(formData.get("itemId") ?? "").trim();
+  const createNewItem = itemSelection === "__CREATE__";
+  const itemId = createNewItem ? null : Number(itemSelection);
   const locationId = Number(formData.get("locationId"));
   const quantity = Number(String(formData.get("quantity") ?? "").replace(",", "."));
   const unitCostRaw = String(formData.get("unitCost") ?? "").trim().replace(",", ".");
   const unitCost = unitCostRaw ? Number(unitCostRaw) : null;
 
-  if (!Number.isInteger(lineId) || !Number.isInteger(itemId) || !Number.isInteger(locationId)) {
+  if (
+    !Number.isInteger(lineId) ||
+    (!createNewItem && !Number.isInteger(itemId)) ||
+    !Number.isInteger(locationId)
+  ) {
     throw new Error("Ógild vörumóttaka.");
   }
   if (!Number.isFinite(quantity) || quantity <= 0) {
@@ -4069,7 +4117,7 @@ export async function receiveDocumentInventoryLine(formData: FormData) {
     throw new Error("Ógilt innkaupsverð.");
   }
 
-  const [line, item, location] = await Promise.all([
+  const [line, selectedItem, location, userSettings] = await Promise.all([
     prisma.documentInventoryLine.findFirst({
       where: { id: lineId, companyId },
       include: {
@@ -4089,17 +4137,25 @@ export async function receiveDocumentInventoryLine(formData: FormData) {
         },
       },
     }),
-    prisma.inventoryItem.findFirst({
-      where: { id: itemId, companyId, isActive: true },
-    }),
+    createNewItem
+      ? Promise.resolve(null)
+      : prisma.inventoryItem.findFirst({
+          where: { id: itemId ?? -1, companyId, isActive: true },
+        }),
     prisma.inventoryLocation.findFirst({
       where: { id: locationId, companyId, isActive: true },
     }),
+    user?.id
+      ? prisma.userSettings.findUnique({
+          where: { userId: user.id },
+          select: { interfaceLanguage: true },
+        })
+      : Promise.resolve(null),
   ]);
 
   if (!line) throw new Error("Vörulína fannst ekki.");
-  if (!item) throw new Error("Valin vara fannst ekki.");
-  if (!item.isStockTracked) {
+  if (!createNewItem && !selectedItem) throw new Error("Valin vara fannst ekki.");
+  if (selectedItem && !selectedItem.isStockTracked) {
     throw new Error("Valin vara er ekki lagerhaldin.");
   }
   if (!location) throw new Error("Valinn lagerstaður fannst ekki.");
@@ -4119,8 +4175,68 @@ export async function receiveDocumentInventoryLine(formData: FormData) {
   const receivedAt = line.document.date ?? new Date();
   const effectiveUnitCost =
     unitCost ?? (line.unitPrice !== null && line.unitPrice >= 0 ? line.unitPrice : null);
+  const sourceLanguage = userSettings?.interfaceLanguage?.trim() || "is";
+  const inventoryT = receiptInventoryText(sourceLanguage);
 
   await prisma.$transaction(async (tx) => {
+    let item = selectedItem;
+    let itemCreatedFromDocument = false;
+
+    if (createNewItem) {
+      const exactAlternatives: Array<
+        | { name: { equals: string; mode: "insensitive" } }
+        | { barcode: string }
+        | { sku: { equals: string; mode: "insensitive" } }
+      > = [{ name: { equals: line.description, mode: "insensitive" } }];
+      if (line.barcode) exactAlternatives.unshift({ barcode: line.barcode });
+      if (line.supplierItemCode) {
+        exactAlternatives.push({
+          sku: { equals: line.supplierItemCode, mode: "insensitive" },
+        });
+      }
+
+      item = await tx.inventoryItem.findFirst({
+        where: {
+          companyId,
+          isActive: true,
+          OR: exactAlternatives,
+        },
+      });
+
+      if (item && !item.isStockTracked) {
+        throw new Error(inventoryT.existingNotStockTracked);
+      }
+
+      if (!item) {
+        const { baseUnit, customUnit } = inventoryUnitFromDocumentLine(line.unit);
+        const generatedSku = `AUTO-${companyId}-${line.id}`.slice(0, 80);
+        const itemName = line.description.trim().slice(0, 180) || generatedSku;
+
+        item = await tx.inventoryItem.create({
+          data: {
+            companyId,
+            sku: generatedSku,
+            barcode: line.barcode?.trim().slice(0, 120) || null,
+            name: itemName,
+            sourceLanguage,
+            baseUnit,
+            customUnit,
+            isStockTracked: true,
+            purchaseUnitCost: effectiveUnitCost,
+            createdById: user?.id ?? null,
+          },
+        });
+        itemCreatedFromDocument = true;
+      }
+    }
+
+    if (!item) throw new Error("Valin vara fannst ekki.");
+
+    const movementUnit =
+      item.baseUnit === "CUSTOM"
+        ? item.customUnit ?? line.unit ?? "CUSTOM"
+        : item.baseUnit;
+
     const movement = await tx.inventoryMovement.create({
       data: {
         companyId,
@@ -4128,7 +4244,7 @@ export async function receiveDocumentInventoryLine(formData: FormData) {
         locationId: location.id,
         movementType: "RECEIPT",
         quantityDelta: quantity,
-        unit: item.baseUnit,
+        unit: movementUnit,
         unitCost: effectiveUnitCost,
         movementAt: receivedAt,
         note: `${line.description} · fylgiskjal ${line.document.receiptId}`,
@@ -4144,14 +4260,15 @@ export async function receiveDocumentInventoryLine(formData: FormData) {
       where: { id: line.id },
       data: {
         matchedItemId: item.id,
-        matchSource:
-          line.matchedItemId === item.id
+        matchSource: itemCreatedFromDocument
+          ? "USER_CREATED_FROM_DOCUMENT"
+          : line.matchedItemId === item.id
             ? line.matchSource ?? "USER_CONFIRMED"
             : "USER_OVERRIDE",
         matchConfidence: 1,
         locationId: location.id,
         quantity,
-        unit: item.baseUnit,
+        unit: movementUnit,
         unitPrice: effectiveUnitCost,
         status: "RECEIVED",
         receivedAt: new Date(),
@@ -4166,20 +4283,24 @@ export async function receiveDocumentInventoryLine(formData: FormData) {
         userId: user?.id ?? null,
         entityType: "DocumentInventoryLine",
         entityId: line.id,
-        action: "RECEIVE_INVENTORY_FROM_DOCUMENT",
+        action: itemCreatedFromDocument
+          ? "CREATE_ITEM_AND_RECEIVE_INVENTORY_FROM_DOCUMENT"
+          : "RECEIVE_INVENTORY_FROM_DOCUMENT",
         parentEntityType: "AiDetectedDocument",
         parentEntityId: line.document.id,
         source: "USER",
-        description:
-          "Vörulína úr yfirfærðu fylgiskjali staðfest sem vörumóttaka í birgðir.",
+        description: itemCreatedFromDocument
+          ? inventoryT.auditCreatedAndReceived
+          : inventoryT.auditReceived,
         metadata: {
           movementId: movement.id,
           receiptId: line.document.receiptId,
           itemId: item.id,
           itemSku: item.sku,
+          itemCreatedFromDocument,
           locationId: location.id,
           quantity,
-          unit: item.baseUnit,
+          unit: movementUnit,
           unitCost: effectiveUnitCost,
           merchantName: line.document.merchantName,
           receiptNumber: line.document.receiptNumber,

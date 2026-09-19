@@ -1,0 +1,32 @@
+GLÖGGT – stofna vöru beint úr vörulínu fylgiskjals
+19. september 2026
+
+Engin Prisma migration fylgir þessari breytingu.
+
+Markmið
+- Notandi á ekki að þurfa að fara fyrst í Birgðir til að stofna vöru sem hefur aldrei verið til.
+- Á vörulínu fylgiskjals er nú valið „+ Stofna nýja vöru úr þessari línu“.
+- Ef línan hefur enga staðfesta vörupörun er þetta sjálfgefið val.
+- Notandi velur lagerstað, staðfestir magn og innkaupsverð og ýtir á „Færa í birgðir“.
+
+Hegðun
+- GLÖGGT reynir fyrst deterministic að finna þegar tiltekna vöru með sama strikamerki, vörunúmeri eða nákvæmu heiti.
+- Ef samsvarandi lagerhaldin vara finnst er hún endurnýtt; ný tvítekin vara er ekki stofnuð.
+- Ef engin vara finnst er ný lagerhaldin vara stofnuð úr vörulínunni og vörumóttaka skráð í sömu transaction.
+- Heiti kemur úr vörulínunni, strikamerki er varðveitt ef það er til og grunneining er leidd af einingu skjalsins þegar hægt er.
+- GLÖGGT býr til innra vörunúmer á forminu AUTO-{companyId}-{documentInventoryLineId}; notandi getur síðar breytt vörunni í Birgðum.
+- Innkaupsverð við stofnun er tekið af línunni og sjálf vörumóttakan varðveitir einnig unitCost fyrir verðsögu.
+- Lagerhreyfing verður ekki til fyrr en notandi staðfestir „Færa í birgðir“.
+- Tvírit, afgreidd skjöl og óbókanleg skjöl geta áfram ekki stofnað vörumóttöku.
+- Rekjanleiki greinir á milli venjulegrar móttöku og þess þegar vara var stofnuð úr fylgiskjali.
+
+Fjöltyngi
+Nýir UI-textar eru í receipt-inventory i18n laginu fyrir is/en/pl/sr og eru ekki harðkóðaðir í component.
+
+Próf
+1. Opna fylgiskjal með nýrri efnislegri vörulínu.
+2. Staðfesta að „+ Stofna nýja vöru úr þessari línu“ sé sjálfgefið ef engin pörun er til.
+3. Velja lagerstað og staðfesta magn/verð.
+4. Ýta á „Færa í birgðir“.
+5. Staðfesta að varan sé nú í Birgðum, lagerstaða hafi hækkað og línan sé merkt „Móttekið í birgðir“.
+6. Prófa sömu vöru aftur og staðfesta að hún sé endurnýtt frekar en tvítekin.

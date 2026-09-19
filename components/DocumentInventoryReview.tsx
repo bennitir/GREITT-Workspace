@@ -56,6 +56,7 @@ function matchLabel(source: string | null, t: ReturnType<typeof receiptInventory
   if (source === "PRIOR_CONFIRMED_SUPPLIER_CODE") return t.priorSupplierCode;
   if (source === "USER_CONFIRMED") return t.userConfirmed;
   if (source === "USER_OVERRIDE") return t.userOverride;
+  if (source === "USER_CREATED_FROM_DOCUMENT") return t.createdFromDocument;
   return null;
 }
 
@@ -177,11 +178,12 @@ export default function DocumentInventoryReview({
                       <select
                         name="itemId"
                         required
-                        disabled={!canEdit || duplicateBlocked || items.length === 0}
-                        defaultValue={line.matchedItemId ?? ""}
+                        disabled={!canEdit || duplicateBlocked}
+                        defaultValue={line.matchedItemId ?? "__CREATE__"}
                         className="w-full min-w-0 rounded border bg-white px-2 py-2 text-sm disabled:opacity-60"
                       >
                         <option value="">{t.chooseItem}</option>
+                        <option value="__CREATE__">{t.createNewItem}</option>
                         {items.map((item) => (
                           <option key={item.id} value={item.id}>
                             {item.sku} · {item.name} · {item.baseUnit}{item.barcode ? ` · ${item.barcode}` : ""}
@@ -237,11 +239,17 @@ export default function DocumentInventoryReview({
 
                     <button
                       type="submit"
-                      disabled={!canEdit || duplicateBlocked || items.length === 0 || locations.length === 0}
+                      disabled={!canEdit || duplicateBlocked || locations.length === 0}
                       className="rounded bg-emerald-700 px-3 py-2 text-sm font-semibold text-white hover:bg-emerald-800 disabled:cursor-not-allowed disabled:opacity-50"
                     >
                       {t.receive}
                     </button>
+
+                    {!line.matchedItemId && (
+                      <p className="lg:col-span-5 text-xs text-emerald-800">
+                        {t.createNewItemHelp}
+                      </p>
+                    )}
                   </form>
 
                   <form action={skipDocumentInventoryLine} className="lg:col-span-5 flex flex-wrap gap-2">
