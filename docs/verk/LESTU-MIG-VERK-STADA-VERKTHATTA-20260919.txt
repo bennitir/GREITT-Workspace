@@ -1,0 +1,43 @@
+GLÖGGT – Verk: staða Verks vs. staða Verkþátta
+Dagsetning: 19.09.2026
+
+Tilgangur
+--------
+Laga ósamræmi þar sem WorkOrder gat verið merkt COMPLETED þótt einn eða fleiri
+varanlegir Verkþættir væru enn PLANNED / IN_PROGRESS / ON_HOLD / BLOCKED.
+Það olli því m.a. að Raunnotkun sýndi „Ógilda“ og faldi nýskráningarform þó
+Verkið væri í raun enn opið.
+
+Ný regla
+--------
+- WorkOrder er aðeins meðhöndlað sem lokað ef WorkOrder.status = COMPLETED og
+  allir varanlegir Verkþættir eru í terminal-stöðu.
+- Terminal-stöður Verkþáttar eru COMPLETED og CANCELLED.
+- Ef eldri WorkOrder er COMPLETED en einhver Verkþáttur er enn opinn er
+  virk staða Verks IN_PROGRESS.
+- Þegar nýjum PLANNED Verkþætti er bætt við áður lokið Verk er það meðvituð
+  enduropnun: WorkOrder fer í IN_PROGRESS og completedAt er hreinsað.
+- Legacy Verk sem hafa enga varanlega Verkþætti halda eldri WorkOrder-stöðu.
+
+Migration
+---------
+20260919111500_reopen_work_orders_with_open_parts
+
+Migration lagar fyrirliggjandi ósamræmi:
+COMPLETED WorkOrder + opinn WorkPart -> IN_PROGRESS og completedAt = NULL.
+
+Eftir afritun
+-------------
+npx prisma validate
+npx prisma generate
+npx prisma migrate deploy
+npx tsc --noEmit
+
+Próf
+----
+Á prófunarverkinu þar sem:
+- „Tengja fráfall frá þurrkara“ er lokið
+- „hreinsa stíflu í affalli þvottavélar“ er Áætlað
+
+á heildar-Verkið nú að teljast opið. Í Raunnotkun á því að sjást „Eyða“ við
+virkar færslur og nýskráningarformin eiga að birtast aftur.

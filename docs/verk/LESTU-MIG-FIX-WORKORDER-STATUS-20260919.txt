@@ -1,0 +1,16 @@
+GLÖGGT – lagfæring 19. september 2026
+
+Lagfært TypeScript-vandamál í app/verk/[id]/actions.ts.
+
+Orsök:
+Efnisnotkunaraðgerðin athugaði part.workOrder.status en workPart-queryið sótti aðeins id.
+Því gaf TypeScript:
+Property 'workOrder' does not exist on type '{ id: number; }'.
+
+Lagfæring:
+workPart-queryið sækir nú einnig workOrder.status, eins og raunvinnuaðgerðin gerir þegar.
+
+Engin Prisma migration fylgir þessari lagfæringu og engin gagnabreyting er nauðsynleg.
+Eftir afritun yfir C:\GLÖGGT skal keyra:
+
+npx tsc --noEmit

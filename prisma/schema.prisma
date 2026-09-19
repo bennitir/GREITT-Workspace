@@ -71,6 +71,11 @@ model Company {
   inventoryItems InventoryItem[]
   inventoryLocations InventoryLocation[]
   inventoryMovements InventoryMovement[]
+  inventoryStocktakes InventoryStocktake[]
+  inventoryTransfers InventoryTransfer[]
+  inventoryCommitments InventoryCommitment[]
+  inventoryCountSessions InventoryCountSession[]
+  inventoryCountLines InventoryCountLine[]
   bankAccounts BankAccount[]
   vatPeriods   VatPeriod[]
 
@@ -408,6 +413,14 @@ model User {
   createdInventoryLocations       InventoryLocation[] @relation("InventoryLocationCreatedBy")
   createdInventoryMovements       InventoryMovement[] @relation("InventoryMovementCreatedBy")
   voidedInventoryMovements        InventoryMovement[] @relation("InventoryMovementVoidedBy")
+  createdInventoryStocktakes       InventoryStocktake[] @relation("InventoryStocktakeCreatedBy")
+  createdInventoryTransfers         InventoryTransfer[] @relation("InventoryTransferCreatedBy")
+  createdInventoryCommitments       InventoryCommitment[] @relation("InventoryCommitmentCreatedBy")
+  releasedInventoryCommitments      InventoryCommitment[] @relation("InventoryCommitmentReleasedBy")
+  createdInventoryCountSessions      InventoryCountSession[] @relation("InventoryCountSessionCreatedBy")
+  reviewedInventoryCountSessions     InventoryCountSession[] @relation("InventoryCountSessionReviewedBy")
+  countedInventoryCountLines         InventoryCountLine[] @relation("InventoryCountLineCountedBy")
+  voidedInventoryCountLines          InventoryCountLine[] @relation("InventoryCountLineVoidedBy")
   vatSubmissions                 VatSubmission[]
   passwordResetTokens            PasswordResetToken[]
   auditEvents                    AuditEvent[]
@@ -921,6 +934,7 @@ model WorkPartLaborFact {
   createdById Int?
   voidedAt    DateTime?
   voidedById  Int?
+  voidReason  String?
   createdAt   DateTime @default(now())
   updatedAt   DateTime @updatedAt
 
@@ -967,6 +981,7 @@ model WorkPartUsageFact {
   createdById Int?
   voidedAt    DateTime?
   voidedById  Int?
+  voidReason  String?
   createdAt   DateTime @default(now())
   updatedAt   DateTime @updatedAt
 
@@ -993,6 +1008,7 @@ model InventoryItem {
   companyId Int
 
   sku            String
+  barcode        String?
   name           String
   description    String?
   sourceLanguage String @default("is")
@@ -1014,8 +1030,13 @@ model InventoryItem {
   createdBy User? @relation("InventoryItemCreatedBy", fields: [createdById], references: [id], onDelete: SetNull)
   movements InventoryMovement[]
   usageFacts WorkPartUsageFact[]
+  stocktakes InventoryStocktake[]
+  transfers InventoryTransfer[]
+  commitments InventoryCommitment[]
+  countLines InventoryCountLine[]
 
   @@unique([companyId, sku])
+  @@index([companyId, barcode])
   @@index([companyId, isActive])
   @@index([companyId, name])
 }
@@ -1026,7 +1047,7 @@ model InventoryLocation {
 
   code      String
   name      String
-  kind      String @default("WAREHOUSE") // WAREHOUSE | VEHICLE | SITE | OTHER
+  kind      String @default("WAREHOUSE") // WAREHOUSE | STORE | STAGING | VEHICLE | SITE | TRANSIT | OTHER
   isActive  Boolean @default(true)
 
   createdById Int?
@@ -1037,6 +1058,11 @@ model InventoryLocation {
   createdBy User? @relation("InventoryLocationCreatedBy", fields: [createdById], references: [id], onDelete: SetNull)
   movements InventoryMovement[]
   usageFacts WorkPartUsageFact[]
+  stocktakes InventoryStocktake[]
+  transfersFrom InventoryTransfer[] @relation("InventoryTransferFromLocation")
+  transfersTo InventoryTransfer[] @relation("InventoryTransferToLocation")
+  commitments InventoryCommitment[]
+  countSessions InventoryCountSession[]
 
   @@unique([companyId, code])
   @@index([companyId, isActive])
@@ -1048,16 +1074,20 @@ model InventoryMovement {
   itemId    Int
   locationId Int
 
-  movementType String // OPENING | RECEIPT | ISSUE | ADJUSTMENT | WORK_USAGE | RETURN
+  movementType String // OPENING | RECEIPT | ISSUE | ADJUSTMENT_IN | ADJUSTMENT_OUT | WORK_USAGE | RETURN | STOCKTAKE_ADJUSTMENT | WASTE | TRACKING_ADJUSTMENT | TRANSFER_OUT | TRANSFER_IN
   quantityDelta Float
   unit           String
   unitCost       Float?
   movementAt     DateTime
   note           String?
-  source         String @default("MANUAL") // MANUAL | WORK | IMPORTED | API
+  reasonCode     String?
+  source         String @default("MANUAL") // MANUAL | WORK | STOCKTAKE | IMPORTED | API
 
   workPartId Int?
   usageFactId Int? @unique
+  stocktakeId Int? @unique
+  inventoryTransferId Int?
+  transferLeg String? // OUT | IN
 
   createdById Int?
   voidedAt    DateTime?
@@ -1070,6 +1100,8 @@ model InventoryMovement {
   location InventoryLocation @relation(fields: [locationId], references: [id], onDelete: Restrict)
   workPart WorkPart? @relation(fields: [workPartId], references: [id], onDelete: SetNull)
   usageFact WorkPartUsageFact? @relation(fields: [usageFactId], references: [id], onDelete: SetNull)
+  stocktake InventoryStocktake? @relation(fields: [stocktakeId], references: [id], onDelete: SetNull)
+  inventoryTransfer InventoryTransfer? @relation(fields: [inventoryTransferId], references: [id], onDelete: SetNull)
   createdBy User? @relation("InventoryMovementCreatedBy", fields: [createdById], references: [id], onDelete: SetNull)
   voidedBy  User? @relation("InventoryMovementVoidedBy", fields: [voidedById], references: [id], onDelete: SetNull)
 
@@ -1077,6 +1109,161 @@ model InventoryMovement {
   @@index([itemId, locationId, voidedAt])
   @@index([workPartId])
   @@index([movementType])
+  @@index([reasonCode])
+  @@index([inventoryTransferId])
+}
+
+model InventoryStocktake {
+  id         Int @id @default(autoincrement())
+  companyId  Int
+  itemId     Int
+  locationId Int
+
+  countedAt        DateTime
+  expectedQuantity Float
+  countedQuantity  Float
+  varianceQuantity Float
+  reasonCode       String?
+  note             String?
+
+  createdById Int?
+  createdAt DateTime @default(now())
+
+  company   Company @relation(fields: [companyId], references: [id], onDelete: Cascade)
+  item      InventoryItem @relation(fields: [itemId], references: [id], onDelete: Restrict)
+  location  InventoryLocation @relation(fields: [locationId], references: [id], onDelete: Restrict)
+  createdBy User? @relation("InventoryStocktakeCreatedBy", fields: [createdById], references: [id], onDelete: SetNull)
+  movement  InventoryMovement?
+
+  @@index([companyId, countedAt])
+  @@index([itemId, locationId, countedAt])
+  @@index([reasonCode])
+}
+
+model InventoryTransfer {
+  id             Int @id @default(autoincrement())
+  companyId      Int
+  itemId         Int
+  fromLocationId Int
+  toLocationId   Int
+
+  quantity      Float
+  unit          String
+  transferredAt DateTime
+  note          String?
+  source        String @default("MANUAL") // MANUAL | SALE | WORK | IMPORTED | API
+  status        String @default("COMPLETED") // COMPLETED | VOIDED
+
+  createdById Int?
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  company      Company @relation(fields: [companyId], references: [id], onDelete: Cascade)
+  item         InventoryItem @relation(fields: [itemId], references: [id], onDelete: Restrict)
+  fromLocation InventoryLocation @relation("InventoryTransferFromLocation", fields: [fromLocationId], references: [id], onDelete: Restrict)
+  toLocation   InventoryLocation @relation("InventoryTransferToLocation", fields: [toLocationId], references: [id], onDelete: Restrict)
+  createdBy    User? @relation("InventoryTransferCreatedBy", fields: [createdById], references: [id], onDelete: SetNull)
+  movements    InventoryMovement[]
+
+  @@index([companyId, transferredAt])
+  @@index([itemId, fromLocationId, transferredAt])
+  @@index([itemId, toLocationId, transferredAt])
+}
+
+model InventoryCommitment {
+  id         Int @id @default(autoincrement())
+  companyId  Int
+  itemId     Int
+  locationId Int
+
+  quantity       Float
+  commitmentType String @default("RESERVATION") // RESERVATION | SALE_PENDING | OTHER
+  status         String @default("ACTIVE") // ACTIVE | RELEASED | FULFILLED | CANCELLED
+  sourceType     String @default("MANUAL") // MANUAL | SALE | WORK | IMPORTED | API
+  sourceRef      String?
+  note           String?
+
+  createdById  Int?
+  releasedById Int?
+  releasedAt   DateTime?
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  company    Company @relation(fields: [companyId], references: [id], onDelete: Cascade)
+  item       InventoryItem @relation(fields: [itemId], references: [id], onDelete: Restrict)
+  location   InventoryLocation @relation(fields: [locationId], references: [id], onDelete: Restrict)
+  createdBy  User? @relation("InventoryCommitmentCreatedBy", fields: [createdById], references: [id], onDelete: SetNull)
+  releasedBy User? @relation("InventoryCommitmentReleasedBy", fields: [releasedById], references: [id], onDelete: SetNull)
+
+  @@index([companyId, status])
+  @@index([itemId, locationId, status])
+  @@index([sourceType, sourceRef])
+}
+
+
+model InventoryCountSession {
+  id         Int @id @default(autoincrement())
+  companyId  Int
+  locationId Int
+
+  mode       String @default("HANDHELD") // HANDHELD
+  status     String @default("COUNTING") // COUNTING | REVIEW | COMPLETED | CANCELLED
+  startedAt  DateTime @default(now())
+  submittedAt DateTime?
+  reviewedAt DateTime?
+  completedAt DateTime?
+  cancelledAt DateTime?
+  note       String?
+
+  createdById Int?
+  reviewedById Int?
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  company   Company @relation(fields: [companyId], references: [id], onDelete: Cascade)
+  location  InventoryLocation @relation(fields: [locationId], references: [id], onDelete: Restrict)
+  createdBy User? @relation("InventoryCountSessionCreatedBy", fields: [createdById], references: [id], onDelete: SetNull)
+  reviewedBy User? @relation("InventoryCountSessionReviewedBy", fields: [reviewedById], references: [id], onDelete: SetNull)
+  lines     InventoryCountLine[]
+
+  @@index([companyId, status, createdAt])
+  @@index([locationId, status])
+  @@index([createdById, status])
+}
+
+model InventoryCountLine {
+  id        Int @id @default(autoincrement())
+  sessionId Int
+  companyId Int
+  itemId    Int
+
+  skuSnapshot     String
+  barcodeSnapshot String?
+  nameSnapshot    String
+  unit            String
+  countedQuantity Float
+  countedAt       DateTime
+  note            String?
+  status          String @default("COUNTED") // COUNTED | RECOUNT_REQUESTED | APPROVED | VOIDED
+  stocktakeId     Int?
+
+  countedById Int?
+  voidedAt    DateTime?
+  voidedById  Int?
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  session   InventoryCountSession @relation(fields: [sessionId], references: [id], onDelete: Cascade)
+  company   Company @relation(fields: [companyId], references: [id], onDelete: Cascade)
+  item      InventoryItem @relation(fields: [itemId], references: [id], onDelete: Restrict)
+  countedBy User? @relation("InventoryCountLineCountedBy", fields: [countedById], references: [id], onDelete: SetNull)
+  voidedBy  User? @relation("InventoryCountLineVoidedBy", fields: [voidedById], references: [id], onDelete: SetNull)
+
+  @@unique([sessionId, itemId])
+  @@index([companyId, countedAt])
+  @@index([itemId, countedAt])
+  @@index([status])
+  @@index([stocktakeId])
 }
 
 model WorkPartLaborFactTranslation {

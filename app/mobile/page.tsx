@@ -7,6 +7,7 @@ import { getEffectiveUser } from "@/lib/core/access-control";
 import { uiText } from "@/lib/i18n/ui";
 import { logoutMobileUser } from "@/app/actions/userActions";
 import { getMobileCompaniesForUser } from "@/lib/core/mobile-company";
+import { stocktakeMobileText } from "@/lib/i18n/stocktake-mobile";
 
 async function chooseMobileCompany(formData: FormData) {
   "use server";
@@ -57,6 +58,7 @@ const veljaFyrirtaeki = params.velja === "1";
 
   const userSettings = await prisma.userSettings.findUnique({ where: { userId: user.id }, select: { interfaceLanguage: true } });
   const t = uiText(userSettings?.interfaceLanguage);
+  const stocktakeT = stocktakeMobileText(userSettings?.interfaceLanguage);
 
   const cookieStore = await cookies();
   const activeCompanyId = Number(
@@ -236,14 +238,17 @@ const veljaFyrirtaeki = params.velja === "1";
             </div>
           </button>
 
-          <button className="rounded-2xl border bg-white p-5 text-left shadow-sm">
+          <Link
+            href="/mobile/vorutalning"
+            className="rounded-2xl border bg-white p-5 text-left shadow-sm"
+          >
             <div className="text-lg font-bold">
-              {t.inventory.replace("📦 ", "")}
+              {stocktakeT.shortTitle}
             </div>
             <div className="mt-1 text-sm text-slate-500">
-              {t.stock}
+              {stocktakeT.inventoryTileHelp}
             </div>
-          </button>
+          </Link>
         </section>
 
         <Link href="/mobile/stillingar" className="mt-4 block rounded-2xl border bg-white p-5 text-left shadow-sm">

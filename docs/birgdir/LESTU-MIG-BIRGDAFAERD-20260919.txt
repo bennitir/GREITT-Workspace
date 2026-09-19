@@ -1,0 +1,23 @@
+GLÖGGT – Birgðir – birgðafærð vs. óbirgðafærð eining
+Dagsetning: 19.09.2026
+
+Markmið
+-------
+Verja regluna að þjónusta eða önnur óbirgðafærð eining megi vera til í vöruskrá án þess að mynda birgðahreyfingu.
+
+Hvað breytist
+------------
+- Við stofnun vöru/einingar er nú valið "Halda utan um birgðastöðu".
+- Valið er sjálfgefið virkt fyrir venjulega lagervöru.
+- Fyrir þjónustu og aðrar óbirgðafærðar einingar má taka hakið af.
+- Óbirgðafærð eining má ekki fá upphafsstöðu, lágmarksbirgðir eða handvirka birgðahreyfingu.
+- Aðeins birgðafærðar vörur birtast í "Velja úr birgðum" á Verk.
+- Server action sannreynir sömu reglu svo gamalt/stale UI geti ekki búið til birgðahreyfingu á óbirgðafærða einingu.
+- Birgðayfirlit telur lágmarksstöðu aðeins fyrir birgðafærðar vörur.
+
+Athugið um eldri prófunargögn
+-----------------------------
+Þessi breyting endurflokkar EKKI sjálfkrafa eldri vörur eða þjónustur og eyðir EKKI eldri birgðahreyfingum. Það er meðvitað til að varðveita rekjanleika.
+Ef eldri prófunarþjónusta, t.d. "Þjónusta9000", var stofnuð áður en þessi stýring kom til er hún áfram með núverandi isStockTracked-gildi þar til við byggjum örugga endurflokkun/edit-flæði.
+
+Engin Prisma migration þarf; InventoryItem.isStockTracked er þegar til í schema.

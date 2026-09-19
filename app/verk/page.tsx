@@ -6,6 +6,7 @@ import { isWorkCapabilityEnabled } from "@/lib/core/work-capabilities";
 import { projectWorkPartsForDisplay } from "@/lib/work10/display-parts";
 import { projectLegacyOperationalText } from "@/lib/work10/legacy-operational-text";
 import { projectPersistedWorkOrderText } from "@/lib/work10/work-order-text";
+import { effectiveWork10Status } from "@/lib/work10/status";
 import { resolveWork10LocalizedText } from "@/lib/work10/operational-text";
 import Work10Dashboard, { type Work10DashboardData } from "./Work10Dashboard";
 
@@ -91,13 +92,15 @@ export default async function Verk10Page() {
             : [],
       }));
 
+      const effectiveStatus = effectiveWork10Status(work.status, work.workParts);
+
       return {
       id: work.id,
       title: localizedTitle.text,
       description: localizedDescription?.text ?? null,
       address: work.address,
       priority: work.priority,
-      status: work.status,
+      status: effectiveStatus,
       createdAt: iso(work.createdAt)!,
       startedAt: iso(work.startedAt),
       completedAt: iso(work.completedAt),

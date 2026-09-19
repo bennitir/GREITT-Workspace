@@ -1,0 +1,102 @@
+GLÖGGT – Birgðir: staðsetningar, innri tilfærslur og frátektir
+Dagsetning: 19. september 2026
+
+MARKMIÐ
+Þessi breyting leggur grunninn sem Birgðir, Afgreiðsla og blind vörutalning þurfa sameiginlega.
+
+Meginreglan er nú skýr:
+
+1. Líkamleg staða vöru = hvar varan er í raun.
+2. Rekstrarleg frátekt/skuldbinding = magn sem er frátekið eða bundið ákveðnu ferli.
+3. Sala/afhending = sérstakt viðskipta- og afhendingarferli.
+4. Greiðsla = sérstakt greiðslulag.
+
+Þetta eru tengdar upplýsingar en ekki sama færslan.
+
+HELSTU BREYTINGAR
+
+- InventoryItem fær valkvætt strikamerki (barcode).
+- InventoryLocation styður fleiri raunverulegar staðsetningartegundir:
+  WAREHOUSE, STORE, STAGING, VEHICLE, SITE, TRANSIT og OTHER.
+- Nýtt InventoryTransfer varðveitir rekjanlega innri tilfærslu milli tveggja staðsetninga.
+- Hver innri tilfærsla býr til tvær InventoryMovement færslur:
+  TRANSFER_OUT á upprunastað og TRANSFER_IN á áfangastað.
+  Heildarbirgðir fyrirtækisins breytast því ekki; aðeins staðsetningin breytist.
+- Nýtt InventoryCommitment varðveitir frátekið/skuldbundið magn án þess að færa vöruna líkamlega.
+- Virk frátekt lækkar „Tiltækt“ magn en ekki „Líkamlega stöðu“.
+- Birgðasíðan sýnir nú:
+  Líkamlega stöðu, frátekið/skuldbundið og tiltækt magn.
+- Sérstök tafla sýnir stöðu eftir staðsetningu.
+- Hægt er að stofna staðsetningu af gerðinni „Afgreiðslusvæði“.
+- Hægt er að skrá handvirka innri tilfærslu.
+- Hægt er að skrá og losa frátekt/skuldbindingu.
+- Verk les nú tiltækt magn eftir að virkar frátektir hafa verið dregnar frá.
+  Verk getur því ekki óvart tekið efni sem þegar er frátekið öðru ferli.
+- Handvirk úttekt og innri tilfærsla mega ekki taka meira en tiltækt magn.
+- Ekki er hægt að taka lagerhald af vöru meðan virk frátekt er til.
+- Leit í Birgðum og efnisvali Verks tekur nú einnig mið af strikamerki.
+
+MIKILVÆG HÖNNUNARREGLA FYRIR AFGREIÐSLU
+
+„Selt“ á ekki sjálfkrafa að þýða „farið af lager“.
+
+Dæmi:
+- Vara getur verið frátekin en enn í hillu.
+- Vara getur verið flutt á afgreiðslusvæði en ekki afhent.
+- Vara getur verið afhent en ógreidd; þá er hún farin úr líkamlegum birgðum en greiðslustaðan er enn opin.
+- Vara getur verið greidd en ekki afhent; þá getur hún enn verið líkamlega á lager eða afgreiðslusvæði.
+
+Þessi breyting byggir aðeins Birgða-grunninn. Full Sala/Afgreiðsla og greiðslustaða verða tengd síðar án þess að rugla þessum víddum saman.
+
+BLIND VÖRUTALNING – EKKI Í ÞESSUM PAKKA
+
+Núverandi stjórnendatalning er ekki lokaútgáfa blindrar vörutalningar.
+Næsta sérstaka skref á að vera talningarlota/Mobile-flæði þar sem starfsmaður:
+- velur eða fær lagerstað,
+- skannar strikamerki,
+- skráir aðeins raunverulega talda tölu,
+- sér EKKI vænta lagerstöðu, mismun, frátektir eða möguleg aföll.
+
+Talningin verður þá fyrst staðreynd. Yfirferð stjórnanda afstemmir hana síðar við líkamlegar staðsetningar, innri tilfærslur og rekstrarlegar skuldbindingar áður en leiðrétting er samþykkt.
+
+MIGRATION
+
+20260919114500_add_inventory_locations_transfers_commitments
+
+KEYRA EFTIR AFRITUN
+
+npx prisma validate
+npx prisma generate
+npx prisma migrate deploy
+npx tsc --noEmit
+
+RÁÐLAGT RAUNPRÓF
+
+1. Stofna nýja staðsetningu, t.d.:
+   Kóði: AFG
+   Heiti: Afgreiðslusvæði
+   Tegund: Afgreiðslusvæði
+
+2. Velja birgðafærða vöru með nægri stöðu og færa 1 stk. frá Aðallager yfir á Afgreiðslusvæði.
+   Staðfesta:
+   - staða Aðallagers lækkar um 1,
+   - staða Afgreiðslusvæðis hækkar um 1,
+   - heildar líkamleg staða vörunnar breytist ekki,
+   - tvær rekjanlegar hreyfingar sjást: tilfærsla út og inn.
+
+3. Skrá 1 stk. sem frátekið á stað þar sem tiltækt magn er til.
+   Staðfesta:
+   - líkamleg staða breytist ekki,
+   - „Frátekið / skuldbundið“ hækkar um 1,
+   - „Tiltækt“ lækkar um 1.
+
+4. Opna Verk og skoða birgðaval.
+   Staðfesta að tiltækt magn þar sé sama tala og í Birgðum, þ.e. frátekið magn sé ekki boðið til notkunar á Verki.
+
+5. Losa frátektina.
+   Staðfesta að líkamleg staða sé óbreytt og tiltækt magn hækki aftur.
+
+ATHUGIÐ
+
+Sala/Afgreiðsla á síðar að stofna og uppfæra InventoryCommitment sjálfkrafa eftir sínu ferli.
+Handvirka frátektarformið í þessum pakka er bæði raunhæf almenn virkni og prófunarleið fyrir grunninn.

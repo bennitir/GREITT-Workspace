@@ -1,0 +1,40 @@
+GLÖGGT – Verk / innri kostnaður – 19.09.2026
+
+Markmið
+- Ljúka tengingu sögulegs innra kostnaðarverðs starfsmanns inn í Verk → Afleiðingar.
+- Kostnaðarverð er valið eftir DAGSETNINGU raunvinnunnar, ekki eftir núverandi tíma.
+- Engar launaupplýsingar eru birtar inni á Verki.
+
+Breyttar skrár
+- app/verk/[id]/page.tsx
+- app/starfsmenn/[id]/page.tsx
+- lib/work10/domain.ts
+- lib/work10/effects.ts
+- lib/i18n/work10.ts
+
+Helstu breytingar
+1. Dagsetningarsamanburður kostnaðarverðs er nú date-only samanburður.
+   Þetta kemur í veg fyrir að gildi sem tekur gildi sama dag kl. 12:00 UTC teljist ranglega ekki virkt fyrr um morguninn.
+2. Vinnukostnaður er reiknaður á hverja raunvinnufærslu með því kostnaðarverði sem gilti þann dag.
+3. Afleiðingar sýna hversu margar vinnuskráningar fundu gilt kostnaðarverð.
+4. Ef eina eða fleiri færslur vantar gilt kostnaðarverð er HEILDARKOSTNAÐUR ekki sýndur sem hálf/ófullnægjandi tala.
+5. Viðmótið segir skýrt að innra kostnaðarverð vanti og bendir á starfsmannaspjaldið.
+6. „Núverandi launagildi“ á starfsmannaspjaldi notar nú dagsetningu en fellur ekki yfir í framtíðargildi sem væri ranglega merkt núverandi.
+7. Nýir textar eru til á íslensku, ensku, pólsku og serbnesku.
+
+Engin Prisma migration fylgir þessum pakka.
+
+Prófun sem var gerð utan fulls apps
+- TypeScript-prófun á lib/work10/domain.ts + lib/work10/effects.ts: OK.
+- TypeScript-prófun á lib/i18n/work10.ts: OK.
+- Runtime-próf:
+  * 10 mín. þann 14.09 á 100 kr./mín.
+  * 15 mín. þann 15.09 á 120 kr./mín.
+  * niðurstaða: 2.800 kr., RATE_READY.
+  * viðbótarfærsla án gilds kostnaðarverðs: RULE_REQUIRED, 2/3 færslur með verði, engin villandi heildartala.
+
+Eftir að pakkanum hefur verið afritað yfir C:\GLÖGGT:
+
+npx tsc --noEmit
+
+Ef það er hreint þarf enga migration fyrir þessa breytingu.

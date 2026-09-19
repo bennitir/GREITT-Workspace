@@ -1,0 +1,38 @@
+GLÖGGT – leiðrétting á gildistíma launa og innra kostnaðar
+Dagsetning: 19.09.2026
+
+Tilgangur
+--------
+Starfsmannaspjaldið gat áður stofnað ný launagildi með „Gildir frá“, en eldri færsla í launasögunni var ekki opnanleg til breytinga. Það gerði meðal annars erfitt að leiðrétta gildistíma innra kostnaðarverðs sem Verk/Afleiðingar þarf að lesa sögulega.
+
+Breyting
+--------
+- Færslur í Launasögu eru nú opnanlegar.
+- Hægt er að breyta „Gildir frá“ á fyrirliggjandi færslu.
+- Einnig er hægt að leiðrétta launategund, mánaðarlaun, tímakaup, innra kostnaðarverð á mínútu og athugasemd í sömu færslu.
+- „Gildir til“ er áfram reiknað sjálfkrafa út frá næstu launafærslu þegar hún er til.
+- Breyting á upphafsdegi má ekki færa færslu yfir aðra færslu í launasögunni. Það ver gegn skörun og óljósri sögulegri röð.
+- Ef fyrri færsla var samfelld við færsluna sem er færð, færist lokadagur hennar með svo tímabil haldist samfellt.
+- UI-textar breytingarinnar eru til á íslensku, ensku, pólsku og serbnesku.
+
+Engin Prisma migration
+---------------------
+Breytingin notar núverandi EmployeeCompensation gagnalíkan. Engin migration þarf.
+
+Próf
+----
+Keyra:
+  npx tsc --noEmit
+
+Raunpróf fyrir Verk/Afleiðingar
+-------------------------------
+1. Opna starfsmannaspjald starfsmannsins sem á raunvinnufærsluna.
+2. Opna viðkomandi færslu undir Launasaga.
+3. Breyta „Gildir frá“ þannig að dagsetningin nái yfir vinnudaginn.
+4. Setja innra kostnaðarverð á mínútu, t.d. 100.
+5. Vista.
+6. Opna Verk aftur og skoða Afleiðingar.
+
+Við 100 kr./mín. ætti:
+- 10 mín. raunvinna að gefa 1.000 kr. innri kostnað.
+- 15 mín. raunvinna að gefa 1.500 kr. innri kostnað.

@@ -1,0 +1,77 @@
+GLÖGGT – Vörutalning í handtölvu
+Dagsetning: 19.09.2026
+
+Markmið
+------
+Bæta við vettvangstalningu þar sem starfsmaður skannar vöru og skráir aðeins raunverulega talda stöðu. Talningarmaður sér ekki kerfisstöðu, vænta stöðu, mismun, frátektir eða möguleg aföll.
+
+Kjarnaregla
+-----------
+Talin staða er rekstrarstaðreynd. Hún verður ekki sjálfkrafa lagerleiðrétting.
+
+Flæði
+-----
+1. Starfsmaður opnar Mobile -> Vörutalning.
+2. Velur raunverulegan birgðastað.
+3. Skannar strikamerki eða slær inn vörunúmer.
+4. Skráir talda stöðu.
+5. Sendir talningarlotu til yfirferðar.
+6. Ábyrgðarmaður opnar Birgðir -> Vörutalningar.
+7. GLÖGGT sýnir þar vænta líkamlega stöðu, talda stöðu, mismun og þekktar frátektir sem samhengi.
+8. Ábyrgðarmaður getur óskað eftir endurtalningu eða flokkað mismun og samþykkt lotuna.
+9. Aðeins við samþykkt myndast InventoryStocktake og, ef mismunur er til staðar, rekjanleg STOCKTAKE_ADJUSTMENT hreyfing.
+
+Mikilvægt um sölu/frátektir
+----------------------------
+Frátekt eða söluskuldbinding er ekki sjálfkrafa dregin frá líkamlegri stöðu. Ef vara hefur raunverulega verið færð á afgreiðslusvæði eða annan stað á sú hreyfing að liggja fyrir sem staðsetningarhreyfing. Þannig getur talningarmaður talið það sem er fyrir framan hann án þess að vita viðskiptalega stöðu vörunnar.
+
+Endurtalning
+------------
+Ábyrgðarmaður getur óskað eftir endurtalningu á línu. Talningarlotan opnast þá aftur fyrir talningarmann, en hann sér áfram hvorki vænta stöðu né mismun.
+
+Rekjanleiki
+-----------
+Varðveitt er m.a.:
+- talningarlota
+- staðsetning
+- hver taldi
+- hvenær var talið
+- vara, vörunúmer og strikamerki við talningu
+- talin staða
+- endurtalning ef óskað er eftir henni
+- hver yfirfór
+- flokkun mismunar
+- tengd InventoryStocktake / leiðrétting eftir samþykkt
+
+Ný Prisma-líkön
+---------------
+InventoryCountSession
+InventoryCountLine
+
+Migration
+---------
+20260919123000_add_handheld_inventory_counts
+
+Prófun eftir uppsetningu
+------------------------
+Keyra:
+  npx prisma validate
+  npx prisma generate
+  npx prisma migrate deploy
+  npx tsc --noEmit
+
+Raunpróf:
+1. Mobile -> Vörutalning.
+2. Velja Aðallager.
+3. Skanna/slá inn 1000000 eða strikamerki á Tengi.
+4. Skrá talda tölu, t.d. 9.
+5. Staðfesta að Mobile sýni EKKI kerfisstöðu eða mismun.
+6. Senda til yfirferðar.
+7. Birgðir -> Vörutalningar -> opna lotuna.
+8. Staðfesta að ábyrgðarmaður sjái vænta stöðu, talda stöðu og mismun.
+9. Prófa fyrst Endurtelja ef við á; annars samþykkja með ástæðu.
+10. Staðfesta að leiðréttingarhreyfing myndist aðeins eftir samþykkt.
+
+Athugasemd um skönnun
+---------------------
+Fyrsta útgáfa styður handskanna sem virkar sem lyklaborð (barcode -> Enter) og handvirka leit. Myndavélaskönnun má bæta síðar ofan á sama talningargrunn án breytinga á gagnalíkaninu.

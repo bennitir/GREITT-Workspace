@@ -185,8 +185,24 @@ export type Work10EffectCandidate = {
   quantity: Work10Quantity;
   resourceLabel?: string | null;
   resourceCode?: string | null;
-  status: "RULE_REQUIRED" | "LINK_REQUIRED" | "RATE_READY" | "APPLIED";
+  status:
+    | "RULE_REQUIRED"
+    | "LINK_REQUIRED"
+    | "RATE_READY"
+    | "COST_READY"
+    | "COST_MISSING"
+    | "APPLIED";
   amountIsk?: number | null;
+  /**
+   * Fyrir kostnaðargrunn vinnu: segir hversu margar raunvinnufærslur fundu
+   * gilt sögulegt innra kostnaðarverð. Þetta sýnir óvissu án þess að afhjúpa
+   * launaupplýsingar inni á Verki.
+   */
+  rateCoverage?: {
+    totalFactCount: number;
+    resolvedFactCount: number;
+    missingFactCount: number;
+  } | null;
 };
 
 export type Work10CommercialEffect = {

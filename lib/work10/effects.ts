@@ -14,11 +14,27 @@ type LaborFactForEffect = {
   } | null;
 };
 
+function utcDateKey(value: Date) {
+  return (
+    value.getUTCFullYear() * 10_000 +
+    (value.getUTCMonth() + 1) * 100 +
+    value.getUTCDate()
+  );
+}
+
 function internalRateForFact(fact: LaborFactForEffect) {
   const rows = fact.employee?.compensations ?? [];
+  const workDateKey = utcDateKey(fact.workDate);
   const row = rows
-    .filter((item) => item.validFrom <= fact.workDate && (!item.validTo || item.validTo >= fact.workDate))
-    .sort((a, b) => b.validFrom.getTime() - a.validFrom.getTime())[0];
+    .filter((item) => {
+      const validFromKey = utcDateKey(item.validFrom);
+      const validToKey = item.validTo ? utcDateKey(item.validTo) : null;
+      return (
+        validFromKey <= workDateKey &&
+        (validToKey === null || validToKey >= workDateKey)
+      );
+    })
+    .sort((a, b) => utcDateKey(b.validFrom) - utcDateKey(a.validFrom))[0];
   return row?.internalCostPerMinute ?? null;
 }
 
@@ -40,9 +56,15 @@ export function deriveWork10LaborEffectCandidates(
   );
   const sourceFactIds = activeFacts.map((fact) => String(fact.id));
   const rates = activeFacts.map((fact) => internalRateForFact(fact));
-  const allRatesKnown = rates.every((rate) => rate !== null);
+  const resolvedFactCount = rates.filter((rate) => rate !== null).length;
+  const missingFactCount = activeFacts.length - resolvedFactCount;
+  const allRatesKnown = missingFactCount === 0;
   const amountIsk = allRatesKnown
-    ? activeFacts.reduce((sum, fact, index) => sum + fact.durationMinutes * (rates[index] ?? 0), 0)
+    ? activeFacts.reduce(
+        (sum, fact, index) =>
+          sum + fact.durationMinutes * (rates[index] ?? 0),
+        0,
+      )
     : null;
 
   return [
@@ -55,6 +77,11 @@ export function deriveWork10LaborEffectCandidates(
       quantity: { value: durationMinutes, unit: "MINUTE" },
       status: allRatesKnown ? "RATE_READY" : "RULE_REQUIRED",
       amountIsk,
+      rateCoverage: {
+        totalFactCount: activeFacts.length,
+        resolvedFactCount,
+        missingFactCount,
+      },
     },
     {
       id: `labor-sales-basis:${workPartId}`,
@@ -79,7 +106,10 @@ type UsageFactForEffect = {
   customUnit: string | null;
   voidedAt: Date | null;
   inventoryItemId?: number | null;
-  inventoryMovement?: { voidedAt: Date | null } | null;
+  inventoryMovement?: {
+    voidedAt: Date | null;
+    unitCost: number | null;
+  } | null;
 };
 
 export function deriveWork10UsageEffectCandidates(
@@ -109,21 +139,38 @@ export function deriveWork10UsageEffectCandidates(
         resourceCode: fact.resourceCode,
       };
 
+      const activeMovement =
+        fact.inventoryMovement && !fact.inventoryMovement.voidedAt
+          ? fact.inventoryMovement
+          : null;
+      const hasAppliedInventoryMovement = Boolean(
+        fact.inventoryItemId && activeMovement,
+      );
+      const unitCost = activeMovement?.unitCost ?? null;
+      const hasUnitCost =
+        unitCost !== null && Number.isFinite(unitCost) && unitCost >= 0;
+
       return [
         {
           ...common,
           id: `material-inventory-basis:${fact.id}`,
           kind: "MATERIAL_INVENTORY_BASIS" as const,
-          status:
-            fact.inventoryItemId && fact.inventoryMovement && !fact.inventoryMovement.voidedAt
-              ? ("APPLIED" as const)
-              : ("LINK_REQUIRED" as const),
+          status: hasAppliedInventoryMovement
+            ? ("APPLIED" as const)
+            : ("LINK_REQUIRED" as const),
         },
         {
           ...common,
           id: `material-cost-basis:${fact.id}`,
           kind: "MATERIAL_COST_BASIS" as const,
-          status: "RULE_REQUIRED" as const,
+          status: hasAppliedInventoryMovement
+            ? hasUnitCost
+              ? ("COST_READY" as const)
+              : ("COST_MISSING" as const)
+            : ("RULE_REQUIRED" as const),
+          amountIsk: hasAppliedInventoryMovement && hasUnitCost
+            ? fact.quantity * (unitCost ?? 0)
+            : null,
         },
         {
           ...common,

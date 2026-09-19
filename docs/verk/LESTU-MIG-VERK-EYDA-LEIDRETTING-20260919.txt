@@ -1,0 +1,60 @@
+GLÖGGT – Verk: eyðing og rekjanleg leiðrétting raunnotkunar
+Dagsetning: 19. september 2026
+
+MARKMIÐ
+- Notandi þarf að geta lagað ranglega skráðar færslur á Verki án óþarfa vesens.
+- Á opnu Verki birtist einföld aðgerðin „Eyða“.
+- Undir húddinu er færslan ekki hard-delete-uð; hún er merkt ógild svo rekjanleiki varðveitist.
+- Eyddar/ógildar færslur hverfa úr virku flæði og fara í samanbrjótanlega leiðréttingarsögu.
+- Ef efnisnotkun hafði þegar búið til birgðahreyfingu er lager leiðréttur með gagnstæðri RETURN-hreyfingu.
+- Á lokuðu/COMPLETED Verki verður að skrá ástæðu áður en færsla er ógilt.
+- Ný raunvinna og ný efnisnotkun eru lokuð á COMPLETED Verki; enduropna þarf Verkið fyrst.
+
+REKJANLEIKI
+Ný nullable reit eru bætt við:
+- WorkPartLaborFact.voidReason
+- WorkPartUsageFact.voidReason
+
+Eyðing á opnu Verki notar sömu rekjanlegu voidedAt/voidedBy leið og ógilding, en ástæða er ekki skyldubundin.
+Á lokuðu Verki er ástæða skyldubundin og vistuð í voidReason.
+
+BIRGÐIR
+Þegar virk efnisnotkun með tengdri WORK_USAGE birgðahreyfingu er eydd/ógilt:
+- frumhreyfingin er varðveitt,
+- ný RETURN-hreyfing er stofnuð með gagnstæðu magni,
+- sama unitCost er varðveitt á leiðréttingunni,
+- birgðastaða verður því rétt án þess að sögunni sé endurskrifað í hljóði.
+
+VIÐMÓT
+- Opið Verk: Eyða -> staðfesting -> færslan hverfur úr virka listanum.
+- Lokið Verk: Ógilda -> ástæða er skyldubundin.
+- „Eyðingar og leiðréttingar“ sýnir eldri færslur, hver gerði breytinguna og ástæðu þegar hún er til.
+- Sama hegðun er komin fyrir bæði raunvinnu og efnisnotkun.
+- Textar eru tilbúnir fyrir íslensku, ensku, pólsku og serbnesku.
+
+SAMHLIÐA LEIÐRÉTTING Á TEXTA
+Efnisnotkun úr birgðum stofnar nú þegar tengda birgðahreyfingu. Hjálpartexti í Verk hefur verið leiðréttur svo hann segi ekki lengur að ekkert sé fært úr birgðum sjálfkrafa.
+
+EFTIR AFritun BEINT YFIR C:\GLÖGGT
+Keyra í þessari röð:
+
+npx prisma validate
+npx prisma generate
+npx prisma migrate deploy
+npx tsc --noEmit
+
+PRÓF SEM MÆLT ER MEÐ
+1. Eyða 5 stk. Tengi á opnu Verki.
+   - færslan á að hverfa úr virku efnisnotkuninni,
+   - birtast undir „Eyðingar og leiðréttingar“,
+   - Afleiðingar eiga ekki lengur að nota færsluna,
+   - Birgðir eiga að fá RETURN +5 stk. og staðan hækka aftur um 5.
+2. Eyða handvirku ótengdu „tengi“.
+   - engin birgðahreyfing á að verða til,
+   - færslan hverfur úr virku flæði en helst í leiðréttingarsögu.
+3. Eyða raunvinnufærslu á opnu Verki.
+   - hún hverfur úr virkum tíma og Afleiðingum,
+   - helst í leiðréttingarsögu.
+4. Prófa COMPLETED Verk.
+   - ný raunvinna/efnisnotkun á ekki að vera í boði,
+   - ógilding á eldri færslu á að krefjast ástæðu.

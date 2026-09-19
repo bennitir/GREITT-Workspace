@@ -6,10 +6,12 @@ import {
   getEffectiveUser,
   requireActiveCompanyWriteAccess,
 } from "@/lib/core/access-control";
+import { inventoryText } from "@/lib/i18n/inventory";
 import { normalizeUiLanguage } from "@/lib/i18n/ui";
 import { prisma } from "@/lib/prisma";
 import { projectLegacyOperationalText } from "@/lib/work10/legacy-operational-text";
 import { projectPersistedWorkOrderText } from "@/lib/work10/work-order-text";
+import { isWork10EffectivelyCompleted } from "@/lib/work10/status";
 import type {
   Work10OperationalTranslation,
   Work10LocalizedText,
@@ -154,7 +156,7 @@ export async function createWorkPart(formData: FormData) {
   const [work, userSettings] = await Promise.all([
     prisma.workOrder.findFirst({
       where: { id: workOrderId, companyId },
-      select: { id: true },
+      select: { id: true, status: true },
     }),
     effectiveUser
       ? prisma.userSettings.findUnique({
@@ -185,18 +187,49 @@ export async function createWorkPart(formData: FormData) {
   );
   const createdById = effectiveUser?.id ?? null;
 
-  await prisma.workPart.create({
-    data: {
-      companyId,
-      workOrderId: work.id,
-      sequence: lastPart.sequence + 1,
-      sourceLanguage,
-      title,
-      description: description || null,
-      status: "PLANNED",
-      createdById,
-      updatedById: createdById,
-    },
+  await prisma.$transaction(async (tx) => {
+    const createdPart = await tx.workPart.create({
+      data: {
+        companyId,
+        workOrderId: work.id,
+        sequence: lastPart.sequence + 1,
+        sourceLanguage,
+        title,
+        description: description || null,
+        status: "PLANNED",
+        createdById,
+        updatedById: createdById,
+      },
+    });
+
+    // Nýr opinn Verkþáttur á áður lokuðu Verki er meðvituð enduropnun.
+    // completedAt er því hreinsað en eldri framkvæmdarsaga helst óbreytt.
+    if (work.status === "COMPLETED") {
+      await tx.workOrder.update({
+        where: { id: work.id },
+        data: {
+          status: "IN_PROGRESS",
+          completedAt: null,
+        },
+      });
+
+      await tx.auditEvent.create({
+        data: {
+          companyId,
+          userId: createdById,
+          entityType: "WORK_ORDER",
+          entityId: work.id,
+          action: "REOPENED",
+          parentEntityType: "WORK_PART",
+          parentEntityId: createdPart.id,
+          source: "USER",
+          description: "Verk enduropnað þegar nýjum opnum Verkþætti var bætt við.",
+          beforeData: { status: "COMPLETED" },
+          afterData: { status: "IN_PROGRESS" },
+          metadata: { reason: "NEW_OPEN_WORK_PART" },
+        },
+      });
+    }
   });
 
   revalidatePath("/verk");
@@ -228,7 +261,10 @@ export async function assignPersonToWorkPart(formData: FormData) {
   const [part, employee] = await Promise.all([
     prisma.workPart.findFirst({
       where: { id: workPartId, companyId, workOrderId },
-      select: { id: true },
+      select: {
+        id: true,
+        workOrder: { select: { status: true } },
+      },
     }),
     prisma.employee.findFirst({
       where: { id: employeeId, companyId, isActive: true },
@@ -379,7 +415,10 @@ export async function recordPersonLaborFact(formData: FormData) {
   const [part, employee, userSettings] = await Promise.all([
     prisma.workPart.findFirst({
       where: { id: workPartId, companyId, workOrderId },
-      select: { id: true },
+      select: {
+        id: true,
+        workOrder: { select: { status: true, workParts: { select: { status: true } } } },
+      },
     }),
     prisma.employee.findFirst({
       where: { id: employeeId, companyId, isActive: true },
@@ -394,6 +433,9 @@ export async function recordPersonLaborFact(formData: FormData) {
   ]);
 
   if (!part) throw new Error("Verkþátturinn fannst ekki.");
+  if (isWork10EffectivelyCompleted(part.workOrder.status, part.workOrder.workParts)) {
+    throw new Error("Ekki er hægt að bæta nýrri raunvinnu við lokið Verk. Enduropna þarf Verkið fyrst.");
+  }
   if (!employee) throw new Error("Starfsmaðurinn fannst ekki eða er óvirkur.");
 
   await prisma.workPartLaborFact.create({
@@ -488,7 +530,10 @@ export async function recordMaterialUsageFact(formData: FormData) {
   const [part, userSettings, inventoryItem, inventoryLocation] = await Promise.all([
     prisma.workPart.findFirst({
       where: { id: workPartId, companyId, workOrderId },
-      select: { id: true },
+      select: {
+        id: true,
+        workOrder: { select: { status: true, workParts: { select: { status: true } } } },
+      },
     }),
     effectiveUser
       ? prisma.userSettings.findUnique({
@@ -509,10 +554,17 @@ export async function recordMaterialUsageFact(formData: FormData) {
   ]);
 
   if (!part) throw new Error("Verkþátturinn fannst ekki.");
+  if (isWork10EffectivelyCompleted(part.workOrder.status, part.workOrder.workParts)) {
+    throw new Error("Ekki er hægt að bæta nýrri efnisnotkun við lokið Verk. Enduropna þarf Verkið fyrst.");
+  }
 
   const linkedToInventory = inventoryItemId !== null;
   if (linkedToInventory && !inventoryItem) {
     throw new Error("Birgðavaran fannst ekki.");
+  }
+  if (linkedToInventory && inventoryItem && !inventoryItem.isStockTracked) {
+    const language = normalizeUiLanguage(userSettings?.interfaceLanguage ?? "is");
+    throw new Error(inventoryText(language).stockTrackingRequiredForMovement);
   }
   if (linkedToInventory && !inventoryLocation) {
     throw new Error("Velja þarf virka birgðastaðsetningu.");
@@ -531,6 +583,25 @@ export async function recordMaterialUsageFact(formData: FormData) {
   }
   if (unit === "CUSTOM" && !customUnit) {
     throw new Error("Skrá þarf sérsniðna mælieiningu.");
+  }
+
+  if (inventoryItem && inventoryLocation) {
+    const [stock, committed] = await Promise.all([
+      prisma.inventoryMovement.aggregate({
+        where: { companyId, itemId: inventoryItem.id, locationId: inventoryLocation.id, voidedAt: null },
+        _sum: { quantityDelta: true },
+      }),
+      prisma.inventoryCommitment.aggregate({
+        where: { companyId, itemId: inventoryItem.id, locationId: inventoryLocation.id, status: "ACTIVE" },
+        _sum: { quantity: true },
+      }),
+    ]);
+    const available = (stock._sum.quantityDelta ?? 0) - (committed._sum.quantity ?? 0);
+    if (quantity > available + 1e-9) {
+      const language = normalizeUiLanguage(userSettings?.interfaceLanguage ?? "is");
+      const t = inventoryText(language);
+      throw new Error(`${t.insufficientAvailableStock} ${t.availableStock}: ${available}.`);
+    }
   }
 
   await prisma.$transaction(async (tx) => {
@@ -582,13 +653,21 @@ export async function recordMaterialUsageFact(formData: FormData) {
   revalidatePath("/birgdir");
 }
 
-/** Varðveitir efnis-/raunnotkunarsöguna og merkir leiðréttingu sem ógildingu. */
+/**
+ * "Eyða" á opnu Verki er mjúk eyðing undir húddinu svo rekjanleiki tapist ekki.
+ * Ef notkunin hafði þegar myndað birgðahreyfingu er gerð gagnstæð RETURN-hreyfing
+ * í stað þess að endurskrifa lager-söguna. Á lokuðu Verki er ástæða skyldubundin.
+ */
 export async function voidWorkPartUsageFact(formData: FormData) {
   const workOrderId = Number(formData.get("workOrderId"));
   const factId = Number(formData.get("factId"));
+  const reason = String(formData.get("reason") ?? "").trim();
 
   if (!Number.isInteger(workOrderId) || !Number.isInteger(factId)) {
     throw new Error("Ógild raunnotkunarfærsla.");
+  }
+  if (reason.length > 500) {
+    throw new Error("Ástæða leiðréttingar er of löng.");
   }
 
   const companyId = await requireActiveCompanyWriteAccess();
@@ -604,7 +683,23 @@ export async function voidWorkPartUsageFact(formData: FormData) {
     },
     select: {
       id: true,
-      inventoryMovement: { select: { id: true, voidedAt: true } },
+      workPartId: true,
+      workPart: {
+        select: {
+          workOrder: { select: { status: true, workParts: { select: { status: true } } } },
+        },
+      },
+      inventoryMovement: {
+        select: {
+          id: true,
+          itemId: true,
+          locationId: true,
+          quantityDelta: true,
+          unit: true,
+          unitCost: true,
+          voidedAt: true,
+        },
+      },
     },
   });
 
@@ -614,17 +709,42 @@ export async function voidWorkPartUsageFact(formData: FormData) {
     return;
   }
 
+  const isCompletedWork = isWork10EffectivelyCompleted(
+    fact.workPart.workOrder.status,
+    fact.workPart.workOrder.workParts,
+  );
+  if (isCompletedWork && reason.length < 2) {
+    throw new Error("Skrá þarf ástæðu þegar færslu á lokuðu Verki er ógilt.");
+  }
+
   const voidedAt = new Date();
   await prisma.$transaction(async (tx) => {
     await tx.workPartUsageFact.update({
       where: { id: fact.id },
-      data: { voidedAt, voidedById },
+      data: {
+        voidedAt,
+        voidedById,
+        voidReason: reason || null,
+      },
     });
 
-    if (fact.inventoryMovement && !fact.inventoryMovement.voidedAt) {
-      await tx.inventoryMovement.update({
-        where: { id: fact.inventoryMovement.id },
-        data: { voidedAt, voidedById },
+    const movement = fact.inventoryMovement;
+    if (movement && !movement.voidedAt && movement.quantityDelta !== 0) {
+      await tx.inventoryMovement.create({
+        data: {
+          companyId,
+          itemId: movement.itemId,
+          locationId: movement.locationId,
+          movementType: "RETURN",
+          quantityDelta: -movement.quantityDelta,
+          unit: movement.unit,
+          unitCost: movement.unitCost,
+          movementAt: voidedAt,
+          note: reason || null,
+          source: "WORK",
+          workPartId: fact.workPartId,
+          createdById: voidedById,
+        },
       });
     }
   });
@@ -868,15 +988,19 @@ export async function ensureWork10OperationalTranslations(formData: FormData) {
 }
 
 /**
- * Raunvinnufærsla er ekki eytt. Ógilding varðveitir upprunalega færslu,
- * tíma og notanda svo leiðrétting sé rekjanleg.
+ * "Eyða" á opnu Verki merkir færsluna sem eydda án þess að tapa upprunalegu
+ * staðreyndinni. Á lokuðu Verki er aðgerðin ógilding og ástæða er skyldubundin.
  */
 export async function voidPersonLaborFact(formData: FormData) {
   const workOrderId = Number(formData.get("workOrderId"));
   const factId = Number(formData.get("factId"));
+  const reason = String(formData.get("reason") ?? "").trim();
 
   if (!Number.isInteger(workOrderId) || !Number.isInteger(factId)) {
     throw new Error("Ógild raunvinnufærsla.");
+  }
+  if (reason.length > 500) {
+    throw new Error("Ástæða leiðréttingar er of löng.");
   }
 
   const companyId = await requireActiveCompanyWriteAccess();
@@ -889,7 +1013,14 @@ export async function voidPersonLaborFact(formData: FormData) {
       voidedAt: null,
       workPart: { workOrderId },
     },
-    select: { id: true },
+    select: {
+      id: true,
+      workPart: {
+        select: {
+          workOrder: { select: { status: true, workParts: { select: { status: true } } } },
+        },
+      },
+    },
   });
 
   if (!fact) {
@@ -898,11 +1029,20 @@ export async function voidPersonLaborFact(formData: FormData) {
     return;
   }
 
+  const isCompletedWork = isWork10EffectivelyCompleted(
+    fact.workPart.workOrder.status,
+    fact.workPart.workOrder.workParts,
+  );
+  if (isCompletedWork && reason.length < 2) {
+    throw new Error("Skrá þarf ástæðu þegar færslu á lokuðu Verki er ógilt.");
+  }
+
   await prisma.workPartLaborFact.update({
     where: { id: fact.id },
     data: {
       voidedAt: new Date(),
       voidedById: effectiveUser?.id ?? null,
+      voidReason: reason || null,
     },
   });
 

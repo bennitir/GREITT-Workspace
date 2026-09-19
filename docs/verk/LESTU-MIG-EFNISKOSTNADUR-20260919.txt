@@ -1,0 +1,25 @@
+GLÖGGT – Verk – efniskostnaður úr birgðahreyfingu
+Dagsetning: 19.09.2026
+
+Markmið
+-------
+Tengja staðfesta efnisnotkun á Verk við raunverulegan sögulegan kostnaðargrunn án þess að bóka eða reikningsfæra sjálfkrafa.
+
+Hvað breytist
+------------
+- MATERIAL_COST_BASIS les unitCost sem var varðveitt á sjálfri WORK_USAGE-birgðahreyfingunni.
+- Kostnaður er því sögulegur snapshot-kostnaður hreyfingarinnar en ekki núverandi verð vörunnar.
+- Dæmi: 5 stk. með unitCost 320 kr. -> efniskostnaður 1.600 kr.
+- Ef birgðahreyfingin er til en unitCost vantar birtist skýr viðvörun í stað þess að giska á kostnað.
+- Ótengd handvirk efnisnotkun heldur áfram að sýna að regla/verð vanti.
+- Ekkert er bókað og ekkert er rukkað sjálfkrafa.
+
+Próf
+----
+1. Afrita pakkann beint yfir C:\GLÖGGT.
+2. Keyra: npx tsc --noEmit
+3. Opna Verk með efnisnotkun sem var tekin úr birgðum.
+4. Ef WORK_USAGE-hreyfingin hefur unitCost á Afleiðingar að sýna "Kostnaðarverð efnis fundið" og reiknaða krónutölu.
+5. Ef unitCost er null á að sýna "Kostnaðarverð efnis vantar".
+
+Engin Prisma migration þarf; InventoryMovement.unitCost er þegar til í schema.

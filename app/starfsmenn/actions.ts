@@ -263,6 +263,92 @@ export async function addEmployeeCompensation(formData: FormData) {
   revalidateEmployee(employeeId);
 }
 
+export async function updateEmployeeCompensation(formData: FormData) {
+  const { companyId } = await requireEmployeeManager();
+  const employeeId = Number(formData.get("employeeId"));
+  const compensationId = Number(formData.get("compensationId"));
+  const validFrom = dateOnly(formData.get("validFrom"));
+  if (!Number.isInteger(employeeId) || !Number.isInteger(compensationId) || !validFrom) {
+    throw new Error("Starfsmaður, launafærsla og gildistími þurfa að vera skráð.");
+  }
+
+  const employee = await prisma.employee.findFirst({
+    where: { id: employeeId, companyId },
+    select: { id: true },
+  });
+  if (!employee) throw new Error("Starfsmaður fannst ekki.");
+
+  const rows = await prisma.employeeCompensation.findMany({
+    where: { companyId, employeeId },
+    orderBy: { validFrom: "asc" },
+    select: { id: true, validFrom: true, validTo: true },
+  });
+  const index = rows.findIndex((row) => row.id === compensationId);
+  if (index < 0) throw new Error("Launafærslan fannst ekki.");
+
+  const current = rows[index];
+  const previous = index > 0 ? rows[index - 1] : null;
+  const next = index < rows.length - 1 ? rows[index + 1] : null;
+
+  // Leiðrétting á gildistíma má ekki færa færsluna yfir aðra sögulega færslu.
+  // Þannig helst röð launasögunnar ótvíræð og gildistímabil skarast ekki.
+  if (previous && validFrom <= previous.validFrom) {
+    throw new Error("Gildir frá verður að vera eftir upphaf fyrri launafærslu.");
+  }
+  if (next && validFrom >= next.validFrom) {
+    throw new Error("Gildir frá verður að vera fyrir upphaf næstu launafærslu.");
+  }
+
+  const payTypeRaw = String(formData.get("payType") ?? "MONTHLY");
+  const payType = PAY_TYPES.has(payTypeRaw) ? payTypeRaw : "MONTHLY";
+  const monthlySalary = optionalNumber(formData.get("monthlySalary"));
+  const hourlyRate = optionalNumber(formData.get("hourlyRate"));
+  const internalCostPerMinute = optionalNumber(formData.get("internalCostPerMinute"));
+  for (const value of [monthlySalary, hourlyRate, internalCostPerMinute]) {
+    if (value !== null && value < 0) throw new Error("Launa- og kostnaðargildi mega ekki vera neikvæð.");
+  }
+
+  await prisma.$transaction(async (tx) => {
+    if (previous) {
+      const oldBoundary = dayBefore(current.validFrom);
+      const shouldFollowMovedStart =
+        previous.validTo === null ||
+        previous.validTo.getTime() === oldBoundary.getTime() ||
+        previous.validTo >= validFrom;
+
+      if (shouldFollowMovedStart) {
+        await tx.employeeCompensation.update({
+          where: { id: previous.id },
+          data: { validTo: dayBefore(validFrom) },
+        });
+      }
+    }
+
+    let validTo = current.validTo;
+    if (next) {
+      validTo = dayBefore(next.validFrom);
+    } else if (validTo && validTo < validFrom) {
+      validTo = null;
+    }
+
+    await tx.employeeCompensation.update({
+      where: { id: compensationId },
+      data: {
+        validFrom,
+        validTo,
+        payType,
+        monthlySalary,
+        hourlyRate,
+        internalCostPerMinute,
+        internalCostSource: "MANUAL",
+        notes: clean(formData.get("notes")),
+      },
+    });
+  });
+
+  revalidateEmployee(employeeId);
+}
+
 export async function addEmployeeQualification(formData: FormData) {
   const { companyId, userId } = await requireEmployeeManager();
   const employeeId = Number(formData.get("employeeId"));

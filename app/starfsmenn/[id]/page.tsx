@@ -7,7 +7,7 @@ import { getCurrentInterfaceLanguage } from "@/lib/i18n/current-language";
 import { employeeLocale, employeeText } from "@/lib/i18n/employees";
 import { adminRoleLabel } from "@/lib/i18n/admin";
 import { prisma } from "@/lib/prisma";
-import { addEmployeeCompensation, addEmployeeQualification, setEmployeeActiveStatus, updateEmployee, updateEmployeeQualification } from "../actions";
+import { addEmployeeCompensation, addEmployeeQualification, setEmployeeActiveStatus, updateEmployee, updateEmployeeCompensation, updateEmployeeQualification } from "../actions";
 import LocalDateInput from "./LocalDateInput";
 
 type Props = { params: Promise<{ id: string }> };
@@ -162,7 +162,63 @@ export default async function EmployeeDetailPage({ params }: Props) {
 
           <h3 className="mt-5 font-bold">{t.compensationHistory}</h3>
           {employee.compensations.length === 0 ? <p className="mt-2 text-sm text-slate-500">{t.noCompensation}</p> : (
-            <div className="mt-2 overflow-x-auto rounded-xl border"><table className="w-full min-w-[680px] text-sm"><thead className="bg-slate-50 text-left"><tr><th className="p-3">{t.validFrom}</th><th className="p-3">{t.validTo}</th><th className="p-3">{t.payType}</th><th className="p-3 text-right">{t.monthlySalary}</th><th className="p-3 text-right">{t.hourlyRate}</th><th className="p-3 text-right">{t.internalCostPerMinute}</th></tr></thead><tbody>{employee.compensations.map((row) => <tr key={row.id} className="border-t"><td className="p-3">{displayDate(row.validFrom)}</td><td className="p-3">{displayDate(row.validTo)}</td><td className="p-3">{t.payTypes[row.payType as keyof typeof t.payTypes] ?? row.payType}</td><td className="p-3 text-right">{money(row.monthlySalary)}</td><td className="p-3 text-right">{money(row.hourlyRate)}</td><td className="p-3 text-right">{row.internalCostPerMinute === null ? "—" : `${number(row.internalCostPerMinute)} kr.`}</td></tr>)}</tbody></table></div>
+            <div className="mt-2 space-y-2">
+              {employee.compensations.map((row) => (
+                <details key={row.id} className="rounded-xl border bg-white p-3">
+                  <summary className="cursor-pointer list-none">
+                    <div className="flex flex-wrap items-start justify-between gap-3">
+                      <div>
+                        <p className="font-semibold">{displayDate(row.validFrom)} → {displayDate(row.validTo)}</p>
+                        <p className="mt-1 text-xs text-slate-500">{t.payTypes[row.payType as keyof typeof t.payTypes] ?? row.payType}</p>
+                      </div>
+                      <div className="text-right text-sm">
+                        <p>{t.internalCostPerMinute}: <strong>{row.internalCostPerMinute === null ? "—" : `${number(row.internalCostPerMinute)} kr./${t.minutesShort}`}</strong></p>
+                        <p className="mt-1 text-xs font-semibold text-blue-700">{t.editCompensation} ↓</p>
+                      </div>
+                    </div>
+                  </summary>
+
+                  <form action={updateEmployeeCompensation} className="mt-4 grid gap-3 border-t pt-4 sm:grid-cols-2">
+                    <input type="hidden" name="employeeId" value={employee.id} />
+                    <input type="hidden" name="compensationId" value={row.id} />
+                    <label className="grid gap-1 text-sm">
+                      <span>{t.validFrom}</span>
+                      <LocalDateInput name="validFrom" required defaultValue={inputDate(row.validFrom)} placeholder={t.datePlaceholder} calendarLabel={t.openCalendar} />
+                    </label>
+                    <div className="grid gap-1 text-sm">
+                      <span>{t.validTo}</span>
+                      <div className="rounded-lg border bg-slate-50 px-3 py-2 text-slate-700">{displayDate(row.validTo)}</div>
+                    </div>
+                    <label className="grid gap-1 text-sm">
+                      <span>{t.payType}</span>
+                      <select name="payType" defaultValue={row.payType} className="rounded-lg border bg-white px-3 py-2">
+                        <option value="MONTHLY">{t.payTypes.MONTHLY}</option>
+                        <option value="HOURLY">{t.payTypes.HOURLY}</option>
+                        <option value="MIXED">{t.payTypes.MIXED}</option>
+                      </select>
+                    </label>
+                    <label className="grid gap-1 text-sm">
+                      <span>{t.monthlySalary}</span>
+                      <input type="number" min="0" step="1" name="monthlySalary" defaultValue={row.monthlySalary ?? ""} className="rounded-lg border bg-white px-3 py-2" />
+                    </label>
+                    <label className="grid gap-1 text-sm">
+                      <span>{t.hourlyRate}</span>
+                      <input type="number" min="0" step="0.01" name="hourlyRate" defaultValue={row.hourlyRate ?? ""} className="rounded-lg border bg-white px-3 py-2" />
+                    </label>
+                    <label className="grid gap-1 text-sm">
+                      <span>{t.internalCostPerMinute}</span>
+                      <input type="number" min="0" step="0.01" name="internalCostPerMinute" defaultValue={row.internalCostPerMinute ?? ""} className="rounded-lg border bg-white px-3 py-2" />
+                    </label>
+                    <label className="grid gap-1 text-sm sm:col-span-2">
+                      <span>{t.notes}</span>
+                      <input name="notes" defaultValue={row.notes ?? ""} className="rounded-lg border bg-white px-3 py-2" />
+                    </label>
+                    <p className="text-xs leading-5 text-slate-500 sm:col-span-2">{t.compensationValidityHelp}</p>
+                    <button type="submit" className="rounded-lg bg-slate-900 px-4 py-2 font-semibold text-white sm:col-span-2">{t.saveCompensation}</button>
+                  </form>
+                </details>
+              ))}
+            </div>
           )}
         </Card>
 

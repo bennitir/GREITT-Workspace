@@ -16,6 +16,7 @@ type PickerLocation = {
 type PickerItem = {
   id: number;
   sku: string;
+  barcode: string | null;
   name: string;
   baseUnit: string;
   customUnit: string | null;
@@ -54,7 +55,7 @@ export default function MaterialUsageForm({ workOrderId, workPartId, language, i
     const needle = query.trim().toLocaleLowerCase();
     if (!needle) return items;
     return items.filter((item) =>
-      `${item.sku} ${item.name}`.toLocaleLowerCase().includes(needle),
+      `${item.sku} ${item.barcode ?? ""} ${item.name}`.toLocaleLowerCase().includes(needle),
     );
   }, [items, query]);
 

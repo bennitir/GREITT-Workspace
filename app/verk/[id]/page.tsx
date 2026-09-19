@@ -27,6 +27,7 @@ import {
 } from "@/lib/work10/effects";
 import { projectLegacyOperationalText } from "@/lib/work10/legacy-operational-text";
 import { projectPersistedWorkOrderText } from "@/lib/work10/work-order-text";
+import { effectiveWork10Status, isWork10EffectivelyCompleted } from "@/lib/work10/status";
 import { resolveLaborFactNote } from "@/lib/work10/labor-text";
 import { resolveWork10LocalizedText } from "@/lib/work10/operational-text";
 import MaterialUsageForm from "./MaterialUsageForm";
@@ -78,6 +79,7 @@ export default async function Verk10DetailPage({ params }: Props) {
               include: {
                 employee: { include: { compensations: true } },
                 user: true,
+                voidedBy: true,
                 translations: true,
               },
               orderBy: [{ workDate: "desc" }, { createdAt: "desc" }],
@@ -87,7 +89,8 @@ export default async function Verk10DetailPage({ params }: Props) {
               include: {
                 inventoryItem: { select: { id: true, sku: true, name: true } },
                 inventoryLocation: { select: { id: true, code: true, name: true } },
-                inventoryMovement: { select: { id: true, voidedAt: true } },
+                inventoryMovement: { select: { id: true, voidedAt: true, unitCost: true } },
+                voidedBy: true,
               },
               orderBy: [{ usageDate: "desc" }, { createdAt: "desc" }],
             },
@@ -109,11 +112,15 @@ export default async function Verk10DetailPage({ params }: Props) {
       orderBy: { fullName: "asc" },
     }),
     prisma.inventoryItem.findMany({
-      where: { companyId, isActive: true },
+      where: { companyId, isActive: true, isStockTracked: true },
       include: {
         movements: {
           where: { voidedAt: null },
           select: { locationId: true, quantityDelta: true },
+        },
+        commitments: {
+          where: { status: "ACTIVE" },
+          select: { locationId: true, quantity: true },
         },
       },
       orderBy: [{ name: "asc" }, { sku: "asc" }],
@@ -131,6 +138,8 @@ export default async function Verk10DetailPage({ params }: Props) {
 
   const language = userSettings?.interfaceLanguage ?? "is";
   const t = work10Text(language);
+  const effectiveWorkStatus = effectiveWork10Status(work.status, work.workParts);
+  const workIsCompleted = isWork10EffectivelyCompleted(work.status, work.workParts);
   const inventoryT = inventoryText(language);
   const persistedOperationalText = projectPersistedWorkOrderText(work);
   const legacyOperationalText = projectLegacyOperationalText(work);
@@ -153,20 +162,28 @@ export default async function Verk10DetailPage({ params }: Props) {
     jobTitle: employee.jobTitle,
   }));
   const inventoryPickerItems = inventoryItems.map((item) => {
-    const byLocation = new Map<number, number>();
+    const stockByLocation = new Map<number, number>();
+    const committedByLocation = new Map<number, number>();
     for (const movement of item.movements) {
-      byLocation.set(
+      stockByLocation.set(
         movement.locationId,
-        (byLocation.get(movement.locationId) ?? 0) + movement.quantityDelta,
+        (stockByLocation.get(movement.locationId) ?? 0) + movement.quantityDelta,
+      );
+    }
+    for (const commitment of item.commitments) {
+      committedByLocation.set(
+        commitment.locationId,
+        (committedByLocation.get(commitment.locationId) ?? 0) + commitment.quantity,
       );
     }
     const locations = inventoryLocations.map((location) => ({
       ...location,
-      available: byLocation.get(location.id) ?? 0,
+      available: (stockByLocation.get(location.id) ?? 0) - (committedByLocation.get(location.id) ?? 0),
     }));
     return {
       id: item.id,
       sku: item.sku,
+      barcode: item.barcode,
       name: item.name,
       baseUnit: item.baseUnit,
       customUnit: item.customUnit,
@@ -246,7 +263,7 @@ export default async function Verk10DetailPage({ params }: Props) {
             <div>
               <dt className="text-slate-500">{t.status}</dt>
               <dd className="mt-1 font-semibold">
-                {work10StatusText(work.status, language)}
+                {work10StatusText(effectiveWorkStatus, language)}
               </dd>
             </div>
             <div>
@@ -496,7 +513,9 @@ export default async function Verk10DetailPage({ params }: Props) {
                 {work.workParts.map((part) => {
                   const displayPart = displayPartByPersistedId.get(part.id);
                   const activeFacts = part.laborFacts.filter((fact) => !fact.voidedAt);
+                  const voidedLaborFacts = part.laborFacts.filter((fact) => Boolean(fact.voidedAt));
                   const activeMaterialFacts = part.usageFacts.filter((fact) => !fact.voidedAt);
+                  const voidedMaterialFacts = part.usageFacts.filter((fact) => Boolean(fact.voidedAt));
                   const totalMinutes = activeFacts.reduce(
                     (sum, fact) => sum + fact.durationMinutes,
                     0,
@@ -520,55 +539,104 @@ export default async function Verk10DetailPage({ params }: Props) {
 
                       <h3 className="mt-4 text-sm font-semibold text-slate-800">{t.laborSectionTitle}</h3>
 
-                      {part.laborFacts.length === 0 ? (
+                      {activeFacts.length === 0 ? (
                         <p className="mt-3 text-sm text-slate-500">{t.noLaborFacts}</p>
                       ) : (
                         <div className="mt-3 space-y-2">
-                          {part.laborFacts.map((fact) => {
-                            const isVoided = Boolean(fact.voidedAt);
-                            return (
-                              <div
-                                key={fact.id}
-                                className={`rounded-lg border bg-white px-3 py-2 ${isVoided ? "opacity-50" : ""}`}
-                              >
-                                <div className="flex items-start justify-between gap-3">
-                                  <div className="min-w-0">
-                                    <p className="text-sm font-medium text-slate-900">
-                                      {fact.employee?.fullName ?? fact.user?.name ?? fact.resourceLabel ?? t.unknown}
-                                    </p>
-                                    <p className="mt-1 text-xs text-slate-500">
-                                      {work10FormatDate(fact.workDate, language)} · {work10FormatDuration(fact.durationMinutes, language)} · {t.manualSource}
-                                      {isVoided ? ` · ${t.voided}` : ""}
-                                    </p>
-                                    {(() => {
-                                      const localizedNote = resolveLaborFactNote(fact, language);
-                                      return localizedNote ? (
-                                        <p className="mt-1 text-sm text-slate-600">
-                                          {localizedNote.text}
-                                        </p>
-                                      ) : null;
-                                    })()}
-                                  </div>
-                                  {companyAccess.canWrite && !isVoided && (
-                                    <form action={voidPersonLaborFact}>
-                                      <input type="hidden" name="workOrderId" value={work.id} />
-                                      <input type="hidden" name="factId" value={fact.id} />
-                                      <button
-                                        type="submit"
-                                        className="text-xs font-semibold text-slate-500 hover:text-rose-700"
-                                      >
-                                        {t.voidLaborFact}
-                                      </button>
-                                    </form>
-                                  )}
+                          {activeFacts.map((fact) => (
+                            <div key={fact.id} className="rounded-lg border bg-white px-3 py-2">
+                              <div className="flex items-start justify-between gap-3">
+                                <div className="min-w-0">
+                                  <p className="text-sm font-medium text-slate-900">
+                                    {fact.employee?.fullName ?? fact.user?.name ?? fact.resourceLabel ?? t.unknown}
+                                  </p>
+                                  <p className="mt-1 text-xs text-slate-500">
+                                    {work10FormatDate(fact.workDate, language)} · {work10FormatDuration(fact.durationMinutes, language)} · {t.manualSource}
+                                  </p>
+                                  {(() => {
+                                    const localizedNote = resolveLaborFactNote(fact, language);
+                                    return localizedNote ? (
+                                      <p className="mt-1 text-sm text-slate-600">
+                                        {localizedNote.text}
+                                      </p>
+                                    ) : null;
+                                  })()}
                                 </div>
+                                {companyAccess.canWrite && (
+                                  <details className="shrink-0 text-right">
+                                    <summary className="cursor-pointer list-none text-xs font-semibold text-slate-500 hover:text-rose-700">
+                                      {workIsCompleted ? t.voidLaborFact : t.deleteFact}
+                                    </summary>
+                                    <div className="mt-2 w-72 rounded-xl border bg-white p-3 text-left shadow-lg">
+                                      <p className="text-sm font-semibold text-slate-900">
+                                        {workIsCompleted ? t.voidFactQuestion : t.deleteFactQuestion}
+                                      </p>
+                                      <p className="mt-1 text-xs leading-5 text-slate-500">
+                                        {workIsCompleted ? t.voidFactHelp : t.deleteFactHelp}
+                                      </p>
+                                      <form action={voidPersonLaborFact} className="mt-3 grid gap-2">
+                                        <input type="hidden" name="workOrderId" value={work.id} />
+                                        <input type="hidden" name="factId" value={fact.id} />
+                                        {workIsCompleted ? (
+                                          <label className="grid gap-1 text-xs font-medium text-slate-600">
+                                            <span>{t.correctionReason}</span>
+                                            <textarea
+                                              name="reason"
+                                              required
+                                              minLength={2}
+                                              maxLength={500}
+                                              rows={2}
+                                              placeholder={t.correctionReasonPlaceholder}
+                                              className="rounded-lg border px-2.5 py-2 text-sm"
+                                            />
+                                          </label>
+                                        ) : null}
+                                        <button
+                                          type="submit"
+                                          className="rounded-lg bg-rose-600 px-3 py-2 text-xs font-semibold text-white hover:bg-rose-700"
+                                        >
+                                          {workIsCompleted ? t.confirmVoidFact : t.confirmDeleteFact}
+                                        </button>
+                                      </form>
+                                    </div>
+                                  </details>
+                                )}
                               </div>
-                            );
-                          })}
+                            </div>
+                          ))}
                         </div>
                       )}
 
-                      {companyAccess.canWrite && (
+                      {voidedLaborFacts.length > 0 ? (
+                        <details className="mt-3 rounded-lg border border-dashed bg-white px-3 py-2">
+                          <summary className="cursor-pointer text-xs font-semibold text-slate-600">
+                            {t.correctionHistory} ({voidedLaborFacts.length})
+                          </summary>
+                          <p className="mt-2 text-xs leading-5 text-slate-500">{t.correctionHistoryHelp}</p>
+                          <div className="mt-2 space-y-2">
+                            {voidedLaborFacts.map((fact) => (
+                              <div key={fact.id} className="rounded-lg bg-slate-50 px-3 py-2 text-xs text-slate-600">
+                                <p className="font-semibold text-slate-800">
+                                  {fact.employee?.fullName ?? fact.user?.name ?? fact.resourceLabel ?? t.unknown} · {t.voided}
+                                </p>
+                                <p className="mt-1">
+                                  {work10FormatDate(fact.workDate, language)} · {work10FormatDuration(fact.durationMinutes, language)}
+                                </p>
+                                {fact.voidedAt ? (
+                                  <p className="mt-1">
+                                    {t.correctionBy}: {fact.voidedBy?.name ?? t.unknown} · {work10FormatDate(fact.voidedAt, language)}
+                                  </p>
+                                ) : null}
+                                {fact.voidReason ? (
+                                  <p className="mt-1">{t.correctionReasonLabel}: {fact.voidReason}</p>
+                                ) : null}
+                              </div>
+                            ))}
+                          </div>
+                        </details>
+                      ) : null}
+
+                      {companyAccess.canWrite && !workIsCompleted && (
                         <form action={recordPersonLaborFact} className="mt-3 grid gap-2 sm:grid-cols-2">
                           <input type="hidden" name="workOrderId" value={work.id} />
                           <input type="hidden" name="workPartId" value={part.id} />
@@ -643,56 +711,105 @@ export default async function Verk10DetailPage({ params }: Props) {
                         <h3 className="text-sm font-semibold text-slate-800">{t.materialUsageTitle}</h3>
                         <p className="mt-1 text-xs leading-5 text-slate-500">{t.materialUsageHelp}</p>
 
-                        {part.usageFacts.length === 0 ? (
+                        {activeMaterialFacts.length === 0 ? (
                           <p className="mt-3 text-sm text-slate-500">{t.noMaterialFacts}</p>
                         ) : (
                           <div className="mt-3 space-y-2">
-                            {part.usageFacts.map((fact) => {
-                              const isVoided = Boolean(fact.voidedAt);
-                              return (
-                                <div
-                                  key={fact.id}
-                                  className={`rounded-lg border bg-white px-3 py-2 ${isVoided ? "opacity-50" : ""}`}
-                                >
-                                  <div className="flex items-start justify-between gap-3">
-                                    <div className="min-w-0">
-                                      <p className="text-sm font-medium text-slate-900">
-                                        {fact.resourceLabel}
-                                        {fact.resourceCode ? (
-                                          <span className="ml-2 font-normal text-slate-500">{fact.resourceCode}</span>
-                                        ) : null}
-                                      </p>
-                                      <p className="mt-1 text-xs text-slate-500">
-                                        {work10FormatDate(fact.usageDate, language)} · {work10FormatQuantity(fact.quantity, language)} {work10UnitText(fact.unit, fact.customUnit, language)} · {t.manualSource}
-                                        {fact.inventoryItem && fact.inventoryLocation
-                                          ? ` · ${inventoryT.linkedToInventory} · ${fact.inventoryLocation.name}`
-                                          : ` · ${inventoryT.freeTextMaterial}`}
-                                        {isVoided ? ` · ${t.voided}` : ""}
-                                      </p>
-                                      {fact.note ? (
-                                        <p className="mt-1 text-sm text-slate-600">{fact.note}</p>
+                            {activeMaterialFacts.map((fact) => (
+                              <div key={fact.id} className="rounded-lg border bg-white px-3 py-2">
+                                <div className="flex items-start justify-between gap-3">
+                                  <div className="min-w-0">
+                                    <p className="text-sm font-medium text-slate-900">
+                                      {fact.resourceLabel}
+                                      {fact.resourceCode ? (
+                                        <span className="ml-2 font-normal text-slate-500">{fact.resourceCode}</span>
                                       ) : null}
-                                    </div>
-                                    {companyAccess.canWrite && !isVoided && (
-                                      <form action={voidWorkPartUsageFact}>
-                                        <input type="hidden" name="workOrderId" value={work.id} />
-                                        <input type="hidden" name="factId" value={fact.id} />
-                                        <button
-                                          type="submit"
-                                          className="text-xs font-semibold text-slate-500 hover:text-rose-700"
-                                        >
-                                          {t.voidUsageFact}
-                                        </button>
-                                      </form>
-                                    )}
+                                    </p>
+                                    <p className="mt-1 text-xs text-slate-500">
+                                      {work10FormatDate(fact.usageDate, language)} · {work10FormatQuantity(fact.quantity, language)} {work10UnitText(fact.unit, fact.customUnit, language)} · {t.manualSource}
+                                      {fact.inventoryItem && fact.inventoryLocation
+                                        ? ` · ${inventoryT.linkedToInventory} · ${fact.inventoryLocation.name}`
+                                        : ` · ${inventoryT.freeTextMaterial}`}
+                                    </p>
+                                    {fact.note ? (
+                                      <p className="mt-1 text-sm text-slate-600">{fact.note}</p>
+                                    ) : null}
                                   </div>
+                                  {companyAccess.canWrite && (
+                                    <details className="shrink-0 text-right">
+                                      <summary className="cursor-pointer list-none text-xs font-semibold text-slate-500 hover:text-rose-700">
+                                        {workIsCompleted ? t.voidUsageFact : t.deleteFact}
+                                      </summary>
+                                      <div className="mt-2 w-72 rounded-xl border bg-white p-3 text-left shadow-lg">
+                                        <p className="text-sm font-semibold text-slate-900">
+                                          {workIsCompleted ? t.voidFactQuestion : t.deleteFactQuestion}
+                                        </p>
+                                        <p className="mt-1 text-xs leading-5 text-slate-500">
+                                          {workIsCompleted ? t.voidFactHelp : t.deleteFactHelp}
+                                        </p>
+                                        <form action={voidWorkPartUsageFact} className="mt-3 grid gap-2">
+                                          <input type="hidden" name="workOrderId" value={work.id} />
+                                          <input type="hidden" name="factId" value={fact.id} />
+                                          {workIsCompleted ? (
+                                            <label className="grid gap-1 text-xs font-medium text-slate-600">
+                                              <span>{t.correctionReason}</span>
+                                              <textarea
+                                                name="reason"
+                                                required
+                                                minLength={2}
+                                                maxLength={500}
+                                                rows={2}
+                                                placeholder={t.correctionReasonPlaceholder}
+                                                className="rounded-lg border px-2.5 py-2 text-sm"
+                                              />
+                                            </label>
+                                          ) : null}
+                                          <button
+                                            type="submit"
+                                            className="rounded-lg bg-rose-600 px-3 py-2 text-xs font-semibold text-white hover:bg-rose-700"
+                                          >
+                                            {workIsCompleted ? t.confirmVoidFact : t.confirmDeleteFact}
+                                          </button>
+                                        </form>
+                                      </div>
+                                    </details>
+                                  )}
                                 </div>
-                              );
-                            })}
+                              </div>
+                            ))}
                           </div>
                         )}
 
-                        {companyAccess.canWrite && (
+                        {voidedMaterialFacts.length > 0 ? (
+                          <details className="mt-3 rounded-lg border border-dashed bg-white px-3 py-2">
+                            <summary className="cursor-pointer text-xs font-semibold text-slate-600">
+                              {t.correctionHistory} ({voidedMaterialFacts.length})
+                            </summary>
+                            <p className="mt-2 text-xs leading-5 text-slate-500">{t.correctionHistoryHelp}</p>
+                            <div className="mt-2 space-y-2">
+                              {voidedMaterialFacts.map((fact) => (
+                                <div key={fact.id} className="rounded-lg bg-slate-50 px-3 py-2 text-xs text-slate-600">
+                                  <p className="font-semibold text-slate-800">
+                                    {fact.resourceLabel}{fact.resourceCode ? ` ${fact.resourceCode}` : ""} · {t.voided}
+                                  </p>
+                                  <p className="mt-1">
+                                    {work10FormatDate(fact.usageDate, language)} · {work10FormatQuantity(fact.quantity, language)} {work10UnitText(fact.unit, fact.customUnit, language)}
+                                  </p>
+                                  {fact.voidedAt ? (
+                                    <p className="mt-1">
+                                      {t.correctionBy}: {fact.voidedBy?.name ?? t.unknown} · {work10FormatDate(fact.voidedAt, language)}
+                                    </p>
+                                  ) : null}
+                                  {fact.voidReason ? (
+                                    <p className="mt-1">{t.correctionReasonLabel}: {fact.voidReason}</p>
+                                  ) : null}
+                                </div>
+                              ))}
+                            </div>
+                          </details>
+                        ) : null}
+
+                        {companyAccess.canWrite && !workIsCompleted && (
                           <MaterialUsageForm
                             workOrderId={work.id}
                             workPartId={part.id}
@@ -747,13 +864,25 @@ export default async function Verk10DetailPage({ params }: Props) {
                                     : t.materialSalesBasis;
                           const inventoryApplied = isInventory && effect.status === "APPLIED";
                           const laborRateReady = effect.kind === "LABOR_COST_BASIS" && effect.status === "RATE_READY";
+                          const materialCostReady = effect.kind === "MATERIAL_COST_BASIS" && effect.status === "COST_READY";
+                          const materialCostMissing = effect.kind === "MATERIAL_COST_BASIS" && effect.status === "COST_MISSING";
+                          const laborRateMissing =
+                            effect.kind === "LABOR_COST_BASIS" &&
+                            effect.status === "RULE_REQUIRED" &&
+                            (effect.rateCoverage?.missingFactCount ?? 0) > 0;
                           const statusText = inventoryApplied
                             ? inventoryT.stockMoved
                             : laborRateReady
                               ? t.effectRateReady
-                              : isInventory
-                                ? t.effectInventoryLinkMissing
-                                : t.effectRuleMissing;
+                              : materialCostReady
+                                ? t.effectMaterialCostReady
+                                : laborRateMissing
+                                  ? t.effectInternalCostMissing
+                                  : materialCostMissing
+                                    ? t.effectMaterialCostMissing
+                                    : isInventory
+                                      ? t.effectInventoryLinkMissing
+                                      : t.effectRuleMissing;
                           const bottomText = inventoryApplied
                             ? inventoryT.movementFromWork
                             : isInventory
@@ -771,7 +900,7 @@ export default async function Verk10DetailPage({ params }: Props) {
                                 <span className="text-sm font-semibold text-slate-900">
                                   {title}
                                 </span>
-                                <span className={`rounded-full px-2 py-1 text-xs font-semibold ${inventoryApplied || laborRateReady ? "bg-emerald-50 text-emerald-800" : "bg-amber-50 text-amber-800"}`}>
+                                <span className={`rounded-full px-2 py-1 text-xs font-semibold ${inventoryApplied || laborRateReady || materialCostReady ? "bg-emerald-50 text-emerald-800" : "bg-amber-50 text-amber-800"}`}>
                                   {statusText}
                                 </span>
                               </div>
@@ -787,6 +916,24 @@ export default async function Verk10DetailPage({ params }: Props) {
                                 <p className="mt-1 text-sm font-semibold text-slate-900">
                                   {t.effectInternalCost}: {work10FormatCurrencyIsk(effect.amountIsk, language)}
                                 </p>
+                              )}
+                              {materialCostReady && effect.amountIsk !== null && effect.amountIsk !== undefined && (
+                                <p className="mt-1 text-sm font-semibold text-slate-900">
+                                  {t.effectMaterialCost}: {work10FormatCurrencyIsk(effect.amountIsk, language)}
+                                </p>
+                              )}
+                              {materialCostMissing && (
+                                <p className="mt-1 text-xs leading-5 text-amber-800">
+                                  {t.effectMissingMaterialCostHelp}
+                                </p>
+                              )}
+                              {laborRateMissing && effect.rateCoverage && (
+                                <div className="mt-1 text-xs leading-5 text-amber-800">
+                                  <p>
+                                    {t.effectRateCoverage}: {effect.rateCoverage.resolvedFactCount} / {effect.rateCoverage.totalFactCount}
+                                  </p>
+                                  <p>{t.effectMissingInternalCostHelp}</p>
+                                </div>
                               )}
                               <p className="mt-1 text-xs text-slate-500">{bottomText}</p>
                             </div>
