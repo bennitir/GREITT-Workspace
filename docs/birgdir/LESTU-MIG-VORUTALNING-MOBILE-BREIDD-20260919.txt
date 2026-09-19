@@ -1,0 +1,22 @@
+GLÖGGT – Mobile vörutalning: breidd á símaskjá
+Dagsetning: 19.09.2026
+
+Tilgangur
+--------
+Lagar lárétt yfirflæði á skjá "Vörutalning í handtölvu" eftir að vara hefur fundist með strikamerki.
+
+Vandinn sem sást í raunprófun
+------------------------------
+- Vöruspjaldið sjálft passaði innan símaskjás.
+- Magnreitur, athugasemdareitur og "Vista talningu" gátu hins vegar farið út fyrir hægri brún skjásins.
+- Löng SKU/strikamerki þurfa einnig að mega brotna innan spjaldsins.
+
+Breyting
+--------
+- Mobile síða fær overflow-x vörn.
+- Form, labels, inputs og takkar fá w-full/min-w-0/max-w-full þar sem þarf.
+- Vörunúmer og strikamerki mega brotna innan tiltækrar breiddar.
+- Sama shrink-vörn er sett á leitarniðurstöður og taldar línur.
+
+Engin gagnagrunnsmigration.
+Engin breyting á vörutalningarreglum eða strikamerkjaleit.
