@@ -80,6 +80,11 @@ export function deriveWork10Status(
   if (statuses.includes("ON_HOLD")) return "ON_HOLD";
   if (statuses.includes("READY")) return "READY";
 
+  // Ef einhver Verkþáttur er þegar lokið en aðrir eru enn opnir hefur framkvæmd
+  // sannanlega hafist. Verkið má þá ekki falla aftur í Drög bara af því að
+  // eftirstandandi hlutar eru enn PLANNED.
+  if (statuses.includes("COMPLETED")) return "IN_PROGRESS";
+
   // Aðeins PLANNED/CANCELLED stendur eftir. Ef gamla yfirheitið segir að verkið
   // sé þegar hafið höldum við þeirri rekjanlegu merkingu; annars er það drög.
   if (legacyStatus === "IN_PROGRESS") return "IN_PROGRESS";

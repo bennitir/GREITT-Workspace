@@ -11,7 +11,14 @@ import { normalizeUiLanguage } from "@/lib/i18n/ui";
 import { prisma } from "@/lib/prisma";
 import { projectLegacyOperationalText } from "@/lib/work10/legacy-operational-text";
 import { projectPersistedWorkOrderText } from "@/lib/work10/work-order-text";
-import { isWork10EffectivelyCompleted } from "@/lib/work10/status";
+import { deriveWork10Status, isWork10EffectivelyCompleted } from "@/lib/work10/status";
+import {
+  isWork10PartStatus,
+  isWork10PartTerminalStatus,
+  work10DependencyWouldCreateCycle,
+  work10StatusRequiresResolvedDependencies,
+  work10UnresolvedPredecessorIds,
+} from "@/lib/work10/workflow";
 import type {
   Work10OperationalTranslation,
   Work10LocalizedText,
@@ -1050,3 +1057,359 @@ export async function voidPersonLaborFact(formData: FormData) {
   revalidatePath(`/verk/${workOrderId}`);
 }
 
+
+
+function revalidateWorkOrder(workOrderId: number) {
+  revalidatePath("/verk");
+  revalidatePath(`/verk/${workOrderId}`);
+}
+
+/**
+ * Verkþáttur er sannleikurinn um framkvæmdarstöðu. WorkOrder.status og
+ * startedAt/completedAt eru hér samstillt yfirlitsgildi, leidd af hlutunum,
+ * svo eldri listar og nýi kjarninn segi ekki sitt hvorn sannleikann.
+ */
+export async function updateWorkPartStatus(formData: FormData) {
+  const workOrderId = Number(formData.get("workOrderId"));
+  const workPartId = Number(formData.get("workPartId"));
+  const requestedStatus = String(formData.get("status") ?? "").trim();
+
+  if (
+    !Number.isInteger(workOrderId) ||
+    !Number.isInteger(workPartId) ||
+    !isWork10PartStatus(requestedStatus)
+  ) {
+    throw new Error("Ógild staða Verkþáttar.");
+  }
+
+  const companyId = await requireActiveCompanyWriteAccess();
+  const effectiveUser = await getEffectiveUser();
+  const userId = effectiveUser?.id ?? null;
+
+  const [work, dependencies] = await Promise.all([
+    prisma.workOrder.findFirst({
+      where: { id: workOrderId, companyId },
+      select: {
+        id: true,
+        status: true,
+        startedAt: true,
+        completedAt: true,
+        workParts: {
+          orderBy: { sequence: "asc" },
+          select: { id: true, status: true, sequence: true, title: true },
+        },
+      },
+    }),
+    prisma.workPartDependency.findMany({
+      where: { companyId, workOrderId },
+      select: { predecessorPartId: true, successorPartId: true },
+    }),
+  ]);
+
+  if (!work) throw new Error("Verkið fannst ekki.");
+  if (work.status === "CANCELLED") {
+    throw new Error("Ekki er hægt að breyta Verkþætti á niðurfelldu Verki.");
+  }
+
+  const part = work.workParts.find((item) => item.id === workPartId);
+  if (!part) throw new Error("Verkþátturinn fannst ekki.");
+  if (part.status === requestedStatus) {
+    revalidateWorkOrder(workOrderId);
+    return;
+  }
+
+  if (work10StatusRequiresResolvedDependencies(requestedStatus)) {
+    const blockers = work10UnresolvedPredecessorIds(
+      workPartId,
+      work.workParts,
+      dependencies,
+    );
+    if (blockers.length > 0) {
+      const names = work.workParts
+        .filter((item) => blockers.includes(item.id))
+        .map((item) => item.title)
+        .join(", ");
+      throw new Error(
+        `Verkþátturinn bíður eftir óloknum undanförum${names ? `: ${names}` : "."}`,
+      );
+    }
+  }
+
+  const nextParts = work.workParts.map((item) =>
+    item.id === workPartId ? { ...item, status: requestedStatus } : item,
+  );
+  const nextWorkStatus = deriveWork10Status(work.status, nextParts);
+  const now = new Date();
+  const shouldHaveStarted = nextParts.some(
+    (item) => item.status === "IN_PROGRESS" || isWork10PartTerminalStatus(item.status),
+  );
+
+  await prisma.$transaction(async (tx) => {
+    await tx.workPart.update({
+      where: { id: workPartId },
+      data: {
+        status: requestedStatus,
+        updatedById: userId,
+      },
+    });
+
+    await tx.auditEvent.create({
+      data: {
+        companyId,
+        userId,
+        entityType: "WORK_PART",
+        entityId: workPartId,
+        action: "STATUS_CHANGED",
+        parentEntityType: "WORK_ORDER",
+        parentEntityId: workOrderId,
+        source: "USER",
+        description: "Stöðu Verkþáttar breytt.",
+        beforeData: { status: part.status },
+        afterData: { status: requestedStatus },
+      },
+    });
+
+    const workOrderData: {
+      status: string;
+      startedAt?: Date;
+      completedAt?: Date | null;
+    } = {
+      status: nextWorkStatus,
+    };
+
+    if (!work.startedAt && shouldHaveStarted) workOrderData.startedAt = now;
+    if (nextWorkStatus === "COMPLETED") {
+      workOrderData.completedAt = work.completedAt ?? now;
+    } else if (work.completedAt) {
+      workOrderData.completedAt = null;
+    }
+
+    if (
+      work.status !== nextWorkStatus ||
+      workOrderData.startedAt ||
+      workOrderData.completedAt !== undefined
+    ) {
+      await tx.workOrder.update({
+        where: { id: workOrderId },
+        data: workOrderData,
+      });
+    }
+  });
+
+  revalidateWorkOrder(workOrderId);
+}
+
+/** Breytir aðeins framsetningarröð Verkþátta; dependency-grafið helst óbreytt. */
+export async function moveWorkPart(formData: FormData) {
+  const workOrderId = Number(formData.get("workOrderId"));
+  const workPartId = Number(formData.get("workPartId"));
+  const direction = String(formData.get("direction") ?? "");
+
+  if (
+    !Number.isInteger(workOrderId) ||
+    !Number.isInteger(workPartId) ||
+    (direction !== "UP" && direction !== "DOWN")
+  ) {
+    throw new Error("Ógild röð Verkþáttar.");
+  }
+
+  const companyId = await requireActiveCompanyWriteAccess();
+  const effectiveUser = await getEffectiveUser();
+  const userId = effectiveUser?.id ?? null;
+
+  const parts = await prisma.workPart.findMany({
+    where: { companyId, workOrderId },
+    orderBy: { sequence: "asc" },
+    select: { id: true, sequence: true },
+  });
+
+  const index = parts.findIndex((part) => part.id === workPartId);
+  if (index < 0) throw new Error("Verkþátturinn fannst ekki.");
+  const neighborIndex = direction === "UP" ? index - 1 : index + 1;
+  const neighbor = parts[neighborIndex];
+  if (!neighbor) {
+    revalidateWorkOrder(workOrderId);
+    return;
+  }
+
+  const current = parts[index];
+  const temporarySequence = -1_000_000_000 - current.id;
+
+  await prisma.$transaction(async (tx) => {
+    await tx.workPart.update({
+      where: { id: current.id },
+      data: { sequence: temporarySequence, updatedById: userId },
+    });
+    await tx.workPart.update({
+      where: { id: neighbor.id },
+      data: { sequence: current.sequence, updatedById: userId },
+    });
+    await tx.workPart.update({
+      where: { id: current.id },
+      data: { sequence: neighbor.sequence, updatedById: userId },
+    });
+
+    await tx.auditEvent.create({
+      data: {
+        companyId,
+        userId,
+        entityType: "WORK_PART",
+        entityId: current.id,
+        action: "REORDERED",
+        parentEntityType: "WORK_ORDER",
+        parentEntityId: workOrderId,
+        source: "USER",
+        description: "Röð Verkþáttar breytt.",
+        beforeData: { sequence: current.sequence },
+        afterData: { sequence: neighbor.sequence },
+        metadata: { swappedWithPartId: neighbor.id },
+      },
+    });
+  });
+
+  revalidateWorkOrder(workOrderId);
+}
+
+/** Bætir við rekjanlegri FINISH_TO_START dependency án þess að leyfa hring. */
+export async function addWorkPartDependency(formData: FormData) {
+  const workOrderId = Number(formData.get("workOrderId"));
+  const successorPartId = Number(formData.get("successorPartId"));
+  const predecessorPartId = Number(formData.get("predecessorPartId"));
+
+  if (
+    !Number.isInteger(workOrderId) ||
+    !Number.isInteger(successorPartId) ||
+    !Number.isInteger(predecessorPartId) ||
+    successorPartId === predecessorPartId
+  ) {
+    throw new Error("Ógild tenging milli Verkþátta.");
+  }
+
+  const companyId = await requireActiveCompanyWriteAccess();
+  const effectiveUser = await getEffectiveUser();
+  const userId = effectiveUser?.id ?? null;
+
+  const [parts, dependencies] = await Promise.all([
+    prisma.workPart.findMany({
+      where: { companyId, workOrderId },
+      select: { id: true, status: true, title: true },
+    }),
+    prisma.workPartDependency.findMany({
+      where: { companyId, workOrderId },
+      select: { id: true, predecessorPartId: true, successorPartId: true },
+    }),
+  ]);
+
+  const predecessor = parts.find((part) => part.id === predecessorPartId);
+  const successor = parts.find((part) => part.id === successorPartId);
+  if (!predecessor || !successor) {
+    throw new Error("Verkþættirnir fundust ekki á sama Verki.");
+  }
+
+  const existing = dependencies.find(
+    (dependency) =>
+      dependency.predecessorPartId === predecessorPartId &&
+      dependency.successorPartId === successorPartId,
+  );
+  if (existing) {
+    revalidateWorkOrder(workOrderId);
+    return;
+  }
+
+  if (
+    work10DependencyWouldCreateCycle(
+      predecessorPartId,
+      successorPartId,
+      dependencies,
+    )
+  ) {
+    throw new Error("Þessi tenging myndi mynda hring í Verkflæðinu.");
+  }
+
+  if (
+    isWork10PartStatus(successor.status) &&
+    work10StatusRequiresResolvedDependencies(successor.status) &&
+    !isWork10PartTerminalStatus(predecessor.status)
+  ) {
+    throw new Error(
+      "Ekki er hægt að bæta óloknum undanfara við Verkþátt sem er þegar tilbúinn, hafinn eða lokið.",
+    );
+  }
+
+  await prisma.$transaction(async (tx) => {
+    const created = await tx.workPartDependency.create({
+      data: {
+        companyId,
+        workOrderId,
+        predecessorPartId,
+        successorPartId,
+        relationType: "FINISH_TO_START",
+        createdById: userId,
+      },
+    });
+
+    await tx.auditEvent.create({
+      data: {
+        companyId,
+        userId,
+        entityType: "WORK_PART_DEPENDENCY",
+        entityId: created.id,
+        action: "CREATED",
+        parentEntityType: "WORK_ORDER",
+        parentEntityId: workOrderId,
+        source: "USER",
+        description: "Undanfari tengdur við Verkþátt.",
+        afterData: { predecessorPartId, successorPartId, relationType: "FINISH_TO_START" },
+      },
+    });
+  });
+
+  revalidateWorkOrder(workOrderId);
+}
+
+export async function removeWorkPartDependency(formData: FormData) {
+  const workOrderId = Number(formData.get("workOrderId"));
+  const dependencyId = Number(formData.get("dependencyId"));
+
+  if (!Number.isInteger(workOrderId) || !Number.isInteger(dependencyId)) {
+    throw new Error("Ógild Verkþáttatenging.");
+  }
+
+  const companyId = await requireActiveCompanyWriteAccess();
+  const effectiveUser = await getEffectiveUser();
+  const userId = effectiveUser?.id ?? null;
+
+  const dependency = await prisma.workPartDependency.findFirst({
+    where: { id: dependencyId, companyId, workOrderId },
+    select: { id: true, predecessorPartId: true, successorPartId: true, relationType: true },
+  });
+
+  if (!dependency) {
+    revalidateWorkOrder(workOrderId);
+    return;
+  }
+
+  await prisma.$transaction(async (tx) => {
+    await tx.workPartDependency.delete({ where: { id: dependency.id } });
+    await tx.auditEvent.create({
+      data: {
+        companyId,
+        userId,
+        entityType: "WORK_PART_DEPENDENCY",
+        entityId: dependency.id,
+        action: "REMOVED",
+        parentEntityType: "WORK_ORDER",
+        parentEntityId: workOrderId,
+        source: "USER",
+        description: "Tenging undanfarans við Verkþátt fjarlægð.",
+        beforeData: {
+          predecessorPartId: dependency.predecessorPartId,
+          successorPartId: dependency.successorPartId,
+          relationType: dependency.relationType,
+        },
+      },
+    });
+  });
+
+  revalidateWorkOrder(workOrderId);
+}

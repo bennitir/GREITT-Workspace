@@ -28,16 +28,26 @@ import {
 import { projectLegacyOperationalText } from "@/lib/work10/legacy-operational-text";
 import { projectPersistedWorkOrderText } from "@/lib/work10/work-order-text";
 import { effectiveWork10Status, isWork10EffectivelyCompleted } from "@/lib/work10/status";
+import {
+  WORK10_PART_STATUSES,
+  isWork10PartTerminalStatus,
+  work10DependencyWouldCreateCycle,
+  work10StatusRequiresResolvedDependencies,
+} from "@/lib/work10/workflow";
 import { resolveLaborFactNote } from "@/lib/work10/labor-text";
 import { resolveWork10LocalizedText } from "@/lib/work10/operational-text";
 import MaterialUsageForm from "./MaterialUsageForm";
 import {
+  addWorkPartDependency,
   assignPersonToWorkPart,
   createWorkPart,
   ensureWork10OperationalTranslations,
+  moveWorkPart,
   persistLegacyFirstWorkPart,
   removePersonFromWorkPart,
+  removeWorkPartDependency,
   recordPersonLaborFact,
+  updateWorkPartStatus,
   voidPersonLaborFact,
   voidWorkPartUsageFact,
 } from "./actions";
@@ -71,10 +81,10 @@ export default async function Verk10DetailPage({ params }: Props) {
           include: {
             translations: true,
             predecessorDependencies: {
-              select: { predecessorPartId: true, successorPartId: true },
+              select: { id: true, predecessorPartId: true, successorPartId: true, relationType: true },
             },
             successorDependencies: {
-              select: { predecessorPartId: true, successorPartId: true },
+              select: { id: true, predecessorPartId: true, successorPartId: true, relationType: true },
             },
             assignments: {
               where: { removedAt: null, resourceKind: "PERSON" },
@@ -205,6 +215,22 @@ export default async function Verk10DetailPage({ params }: Props) {
       .filter((part) => part.source.kind === "WORK_PART")
       .map((part) => [Number(part.source.sourceId), part]),
   );
+  const persistedPartById = new Map(work.workParts.map((part) => [part.id, part]));
+  const allDependencyEdges = work.workParts.flatMap((part) =>
+    part.predecessorDependencies.map((dependency) => ({
+      predecessorPartId: dependency.predecessorPartId,
+      successorPartId: dependency.successorPartId,
+    })),
+  );
+  const openPartCount = work.workParts.filter((part) => !isWork10PartTerminalStatus(part.status)).length;
+  const completedPartCount = work.workParts.filter((part) => part.status === "COMPLETED").length;
+  const unresolvedDependencyCount = work.workParts.reduce((total, part) => {
+    const unresolved = part.successorDependencies.filter((dependency) => {
+      const predecessor = persistedPartById.get(dependency.predecessorPartId);
+      return !predecessor || !isWork10PartTerminalStatus(predecessor.status);
+    });
+    return total + unresolved.length;
+  }, 0);
 
   const effectGroups = work.workParts.map((part) => ({
     partId: part.id,
@@ -223,13 +249,6 @@ export default async function Verk10DetailPage({ params }: Props) {
           className="font-medium text-blue-700 hover:underline"
         >
           ← {t.backToWork10}
-        </Link>
-        <span className="text-slate-300">|</span>
-        <Link
-          href={`/verk/${work.id}`}
-          className="font-medium text-slate-600 hover:underline"
-        >
-          {t.compareCurrent}
         </Link>
       </div>
 
@@ -298,50 +317,261 @@ export default async function Verk10DetailPage({ params }: Props) {
 
         <div className="grid gap-4 md:grid-cols-2">
           <Card>
-            <h2 className="font-bold">{t.workParts}</h2>
-            <p className="mt-2 text-sm leading-6 text-slate-600">
-              {t.workPartsHelp}
-            </p>
-            <div className="mt-4 space-y-2">
-              {workParts.map((part) => (
-                <div key={part.id} className="rounded-xl border bg-slate-50 p-3">
-                  <div className="flex items-start justify-between gap-3">
-                    <div className="min-w-0">
-                      <p className="font-semibold text-slate-900">{part.title}</p>
-                      {part.description && (
-                        <p className="mt-1 whitespace-pre-wrap text-sm leading-5 text-slate-600">
-                          {part.description}
-                        </p>
-                      )}
-                      <p className="mt-2 text-xs text-slate-500">
-                        {t.partOrder}: {part.order} ·{" "}
-                        {part.persistedInWork10
-                          ? t.persistedInNewCore
-                          : t.projectedFromCurrentWork}
-                      </p>
-                    </div>
-                    <span className="rounded-full bg-white px-2.5 py-1 text-xs font-semibold text-slate-600">
-                      {work10StatusText(part.status, language)}
+            <div className="flex flex-wrap items-start justify-between gap-3">
+              <div>
+                <h2 className="font-bold">{t.workParts}</h2>
+                <p className="mt-2 text-sm leading-6 text-slate-600">
+                  {t.workPartsHelp}
+                </p>
+              </div>
+              {hasPersistedWorkParts && (
+                <div className="flex flex-wrap gap-2 text-xs font-semibold">
+                  <span className="rounded-full bg-slate-100 px-2.5 py-1 text-slate-700">
+                    {t.workflowOpenParts}: {openPartCount}
+                  </span>
+                  <span className="rounded-full bg-emerald-50 px-2.5 py-1 text-emerald-700">
+                    {t.workflowCompletedParts}: {completedPartCount}
+                  </span>
+                  {unresolvedDependencyCount > 0 && (
+                    <span className="rounded-full bg-amber-50 px-2.5 py-1 text-amber-800">
+                      {t.workflowUnresolvedDependencies}: {unresolvedDependencyCount}
                     </span>
-                  </div>
+                  )}
                 </div>
-              ))}
+              )}
             </div>
+
+            {!hasPersistedWorkParts ? (
+              <div className="mt-4 space-y-2">
+                {workParts.map((part) => (
+                  <div key={part.id} className="rounded-xl border bg-slate-50 p-3">
+                    <div className="flex items-start justify-between gap-3">
+                      <div className="min-w-0">
+                        <p className="font-semibold text-slate-900">{part.title}</p>
+                        {part.description && (
+                          <p className="mt-1 whitespace-pre-wrap text-sm leading-5 text-slate-600">
+                            {part.description}
+                          </p>
+                        )}
+                        <p className="mt-2 text-xs text-slate-500">
+                          {t.partOrder}: {part.order} · {t.projectedFromCurrentWork}
+                        </p>
+                      </div>
+                      <span className="rounded-full bg-white px-2.5 py-1 text-xs font-semibold text-slate-600">
+                        {work10StatusText(part.status, language)}
+                      </span>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            ) : (
+              <div className="mt-4 space-y-4">
+                {work.workParts.map((part, partIndex) => {
+                  const displayPart = displayPartByPersistedId.get(part.id);
+                  const incomingDependencies = part.successorDependencies;
+                  const incomingPredecessorIds = new Set(
+                    incomingDependencies.map((dependency) => dependency.predecessorPartId),
+                  );
+                  const unresolvedDependencies = incomingDependencies.filter((dependency) => {
+                    const predecessor = persistedPartById.get(dependency.predecessorPartId);
+                    return !predecessor || !isWork10PartTerminalStatus(predecessor.status);
+                  });
+                  const predecessorOptions = work.workParts.filter(
+                    (candidate) =>
+                      candidate.id !== part.id &&
+                      !incomingPredecessorIds.has(candidate.id) &&
+                      !work10DependencyWouldCreateCycle(candidate.id, part.id, allDependencyEdges),
+                  );
+
+                  return (
+                    <div key={part.id} className="rounded-xl border bg-slate-50 p-4">
+                      <div className="flex flex-wrap items-start justify-between gap-3">
+                        <div className="min-w-0 flex-1">
+                          <div className="flex flex-wrap items-center gap-2">
+                            <p className="font-semibold text-slate-900">
+                              {displayPart?.title ?? part.title}
+                            </p>
+                            <span className="rounded-full bg-white px-2.5 py-1 text-xs font-semibold text-slate-600">
+                              {work10StatusText(part.status, language)}
+                            </span>
+                            {unresolvedDependencies.length > 0 && (
+                              <span className="rounded-full bg-amber-100 px-2.5 py-1 text-xs font-semibold text-amber-900">
+                                {t.workflowBlockedByDependency}
+                              </span>
+                            )}
+                          </div>
+                          {displayPart?.description && (
+                            <p className="mt-2 whitespace-pre-wrap text-sm leading-5 text-slate-600">
+                              {displayPart.description}
+                            </p>
+                          )}
+                          <p className="mt-2 text-xs text-slate-500">
+                            {t.partOrder}: {part.sequence} · {t.persistedInNewCore}
+                          </p>
+                        </div>
+
+                        {companyAccess.canWrite && (
+                          <div className="flex gap-1">
+                            <form action={moveWorkPart}>
+                              <input type="hidden" name="workOrderId" value={work.id} />
+                              <input type="hidden" name="workPartId" value={part.id} />
+                              <input type="hidden" name="direction" value="UP" />
+                              <button
+                                type="submit"
+                                disabled={partIndex === 0}
+                                className="rounded-lg border bg-white px-2.5 py-1.5 text-xs font-semibold text-slate-700 disabled:cursor-not-allowed disabled:opacity-30"
+                              >
+                                ↑ {t.workflowMoveUp}
+                              </button>
+                            </form>
+                            <form action={moveWorkPart}>
+                              <input type="hidden" name="workOrderId" value={work.id} />
+                              <input type="hidden" name="workPartId" value={part.id} />
+                              <input type="hidden" name="direction" value="DOWN" />
+                              <button
+                                type="submit"
+                                disabled={partIndex === work.workParts.length - 1}
+                                className="rounded-lg border bg-white px-2.5 py-1.5 text-xs font-semibold text-slate-700 disabled:cursor-not-allowed disabled:opacity-30"
+                              >
+                                ↓ {t.workflowMoveDown}
+                              </button>
+                            </form>
+                          </div>
+                        )}
+                      </div>
+
+                      {companyAccess.canWrite && (
+                        <form action={updateWorkPartStatus} className="mt-4 flex flex-col gap-2 sm:flex-row sm:items-end">
+                          <input type="hidden" name="workOrderId" value={work.id} />
+                          <input type="hidden" name="workPartId" value={part.id} />
+                          <label className="min-w-0 flex-1 text-xs font-semibold text-slate-600">
+                            {t.workflowStatusLabel}
+                            <select
+                              name="status"
+                              defaultValue={part.status}
+                              className="mt-1 w-full rounded-lg border bg-white px-3 py-2 text-sm font-normal text-slate-900"
+                            >
+                              {WORK10_PART_STATUSES.map((status) => (
+                                <option
+                                  key={status}
+                                  value={status}
+                                  disabled={
+                                    unresolvedDependencies.length > 0 &&
+                                    work10StatusRequiresResolvedDependencies(status)
+                                  }
+                                >
+                                  {work10StatusText(status, language)}
+                                </option>
+                              ))}
+                            </select>
+                          </label>
+                          <button
+                            type="submit"
+                            className="rounded-lg bg-slate-900 px-3 py-2 text-sm font-semibold text-white hover:bg-slate-800"
+                          >
+                            {t.workflowSaveStatus}
+                          </button>
+                        </form>
+                      )}
+
+                      <div className="mt-4 rounded-lg border bg-white p-3">
+                        <div className="flex flex-wrap items-center justify-between gap-2">
+                          <h3 className="text-sm font-semibold text-slate-900">
+                            {t.workflowDependencies}
+                          </h3>
+                          {part.predecessorDependencies.length > 0 && (
+                            <span className="text-xs text-slate-500">
+                              {t.workflowBlocks}: {part.predecessorDependencies.length}
+                            </span>
+                          )}
+                        </div>
+
+                        {incomingDependencies.length === 0 ? (
+                          <p className="mt-2 text-xs text-slate-500">{t.workflowNoDependencies}</p>
+                        ) : (
+                          <div className="mt-2 space-y-2">
+                            {incomingDependencies.map((dependency) => {
+                              const predecessor = persistedPartById.get(dependency.predecessorPartId);
+                              const predecessorDisplay = predecessor
+                                ? displayPartByPersistedId.get(predecessor.id)
+                                : null;
+                              const resolved = predecessor
+                                ? isWork10PartTerminalStatus(predecessor.status)
+                                : false;
+
+                              return (
+                                <div
+                                  key={dependency.id}
+                                  className="flex flex-wrap items-center justify-between gap-2 rounded-lg bg-slate-50 px-3 py-2"
+                                >
+                                  <div className="min-w-0 text-xs">
+                                    <span className="font-semibold text-slate-800">
+                                      {predecessorDisplay?.title ?? predecessor?.title ?? t.unknown}
+                                    </span>
+                                    <span className={resolved ? "ml-2 text-emerald-700" : "ml-2 text-amber-800"}>
+                                      {resolved ? t.workflowDependencySatisfied : t.workflowDependencyPending}
+                                    </span>
+                                  </div>
+                                  {companyAccess.canWrite && (
+                                    <form action={removeWorkPartDependency}>
+                                      <input type="hidden" name="workOrderId" value={work.id} />
+                                      <input type="hidden" name="dependencyId" value={dependency.id} />
+                                      <button
+                                        type="submit"
+                                        className="text-xs font-semibold text-slate-500 hover:text-rose-700"
+                                      >
+                                        {t.workflowRemoveDependency}
+                                      </button>
+                                    </form>
+                                  )}
+                                </div>
+                              );
+                            })}
+                          </div>
+                        )}
+
+                        {companyAccess.canWrite && predecessorOptions.length > 0 && (
+                          <form action={addWorkPartDependency} className="mt-3 flex flex-col gap-2 sm:flex-row">
+                            <input type="hidden" name="workOrderId" value={work.id} />
+                            <input type="hidden" name="successorPartId" value={part.id} />
+                            <select
+                              name="predecessorPartId"
+                              required
+                              defaultValue=""
+                              className="min-w-0 flex-1 rounded-lg border bg-white px-3 py-2 text-sm"
+                            >
+                              <option value="" disabled>{t.workflowChoosePredecessor}</option>
+                              {predecessorOptions.map((candidate) => (
+                                <option key={candidate.id} value={candidate.id}>
+                                  {displayPartByPersistedId.get(candidate.id)?.title ?? candidate.title} · {work10StatusText(candidate.status, language)}
+                                </option>
+                              ))}
+                            </select>
+                            <button
+                              type="submit"
+                              className="rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm font-semibold text-slate-800 hover:bg-slate-50"
+                            >
+                              {t.workflowAddDependency}
+                            </button>
+                          </form>
+                        )}
+                        <p className="mt-2 text-xs leading-5 text-slate-500">
+                          {t.workflowDependencyHelp}
+                        </p>
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            )}
 
             {companyAccess.canWrite && !hasPersistedWorkParts && (
               <div className="mt-4 rounded-xl border border-blue-200 bg-blue-50 p-4">
-                <h3 className="font-semibold text-slate-900">
-                  {t.activateWorkPartsTitle}
-                </h3>
-                <p className="mt-1 text-sm leading-6 text-slate-600">
-                  {t.activateWorkPartsHelp}
-                </p>
+                <h3 className="font-semibold text-slate-900">{t.activateWorkPartsTitle}</h3>
+                <p className="mt-1 text-sm leading-6 text-slate-600">{t.activateWorkPartsHelp}</p>
                 <form action={persistLegacyFirstWorkPart} className="mt-3">
                   <input type="hidden" name="workOrderId" value={work.id} />
-                  <button
-                    type="submit"
-                    className="rounded-lg bg-blue-600 px-4 py-2 text-sm font-semibold text-white hover:bg-blue-700"
-                  >
+                  <button type="submit" className="rounded-lg bg-blue-600 px-4 py-2 text-sm font-semibold text-white hover:bg-blue-700">
                     {t.activateWorkPartsAction}
                   </button>
                 </form>
@@ -350,45 +580,19 @@ export default async function Verk10DetailPage({ params }: Props) {
 
             {companyAccess.canWrite && hasPersistedWorkParts && (
               <div className="mt-4 rounded-xl border bg-white p-4">
-                <h3 className="font-semibold text-slate-900">
-                  {t.addWorkPartTitle}
-                </h3>
-                <p className="mt-1 text-sm leading-6 text-slate-600">
-                  {t.addWorkPartHelp}
-                </p>
+                <h3 className="font-semibold text-slate-900">{t.addWorkPartTitle}</h3>
+                <p className="mt-1 text-sm leading-6 text-slate-600">{t.addWorkPartHelp}</p>
                 <form action={createWorkPart} className="mt-4 space-y-3">
                   <input type="hidden" name="workOrderId" value={work.id} />
                   <div>
-                    <label htmlFor="workPartTitle" className="text-sm font-medium">
-                      {t.workPartTitleLabel}
-                    </label>
-                    <input
-                      id="workPartTitle"
-                      name="title"
-                      required
-                      className="mt-1 w-full rounded-lg border px-3 py-2 text-sm"
-                      placeholder={t.workPartTitlePlaceholder}
-                    />
+                    <label htmlFor="workPartTitle" className="text-sm font-medium">{t.workPartTitleLabel}</label>
+                    <input id="workPartTitle" name="title" required className="mt-1 w-full rounded-lg border px-3 py-2 text-sm" placeholder={t.workPartTitlePlaceholder} />
                   </div>
                   <div>
-                    <label
-                      htmlFor="workPartDescription"
-                      className="text-sm font-medium"
-                    >
-                      {t.workPartDescriptionLabel}
-                    </label>
-                    <textarea
-                      id="workPartDescription"
-                      name="description"
-                      rows={3}
-                      className="mt-1 w-full rounded-lg border px-3 py-2 text-sm"
-                      placeholder={t.workPartDescriptionPlaceholder}
-                    />
+                    <label htmlFor="workPartDescription" className="text-sm font-medium">{t.workPartDescriptionLabel}</label>
+                    <textarea id="workPartDescription" name="description" rows={3} className="mt-1 w-full rounded-lg border px-3 py-2 text-sm" placeholder={t.workPartDescriptionPlaceholder} />
                   </div>
-                  <button
-                    type="submit"
-                    className="rounded-lg bg-emerald-600 px-4 py-2 text-sm font-semibold text-white hover:bg-emerald-700"
-                  >
+                  <button type="submit" className="rounded-lg bg-emerald-600 px-4 py-2 text-sm font-semibold text-white hover:bg-emerald-700">
                     {t.addWorkPartAction}
                   </button>
                 </form>
