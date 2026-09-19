@@ -88,7 +88,7 @@ export type Work10Assignment = {
   id: string;
   workPartId: string;
   resourceKind: Work10ResourceKind;
-  /** Auðkenni auðlindar. Fyrir PERSON er þetta user-id. */
+  /** Auðkenni auðlindar. Fyrir PERSON er þetta Employee-id; fyrir aðrar tegundir er þetta WorkResource-id. */
   resourceId: string;
   /** Úthlutun er söguleg staðreynd; brottfall er varðveitt, ekki eytt. */
   removedAt?: Date | null;
@@ -174,7 +174,9 @@ export type Work10EffectCandidateKind =
   | "LABOR_SALES_BASIS"
   | "MATERIAL_INVENTORY_BASIS"
   | "MATERIAL_COST_BASIS"
-  | "MATERIAL_SALES_BASIS";
+  | "MATERIAL_SALES_BASIS"
+  | "RESOURCE_COST_BASIS"
+  | "RESOURCE_SALES_BASIS";
 
 export type Work10EffectCandidate = {
   id: string;

@@ -110,13 +110,14 @@ type UsageFactForEffect = {
     voidedAt: Date | null;
     unitCost: number | null;
   } | null;
+  resourceUnitCostIsk?: number | null;
 };
 
 export function deriveWork10UsageEffectCandidates(
   workPartId: number,
   usageFacts: UsageFactForEffect[],
 ): Work10EffectCandidate[] {
-  return usageFacts
+  const materialEffects = usageFacts
     .filter(
       (fact) =>
         !fact.voidedAt &&
@@ -180,4 +181,48 @@ export function deriveWork10UsageEffectCandidates(
         },
       ];
     });
+
+  const resourceEffects = usageFacts
+    .filter(
+      (fact) =>
+        !fact.voidedAt &&
+        fact.kind !== "MATERIAL" &&
+        Number.isFinite(fact.quantity) &&
+        fact.quantity > 0,
+    )
+    .flatMap((fact) => {
+      const quantity = {
+        value: fact.quantity,
+        unit: fact.unit as Work10EffectCandidate["quantity"]["unit"],
+        customUnit: fact.customUnit,
+      };
+      const common = {
+        workPartId: String(workPartId),
+        sourceFactKind: "USAGE" as const,
+        sourceFactIds: [String(fact.id)],
+        quantity,
+        resourceLabel: fact.resourceLabel,
+        resourceCode: fact.resourceCode,
+      };
+      const costRate = fact.resourceUnitCostIsk ?? null;
+      const hasCostRate = costRate !== null && Number.isFinite(costRate) && costRate >= 0;
+
+      return [
+        {
+          ...common,
+          id: `resource-cost-basis:${fact.id}`,
+          kind: "RESOURCE_COST_BASIS" as const,
+          status: hasCostRate ? ("COST_READY" as const) : ("COST_MISSING" as const),
+          amountIsk: hasCostRate ? fact.quantity * (costRate ?? 0) : null,
+        },
+        {
+          ...common,
+          id: `resource-sales-basis:${fact.id}`,
+          kind: "RESOURCE_SALES_BASIS" as const,
+          status: "RULE_REQUIRED" as const,
+        },
+      ];
+    });
+
+  return [...materialEffects, ...resourceEffects];
 }

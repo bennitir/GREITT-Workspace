@@ -3,6 +3,7 @@
 import Link from "next/link";
 import { useMemo, useState, type ReactNode } from "react";
 import { work10FormatDate, work10PriorityText, work10StatusText, work10Text } from "@/lib/i18n/work10";
+import { workResourceKindText, workResourceStatusText, workResourceText } from "@/lib/i18n/work-resources";
 
 type ActualLaborData = {
   id: string;
@@ -57,6 +58,20 @@ type PersonData = {
   userId: number | null;
 };
 
+type ResourceData = {
+  id: number;
+  kind: string;
+  code: string;
+  name: string;
+  status: string;
+  baseUnit: string | null;
+  customUnit: string | null;
+  meterValue: number | null;
+  meterUnit: string | null;
+  activeAssignmentCount: number;
+  memberCount: number;
+};
+
 export type Work10DashboardData = {
   language: string;
   capabilities: {
@@ -64,6 +79,7 @@ export type Work10DashboardData = {
   };
   workOrders: WorkOrderData[];
   people: PersonData[];
+  resources: ResourceData[];
   initialDate: string;
 };
 
@@ -149,6 +165,7 @@ function StatusDot({ active }: { active: boolean }) {
 
 export default function Work10Dashboard({ data }: { data: Work10DashboardData }) {
   const t = work10Text(data.language);
+  const resourceT = workResourceText(data.language);
   const [mainTab, setMainTab] = useState<MainTab>("schedule");
   const [resourceTab, setResourceTab] = useState<ResourceTab>("people");
   const [calendarMode, setCalendarMode] = useState<CalendarMode>("day");
@@ -169,6 +186,17 @@ export default function Work10Dashboard({ data }: { data: Work10DashboardData })
     if (!q) return data.people;
     return data.people.filter((person) => person.name.toLowerCase().includes(q));
   }, [data.people, search]);
+
+  const filteredResources = useMemo(() => {
+    const q = search.trim().toLowerCase();
+    if (!q) return data.resources;
+    return data.resources.filter((resource) =>
+      `${resource.name} ${resource.code}`.toLowerCase().includes(q),
+    );
+  }, [data.resources, search]);
+
+  const machineResources = filteredResources.filter((resource) => ["MACHINE", "VEHICLE", "TOOL"].includes(resource.kind));
+  const teamResources = filteredResources.filter((resource) => resource.kind === "TEAM");
 
   const selectedDayLabor = useMemo(
     () =>
@@ -210,6 +238,7 @@ export default function Work10Dashboard({ data }: { data: Work10DashboardData })
   ).length;
   const completedCount = data.workOrders.filter((work) => work.status === "COMPLETED").length;
   const uniqueLoggedPeople = new Set(selectedDayLabor.map((entry) => entry.employeeId).filter((id): id is number => id !== null)).size;
+  const machineResourceCount = data.resources.filter((resource) => ["MACHINE", "VEHICLE", "TOOL"].includes(resource.kind)).length;
 
   const shiftDate = (days: number) => {
     setSelectedDate((current) => {
@@ -309,7 +338,7 @@ export default function Work10Dashboard({ data }: { data: Work10DashboardData })
                       onClick={() => setResourceTab(tab)}
                       className={`rounded-lg px-2 py-2 text-sm font-semibold ${resourceTab === tab ? "bg-blue-600 text-white shadow-sm" : "text-slate-600"}`}
                     >
-                      {tab === "people" ? `${t.resources.people} (${data.people.length})` : tab === "machines" ? t.resources.machines : t.resources.teams}
+                      {tab === "people" ? `${t.resources.people} (${data.people.length})` : tab === "machines" ? `${t.resources.machines} (${machineResources.length})` : `${t.resources.teams} (${teamResources.length})`}
                     </button>
                   ))}
                 </div>
@@ -352,11 +381,33 @@ export default function Work10Dashboard({ data }: { data: Work10DashboardData })
                         })
                       )}
                     </div>
+                  ) : resourceTab === "machines" ? (
+                    <div className="space-y-2">
+                      {machineResources.length === 0 ? (
+                        <div className="rounded-xl border border-dashed bg-slate-50 p-5 text-sm leading-6 text-slate-500">{t.machinesEmpty}</div>
+                      ) : machineResources.map((resource) => (
+                        <Link key={resource.id} href="/verk/tilfong" className="block rounded-xl border bg-white p-3 hover:border-blue-300 hover:bg-blue-50/40">
+                          <div className="flex items-start justify-between gap-2">
+                            <div className="min-w-0">
+                              <p className="truncate text-sm font-semibold text-slate-900">{resource.name}</p>
+                              <p className="mt-1 text-xs text-slate-500">{workResourceKindText(resource.kind, data.language)} · {resource.code}</p>
+                            </div>
+                            <StatusDot active={resource.status === "IN_USE"} />
+                          </div>
+                          <p className="mt-2 text-xs text-slate-600">{workResourceStatusText(resource.status, data.language)}{resource.meterValue !== null ? ` · ${resource.meterValue} ${resource.meterUnit ?? ""}` : ""}</p>
+                        </Link>
+                      ))}
+                    </div>
                   ) : (
-                    <div className="rounded-xl border border-dashed bg-slate-50 p-5 text-sm leading-6 text-slate-500">
-                      {resourceTab === "machines"
-                        ? t.machineResourcePlaceholder
-                        : t.teamResourcePlaceholder}
+                    <div className="space-y-2">
+                      {teamResources.length === 0 ? (
+                        <div className="rounded-xl border border-dashed bg-slate-50 p-5 text-sm leading-6 text-slate-500">{t.teamResourcePlaceholder}</div>
+                      ) : teamResources.map((resource) => (
+                        <Link key={resource.id} href="/verk/tilfong" className="block rounded-xl border bg-white p-3 hover:border-blue-300 hover:bg-blue-50/40">
+                          <p className="text-sm font-semibold text-slate-900">{resource.name}</p>
+                          <p className="mt-1 text-xs text-slate-500">{resource.code} · {resource.memberCount} {t.resources.people.toLowerCase()}</p>
+                        </Link>
+                      ))}
                     </div>
                   )}
                 </div>
@@ -529,7 +580,7 @@ export default function Work10Dashboard({ data }: { data: Work10DashboardData })
                 <h2 className="text-xl font-bold text-slate-950">
                   {mainTab === "list" ? t.tabs.list : mainTab === "queue" ? t.tabs.queue : mainTab === "map" ? t.tabs.map : mainTab === "machines" ? t.tabs.machines : mainTab === "docs" ? t.tabs.docs : t.tabs.reports}
                 </h2>
-                <p className="mt-2 max-w-3xl text-sm leading-6 text-slate-600">{t.tabPlaceholder}</p>
+                {mainTab !== "list" && mainTab !== "machines" ? <p className="mt-2 max-w-3xl text-sm leading-6 text-slate-600">{t.tabPlaceholder}</p> : null}
                 {mainTab === "list" && (
                   <div className="mt-5 divide-y overflow-hidden rounded-xl border bg-white">
                     {data.workOrders.map((work) => (
@@ -538,6 +589,29 @@ export default function Work10Dashboard({ data }: { data: Work10DashboardData })
                         <span className="rounded-full bg-slate-100 px-2.5 py-1 text-xs font-medium text-slate-600">{work10StatusText(work.status, data.language)}</span>
                       </Link>
                     ))}
+                  </div>
+                )}
+                {mainTab === "machines" && (
+                  <div className="mt-5">
+                    <div className="mb-3 flex justify-end"><Link href="/verk/tilfong" className="rounded-lg border bg-white px-3 py-2 text-sm font-semibold text-violet-700 hover:bg-violet-50">{resourceT.manageResources}</Link></div>
+                    {machineResources.length === 0 ? (
+                      <div className="rounded-xl border border-dashed bg-white p-5 text-sm text-slate-500">{t.machinesEmpty}</div>
+                    ) : (
+                      <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-3">
+                        {machineResources.map((resource) => (
+                          <Link key={resource.id} href="/verk/tilfong" className="rounded-xl border bg-white p-4 hover:border-blue-300 hover:bg-blue-50/30">
+                            <div className="flex items-start justify-between gap-3">
+                              <div className="min-w-0"><p className="font-semibold text-slate-900">{resource.name}</p><p className="mt-1 text-xs text-slate-500">{workResourceKindText(resource.kind, data.language)} · {resource.code}</p></div>
+                              <span className="rounded-full bg-slate-100 px-2 py-1 text-[11px] font-semibold text-slate-600">{workResourceStatusText(resource.status, data.language)}</span>
+                            </div>
+                            <div className="mt-3 grid grid-cols-2 gap-2 text-xs text-slate-600">
+                              <div className="rounded-lg bg-slate-50 p-2"><div>{resourceT.activeAssignments}</div><strong className="mt-1 block text-slate-900">{resource.activeAssignmentCount}</strong></div>
+                              <div className="rounded-lg bg-slate-50 p-2"><div>{resourceT.latestMeter}</div><strong className="mt-1 block text-slate-900">{resource.meterValue !== null ? `${resource.meterValue} ${resource.meterUnit ?? ""}` : "—"}</strong></div>
+                            </div>
+                          </Link>
+                        ))}
+                      </div>
+                    )}
                   </div>
                 )}
               </div>
@@ -589,9 +663,18 @@ export default function Work10Dashboard({ data }: { data: Work10DashboardData })
                   {t.seeAll}
                 </button>
               </div>
-              <div className="mt-4 rounded-xl border border-dashed bg-slate-50 p-5 text-sm leading-6 text-slate-500">
-                {t.machinesEmpty}
-              </div>
+              {machineResourceCount === 0 ? (
+                <div className="mt-4 rounded-xl border border-dashed bg-slate-50 p-5 text-sm leading-6 text-slate-500">{t.machinesEmpty}</div>
+              ) : (
+                <div className="mt-4 space-y-2">
+                  {data.resources.filter((resource) => ["MACHINE", "VEHICLE", "TOOL"].includes(resource.kind)).slice(0, 5).map((resource) => (
+                    <Link key={resource.id} href="/verk/tilfong" className="flex items-center justify-between gap-3 rounded-xl border px-3 py-2 hover:bg-slate-50">
+                      <div className="min-w-0"><p className="truncate text-sm font-semibold text-slate-900">{resource.name}</p><p className="text-xs text-slate-500">{workResourceKindText(resource.kind, data.language)} · {resource.code}</p></div>
+                      <span className="shrink-0 text-xs font-semibold text-slate-600">{workResourceStatusText(resource.status, data.language)}</span>
+                    </Link>
+                  ))}
+                </div>
+              )}
             </div>
           )}
 
@@ -604,7 +687,7 @@ export default function Work10Dashboard({ data }: { data: Work10DashboardData })
                 <div className="rounded-xl bg-emerald-50 p-3"><p className="text-2xl font-bold text-emerald-700">{uniqueLoggedPeople}/{data.people.length}</p><p className="text-xs text-emerald-700">{t.peopleWithTimeToday}</p></div>
                 {machinesEnabled && (
                   <div className="rounded-xl bg-slate-100 p-3">
-                    <p className="text-2xl font-bold text-slate-700">0</p>
+                    <p className="text-2xl font-bold text-slate-700">{machineResourceCount}</p>
                     <p className="text-xs text-slate-600">{t.machinesConnected}</p>
                   </div>
                 )}
@@ -617,6 +700,7 @@ export default function Work10Dashboard({ data }: { data: Work10DashboardData })
                 <Link href="/verk/nytt" className="rounded-xl border px-3 py-3 text-center text-blue-700 hover:bg-blue-50">＋ {t.newWork}</Link>
                 <button disabled className="rounded-xl border px-3 py-3 text-slate-400">☷ {t.newQueue}</button>
                 <Link href="/starfsmenn" className="rounded-xl border px-3 py-3 text-center text-blue-700 hover:bg-blue-50">＋ {t.addEmployee}</Link>
+                <Link href="/verk/tilfong" className="rounded-xl border px-3 py-3 text-center text-violet-700 hover:bg-violet-50">＋ {resourceT.manageResources}</Link>
                 <button type="button" onClick={() => setMainTab("map")} className="rounded-xl border px-3 py-3 text-blue-700 hover:bg-blue-50">⌖ {t.viewMap}</button>
               </div>
             </div>

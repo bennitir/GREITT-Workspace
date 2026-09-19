@@ -7,11 +7,13 @@ import {
   requireActiveCompanyWriteAccess,
 } from "@/lib/core/access-control";
 import { inventoryText } from "@/lib/i18n/inventory";
+import { workResourceText } from "@/lib/i18n/work-resources";
 import { normalizeUiLanguage } from "@/lib/i18n/ui";
 import { prisma } from "@/lib/prisma";
 import { projectLegacyOperationalText } from "@/lib/work10/legacy-operational-text";
 import { projectPersistedWorkOrderText } from "@/lib/work10/work-order-text";
 import { deriveWork10Status, isWork10EffectivelyCompleted } from "@/lib/work10/status";
+import { defaultResourceUnit, isWork10PersistentResourceKind, resourceUsageKind } from "@/lib/work10/resources";
 import {
   isWork10PartStatus,
   isWork10PartTerminalStatus,
@@ -357,6 +359,131 @@ export async function removePersonFromWorkPart(formData: FormData) {
   revalidatePath(`/verk/${workOrderId}`);
 }
 
+
+/** Tengir varanlega Verk-auðlind við Verkþátt. Úthlutun er áætlun, ekki notkun. */
+export async function assignWorkResourceToWorkPart(formData: FormData) {
+  const workOrderId = Number(formData.get("workOrderId"));
+  const workPartId = Number(formData.get("workPartId"));
+  const workResourceId = Number(formData.get("workResourceId"));
+
+  if (!Number.isInteger(workOrderId) || !Number.isInteger(workPartId) || !Number.isInteger(workResourceId)) {
+    throw new Error("Ógild auðlindaúthlutun.");
+  }
+
+  const companyId = await requireActiveCompanyWriteAccess();
+  const effectiveUser = await getEffectiveUser();
+  const [part, resource, userSettings] = await Promise.all([
+    prisma.workPart.findFirst({
+      where: { id: workPartId, companyId, workOrderId },
+      select: { id: true, workOrder: { select: { status: true, workParts: { select: { status: true } } } } },
+    }),
+    prisma.workResource.findFirst({
+      where: { id: workResourceId, companyId, isActive: true },
+      select: { id: true, kind: true, name: true, status: true },
+    }),
+    effectiveUser
+      ? prisma.userSettings.findUnique({ where: { userId: effectiveUser.id }, select: { interfaceLanguage: true } })
+      : Promise.resolve(null),
+  ]);
+  const resourceT = workResourceText(userSettings?.interfaceLanguage ?? "is");
+  if (!part) throw new Error("Verkþátturinn fannst ekki.");
+  if (isWork10EffectivelyCompleted(part.workOrder.status, part.workOrder.workParts)) {
+    throw new Error("Ekki er hægt að bæta nýrri auðlindaúthlutun við lokið Verk. Enduropna þarf Verkið fyrst.");
+  }
+  if (
+    !resource ||
+    !isWork10PersistentResourceKind(resource.kind) ||
+    resource.status === "MAINTENANCE" ||
+    resource.status === "OUT_OF_SERVICE" ||
+    resource.status === "INACTIVE"
+  ) {
+    throw new Error("Auðlindin fannst ekki eða er ekki tiltæk til úthlutunar.");
+  }
+
+  const existing = await prisma.workPartAssignment.findFirst({
+    where: { companyId, workPartId, workResourceId, removedAt: null },
+    select: { id: true },
+  });
+  if (!existing) {
+    await prisma.$transaction(async (tx) => {
+      const assignment = await tx.workPartAssignment.create({
+        data: {
+          companyId,
+          workPartId,
+          resourceKind: resource.kind,
+          workResourceId,
+          resourceLabel: resource.name,
+          createdById: effectiveUser?.id ?? null,
+        },
+      });
+      await tx.auditEvent.create({
+        data: {
+          companyId,
+          userId: effectiveUser?.id ?? null,
+          entityType: "WORK_PART_ASSIGNMENT",
+          entityId: assignment.id,
+          parentEntityType: "WORK_ORDER",
+          parentEntityId: workOrderId,
+          action: "RESOURCE_ASSIGNED",
+          source: "USER",
+          description: resourceT.auditAssigned,
+          afterData: { workPartId, workResourceId, resourceKind: resource.kind },
+        },
+      });
+    });
+  }
+
+  revalidatePath("/verk");
+  revalidatePath(`/verk/${workOrderId}`);
+  revalidatePath("/verk/tilfong");
+}
+
+export async function removeWorkResourceFromWorkPart(formData: FormData) {
+  const workOrderId = Number(formData.get("workOrderId"));
+  const assignmentId = Number(formData.get("assignmentId"));
+  if (!Number.isInteger(workOrderId) || !Number.isInteger(assignmentId)) throw new Error("Ógild auðlindaúthlutun.");
+
+  const companyId = await requireActiveCompanyWriteAccess();
+  const effectiveUser = await getEffectiveUser();
+  const [assignment, userSettings] = await Promise.all([
+    prisma.workPartAssignment.findFirst({
+      where: { id: assignmentId, companyId, removedAt: null, workResourceId: { not: null }, workPart: { workOrderId } },
+      select: { id: true, workPartId: true, workResourceId: true, resourceKind: true },
+    }),
+    effectiveUser
+      ? prisma.userSettings.findUnique({ where: { userId: effectiveUser.id }, select: { interfaceLanguage: true } })
+      : Promise.resolve(null),
+  ]);
+  if (assignment) {
+    const removedAt = new Date();
+    const resourceT = workResourceText(userSettings?.interfaceLanguage ?? "is");
+    await prisma.$transaction(async (tx) => {
+      await tx.workPartAssignment.update({
+        where: { id: assignment.id },
+        data: { removedAt, removedById: effectiveUser?.id ?? null },
+      });
+      await tx.auditEvent.create({
+        data: {
+          companyId,
+          userId: effectiveUser?.id ?? null,
+          entityType: "WORK_PART_ASSIGNMENT",
+          entityId: assignment.id,
+          parentEntityType: "WORK_ORDER",
+          parentEntityId: workOrderId,
+          action: "RESOURCE_UNASSIGNED",
+          source: "USER",
+          description: resourceT.auditUnassigned,
+          beforeData: { workPartId: assignment.workPartId, workResourceId: assignment.workResourceId, resourceKind: assignment.resourceKind, removedAt: null },
+          afterData: { removedAt: removedAt.toISOString() },
+        },
+      });
+    });
+  }
+  revalidatePath("/verk");
+  revalidatePath(`/verk/${workOrderId}`);
+  revalidatePath("/verk/tilfong");
+}
+
 function dateOnlyFromInput(value: string) {
   const isoMatch = /^(\d{4})-(\d{2})-(\d{2})$/.exec(value);
   const displayMatch = /^(\d{2})\.(\d{2})\.(\d{4})$/.exec(value);
@@ -658,6 +785,99 @@ export async function recordMaterialUsageFact(formData: FormData) {
   revalidatePath("/verk");
   revalidatePath(`/verk/${workOrderId}`);
   revalidatePath("/birgdir");
+}
+
+
+/** Skráir raunnotkun varanlegrar auðlindar. Þetta breytir ekki úthlutun eða stöðu auðlindar sjálfkrafa. */
+export async function recordWorkResourceUsageFact(formData: FormData) {
+  const workOrderId = Number(formData.get("workOrderId"));
+  const workPartId = Number(formData.get("workPartId"));
+  const workResourceId = Number(formData.get("workResourceId"));
+  const usageDateRaw = String(formData.get("usageDate") ?? "").trim();
+  const quantityRaw = String(formData.get("quantity") ?? "").trim();
+  const note = String(formData.get("note") ?? "").trim();
+
+  if (!Number.isInteger(workOrderId) || !Number.isInteger(workPartId) || !Number.isInteger(workResourceId)) {
+    throw new Error("Ógild auðlindanotkun.");
+  }
+  if (note.length > 1000) throw new Error("Of langur texti í auðlindanotkun.");
+
+  const quantity = parseLocalizedPositiveNumber(quantityRaw);
+  const usageDate = dateOnlyFromInput(usageDateRaw);
+  const companyId = await requireActiveCompanyWriteAccess();
+  const effectiveUser = await getEffectiveUser();
+  const [part, resource, userSettings] = await Promise.all([
+    prisma.workPart.findFirst({
+      where: { id: workPartId, companyId, workOrderId },
+      select: { id: true, workOrder: { select: { status: true, workParts: { select: { status: true } } } } },
+    }),
+    prisma.workResource.findFirst({
+      where: { id: workResourceId, companyId, isActive: true },
+      select: { id: true, kind: true, code: true, name: true, baseUnit: true, customUnit: true, costRateIsk: true },
+    }),
+    effectiveUser
+      ? prisma.userSettings.findUnique({ where: { userId: effectiveUser.id }, select: { interfaceLanguage: true } })
+      : Promise.resolve(null),
+  ]);
+
+  const resourceT = workResourceText(userSettings?.interfaceLanguage ?? "is");
+
+  if (!part) throw new Error("Verkþátturinn fannst ekki.");
+  if (isWork10EffectivelyCompleted(part.workOrder.status, part.workOrder.workParts)) {
+    throw new Error("Ekki er hægt að bæta nýrri notkun við lokið Verk. Enduropna þarf Verkið fyrst.");
+  }
+  if (!resource || !isWork10PersistentResourceKind(resource.kind) || resource.kind === "TEAM") {
+    throw new Error("Auðlindin fannst ekki eða styður ekki magnmælda notkun.");
+  }
+
+  // Preserve the type guard across the transaction callback. Prisma exposes
+  // `kind` as string here, and TypeScript does not keep a property narrowing
+  // reliably once the object is captured by an async callback.
+  const resourceKind = resource.kind;
+  const unit = resource.baseUnit || defaultResourceUnit(resourceKind);
+  const resolvedCustomUnit = unit === "CUSTOM" ? resource.customUnit : null;
+  if (!WORK10_USAGE_UNITS.has(unit)) throw new Error("Ógild mælieining.");
+  if (unit === "CUSTOM" && !resolvedCustomUnit) throw new Error("Sérsniðna einingu vantar.");
+
+  await prisma.$transaction(async (tx) => {
+    const fact = await tx.workPartUsageFact.create({
+      data: {
+        companyId,
+        workPartId,
+        kind: resourceUsageKind(resourceKind),
+        resourceCode: resource.code,
+        resourceLabel: resource.name,
+        sourceLanguage: normalizeUiLanguage(userSettings?.interfaceLanguage ?? "is"),
+        usageDate,
+        quantity,
+        unit,
+        customUnit: resolvedCustomUnit,
+        note: note || null,
+        source: "MANUAL",
+        workResourceId: resource.id,
+        resourceUnitCostIsk: resource.costRateIsk,
+        createdById: effectiveUser?.id ?? null,
+      },
+    });
+    await tx.auditEvent.create({
+      data: {
+        companyId,
+        userId: effectiveUser?.id ?? null,
+        entityType: "WORK_PART_USAGE_FACT",
+        entityId: fact.id,
+        parentEntityType: "WORK_ORDER",
+        parentEntityId: workOrderId,
+        action: "RESOURCE_USAGE_RECORDED",
+        source: "USER",
+        description: resourceT.auditUsageRecorded,
+        afterData: { workResourceId: resource.id, kind: resourceKind, quantity, unit, resourceUnitCostIsk: resource.costRateIsk },
+      },
+    });
+  });
+
+  revalidatePath("/verk");
+  revalidatePath(`/verk/${workOrderId}`);
+  revalidatePath("/verk/tilfong");
 }
 
 /**

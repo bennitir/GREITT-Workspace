@@ -68,6 +68,9 @@ model Company {
   workPartAssignments WorkPartAssignment[]
   workPartLaborFacts WorkPartLaborFact[]
   workPartUsageFacts WorkPartUsageFact[]
+  workResources WorkResource[]
+  workResourceMembers WorkResourceMember[]
+  workResourceMeterReadings WorkResourceMeterReading[]
   inventoryItems InventoryItem[]
   inventoryLocations InventoryLocation[]
   inventoryMovements InventoryMovement[]
@@ -440,6 +443,10 @@ model User {
   createdWorkPartLaborFactTranslations WorkPartLaborFactTranslation[] @relation("WorkPartLaborFactTranslationCreatedBy")
   createdWorkPartUsageFacts       WorkPartUsageFact[] @relation("WorkPartUsageFactCreatedBy")
   voidedWorkPartUsageFacts        WorkPartUsageFact[] @relation("WorkPartUsageFactVoidedBy")
+  createdWorkResources             WorkResource[] @relation("WorkResourceCreatedBy")
+  updatedWorkResources             WorkResource[] @relation("WorkResourceUpdatedBy")
+  createdWorkResourceMembers       WorkResourceMember[] @relation("WorkResourceMemberCreatedBy")
+  createdWorkResourceMeterReadings WorkResourceMeterReading[] @relation("WorkResourceMeterReadingCreatedBy")
   createdInventoryItems           InventoryItem[] @relation("InventoryItemCreatedBy")
   createdInventoryLocations       InventoryLocation[] @relation("InventoryLocationCreatedBy")
   createdInventoryMovements       InventoryMovement[] @relation("InventoryMovementCreatedBy")
@@ -599,6 +606,7 @@ model Employee {
   qualifications EmployeeQualification[]
   workPartAssignments WorkPartAssignment[]
   workPartLaborFacts WorkPartLaborFact[]
+  workResourceMemberships WorkResourceMember[]
 
   @@index([companyId, userId])
   @@index([companyId, employeeNumber])
@@ -900,6 +908,7 @@ model WorkPart {
   assignments  WorkPartAssignment[]
   laborFacts   WorkPartLaborFact[]
   usageFacts   WorkPartUsageFact[]
+  resourceMeterReadings WorkResourceMeterReading[]
   inventoryMovements InventoryMovement[]
   predecessorDependencies WorkPartDependency[] @relation("WorkPartDependencyPredecessor")
   successorDependencies   WorkPartDependency[] @relation("WorkPartDependencySuccessor")
@@ -957,12 +966,12 @@ model WorkPartAssignment {
   companyId  Int
   workPartId Int
 
-  // Fyrsta varanlega úthlutunargerðin er PERSON. resourceKind er þó
-  // varðveitt frá byrjun svo sama tengihugtak geti síðar tekið við
-  // TEAM, MACHINE, VEHICLE, TOOL og CONTRACTOR án þess að gera þau að
-  // dálkum á WorkPart sjálfum.
+  // PERSON tengist Employee. TEAM, MACHINE, VEHICLE, TOOL og CONTRACTOR
+  // tengjast WorkResource. Sama úthlutunarhugtak gildir fyrir allar tegundir
+  // án þess að gera þær að sérdálkum á WorkPart sjálfum.
   resourceKind  String @default("PERSON")
   employeeId    Int?
+  workResourceId Int?
   userId        Int? // Legacy/login link; employeeId is the operational identity.
   resourceLabel String?
 
@@ -975,6 +984,7 @@ model WorkPartAssignment {
   company   Company  @relation(fields: [companyId], references: [id], onDelete: Cascade)
   workPart  WorkPart @relation(fields: [workPartId], references: [id], onDelete: Cascade)
   employee  Employee? @relation(fields: [employeeId], references: [id], onDelete: SetNull)
+  workResource WorkResource? @relation(fields: [workResourceId], references: [id], onDelete: SetNull)
   user      User?    @relation("WorkPartAssignmentUser", fields: [userId], references: [id], onDelete: SetNull)
   createdBy User?    @relation("WorkPartAssignmentCreatedBy", fields: [createdById], references: [id], onDelete: SetNull)
   removedBy User?    @relation("WorkPartAssignmentRemovedBy", fields: [removedById], references: [id], onDelete: SetNull)
@@ -982,8 +992,97 @@ model WorkPartAssignment {
   @@index([companyId])
   @@index([workPartId, removedAt])
   @@index([employeeId, removedAt])
+  @@index([workResourceId, removedAt])
   @@index([userId, removedAt])
   @@index([resourceKind])
+}
+
+model WorkResource {
+  id        Int @id @default(autoincrement())
+  companyId Int
+
+  // Sameiginlegur auðlindakjarni Verks. PERSON heldur áfram í Employee;
+  // hér búa TEAM, MACHINE, VEHICLE, TOOL og CONTRACTOR.
+  kind           String
+  code           String
+  name           String
+  description    String?
+  sourceLanguage String @default("is")
+
+  status     String @default("AVAILABLE") // AVAILABLE | IN_USE | MAINTENANCE | OUT_OF_SERVICE | INACTIVE
+  baseUnit   String? // HOUR | KM | PCS | CUSTOM
+  customUnit String?
+
+  costRateIsk Float?
+  saleRateIsk Float?
+
+  meterUnit  String?
+  meterValue Float?
+  qrToken    String? @unique
+
+  isActive Boolean @default(true)
+
+  createdById Int?
+  updatedById Int?
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  company   Company @relation(fields: [companyId], references: [id], onDelete: Cascade)
+  createdBy User? @relation("WorkResourceCreatedBy", fields: [createdById], references: [id], onDelete: SetNull)
+  updatedBy User? @relation("WorkResourceUpdatedBy", fields: [updatedById], references: [id], onDelete: SetNull)
+  assignments WorkPartAssignment[]
+  usageFacts WorkPartUsageFact[]
+  members WorkResourceMember[]
+  meterReadings WorkResourceMeterReading[]
+
+  @@unique([companyId, code])
+  @@index([companyId, kind, isActive])
+  @@index([companyId, status])
+  @@index([companyId, name])
+}
+
+model WorkResourceMember {
+  id             Int @id @default(autoincrement())
+  companyId      Int
+  workResourceId Int
+  employeeId     Int
+  roleLabel      String?
+  createdById    Int?
+  removedAt      DateTime?
+  createdAt      DateTime @default(now())
+
+  company      Company @relation(fields: [companyId], references: [id], onDelete: Cascade)
+  workResource WorkResource @relation(fields: [workResourceId], references: [id], onDelete: Cascade)
+  employee     Employee @relation(fields: [employeeId], references: [id], onDelete: Cascade)
+  createdBy    User? @relation("WorkResourceMemberCreatedBy", fields: [createdById], references: [id], onDelete: SetNull)
+
+  @@index([companyId, workResourceId, removedAt])
+  @@index([employeeId, removedAt])
+}
+
+model WorkResourceMeterReading {
+  id             Int @id @default(autoincrement())
+  companyId      Int
+  workResourceId Int
+  workPartId     Int?
+
+  readingAt DateTime
+  value     Float
+  unit      String
+  photoPath String?
+  note      String?
+  source    String @default("MANUAL") // MANUAL | MOBILE | IMPORTED | API
+
+  createdById Int?
+  createdAt DateTime @default(now())
+
+  company      Company @relation(fields: [companyId], references: [id], onDelete: Cascade)
+  workResource WorkResource @relation(fields: [workResourceId], references: [id], onDelete: Cascade)
+  workPart     WorkPart? @relation(fields: [workPartId], references: [id], onDelete: SetNull)
+  createdBy    User? @relation("WorkResourceMeterReadingCreatedBy", fields: [createdById], references: [id], onDelete: SetNull)
+
+  @@index([companyId, workResourceId, readingAt])
+  @@index([workPartId])
 }
 
 model WorkPartLaborFact {
@@ -1034,9 +1133,9 @@ model WorkPartUsageFact {
   companyId  Int
   workPartId Int
 
-  // Sameiginleg magnmælanleg raunnotkun. Fyrsta virka kind er MATERIAL,
-  // en sami grunnur getur síðar tekið við MACHINE_TIME, VEHICLE, TRAVEL
-  // og OTHER án þess að bæta sérdálkum á WorkPart.
+  // Sameiginleg magnmælanleg raunnotkun fyrir MATERIAL, MACHINE_TIME, VEHICLE,
+  // TRAVEL og OTHER án sérdálka á WorkPart. Auðlindakostnaður er varðveittur
+  // sem sögulegt snapshot á notkunarfærslunni.
   kind          String @default("MATERIAL")
   resourceCode  String?
   resourceLabel String
@@ -1049,8 +1148,12 @@ model WorkPartUsageFact {
   note       String?
   source     String @default("MANUAL") // MANUAL | MOBILE | IMPORTED | API
 
-  inventoryItemId     Int?
-  inventoryLocationId Int?
+  inventoryItemId       Int?
+  inventoryLocationId   Int?
+  workResourceId        Int?
+  // Historical snapshot of the resource's internal cost rate at usage time.
+  // Later edits to the resource card must not rewrite historical work cost.
+  resourceUnitCostIsk   Float?
 
   createdById Int?
   voidedAt    DateTime?
@@ -1065,6 +1168,7 @@ model WorkPartUsageFact {
   voidedBy  User?    @relation("WorkPartUsageFactVoidedBy", fields: [voidedById], references: [id], onDelete: SetNull)
   inventoryItem InventoryItem? @relation(fields: [inventoryItemId], references: [id], onDelete: SetNull)
   inventoryLocation InventoryLocation? @relation(fields: [inventoryLocationId], references: [id], onDelete: SetNull)
+  workResource WorkResource? @relation(fields: [workResourceId], references: [id], onDelete: SetNull)
   inventoryMovement InventoryMovement?
 
   @@index([companyId])
@@ -1075,6 +1179,7 @@ model WorkPartUsageFact {
   @@index([source])
   @@index([inventoryItemId])
   @@index([inventoryLocationId])
+  @@index([workResourceId])
 }
 
 model InventoryItem {

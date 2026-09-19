@@ -18,7 +18,7 @@ export default async function Verk10Page() {
   const companyId = await requireCompanyModule("verk");
   const effectiveUser = await getEffectiveUser();
 
-  const [workOrders, companyEmployees, workCapabilitySettings, userSettings] = await Promise.all([
+  const [workOrders, companyEmployees, workResources, workCapabilitySettings, userSettings] = await Promise.all([
     prisma.workOrder.findMany({
       where: { companyId },
       include: {
@@ -59,6 +59,14 @@ export default async function Verk10Page() {
       where: { companyId, isActive: true },
       select: { id: true, fullName: true, jobTitle: true, userId: true },
       orderBy: { fullName: "asc" },
+    }),
+    prisma.workResource.findMany({
+      where: { companyId, isActive: true },
+      include: {
+        assignments: { where: { removedAt: null }, select: { id: true } },
+        members: { where: { removedAt: null }, select: { id: true } },
+      },
+      orderBy: [{ kind: "asc" }, { name: "asc" }],
     }),
     getWorkCapabilitySettings(companyId),
     effectiveUser
@@ -165,6 +173,19 @@ export default async function Verk10Page() {
       actualLabor: canonicalLabor.length > 0 ? canonicalLabor : legacyLabor,
     };
     }),
+    resources: workResources.map((resource) => ({
+      id: resource.id,
+      kind: resource.kind,
+      code: resource.code,
+      name: resource.name,
+      status: resource.status,
+      baseUnit: resource.baseUnit,
+      customUnit: resource.customUnit,
+      meterValue: resource.meterValue,
+      meterUnit: resource.meterUnit,
+      activeAssignmentCount: resource.assignments.length,
+      memberCount: resource.members.length,
+    })),
     people: companyEmployees.map((employee) => ({
       id: employee.id,
       name: employee.fullName,
