@@ -317,7 +317,7 @@ export function shouldRunDeepInsight(document: DetectedDocumentLike) {
    * skjalsins varð t.d. UNKNOWN/REVIEW/INSIGHT_SOURCE. Handvirkur
    * "Lesa með Innsýn" er áfram leyfður fyrir dýpri rannsókn.
    */
-  if (bookingEntryCount > 0 && disposition !== "INSIGHT_ONLY") {
+  if (bookingEntryCount > 0) {
     return false;
   }
 

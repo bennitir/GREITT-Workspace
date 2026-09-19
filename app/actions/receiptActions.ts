@@ -245,6 +245,15 @@ async function runAutomaticInsightForDocuments(documentIds: number[]) {
 
       if (!document) continue;
 
+      // Varnarregla: þegar fylgiskjalagreiningin hefur þegar búið til
+      // raunverulegar bókunarlínur má sjálfvirk Innsýn aldrei lesa sama
+      // frumskjalið aftur með AI. Jafnvel ósamræmd legacy flokkun eins og
+      // INSIGHT_ONLY má ekki trompa þá staðreynd að skjalið er bókanlegt.
+      if (document._count.bookingEntries > 0) {
+        await persistReceiptDerivedInsight(documentId);
+        continue;
+      }
+
       const deepInsightRequired = shouldRunDeepInsight({
         ...document,
         bookingEntryCount: document._count.bookingEntries,

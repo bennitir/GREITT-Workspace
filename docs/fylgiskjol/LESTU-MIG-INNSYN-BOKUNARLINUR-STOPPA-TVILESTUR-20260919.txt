@@ -1,0 +1,26 @@
+GLÖGGT – sjálfvirk Innsýn má ekki tvílesa bókanlegt fylgiskjal
+Dagsetning: 19.09.2026
+
+Tilgangur
+--------
+Production rekjanleiki sýndi nákvæmlega þetta tilvik:
+- Fylgiskjal #289 var lesið sem RECEIPT_ANALYSIS.
+- Sama skjal (#600) fór síðan í INSIGHT_DOCUMENT_ANALYSIS.
+- Skjalið hafði raunverulegar bókunarlínur.
+
+Orsök
+-----
+shouldRunDeepInsight leyfði disposition=INSIGHT_ONLY að trompa þá staðreynd
+að bookingEntries væru þegar til. Þannig gat ósamræmd flokkun frá fyrsta AI-
+lestri valdið öðru sjálfvirku AI-kalli.
+
+Breyting
+--------
+1. Ef bookingEntryCount > 0 skilar shouldRunDeepInsight alltaf false.
+2. runAutomaticInsightForDocuments hefur sjálfstæða varnarreglu:
+   bókunarlínur -> persistReceiptDerivedInsight -> ekkert annað AI-kall.
+
+Þetta er viljandi tvöföld vörn. Handvirkt "Lesa með Innsýn" er áfram hægt
+að nota þegar notandi óskar sérstaklega eftir dýpri rannsókn.
+
+Engin migration.
