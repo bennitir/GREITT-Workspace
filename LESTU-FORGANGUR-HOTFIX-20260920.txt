@@ -1,0 +1,15 @@
+GLÖGGT – Forgangur Verk hotfix 20.09.2026
+
+Breyting:
+- updateWorkOrderPriority endar nú á redirect aftur á sama Verk.
+- Síðan hoppar að #forgangur svo nýja gildið sé strax sýnilegt.
+- Engin Prisma-breyting og engin migration.
+
+Próf:
+npx tsc --noEmit
+
+Git:
+git add "app/verk/[id]/actions.ts"
+git add "app/verk/[id]/page.tsx"
+git commit -m "Fix work priority save refresh"
+git push

@@ -1,6 +1,5 @@
 import { normalizeUiLanguage } from "@/lib/i18n/ui";
 import { mobileNotificationText } from "@/lib/i18n/mobile-notifications";
-import { work10PriorityText } from "@/lib/i18n/work10";
 import { prisma } from "@/lib/prisma";
 import { projectPersistedWorkOrderText } from "@/lib/work10/work-order-text";
 import { resolveWork10LocalizedText } from "@/lib/work10/operational-text";
@@ -90,15 +89,41 @@ export async function notifyPriorityWork(options: {
 
   for (const recipient of recipients) {
     const language = normalizeUiLanguage(
-      recipient.employeeProfiles[0]?.preferredLanguage || recipient.settings?.interfaceLanguage || "is",
+      recipient.settings?.interfaceLanguage || recipient.employeeProfiles[0]?.preferredLanguage || "is",
     );
     const nt = mobileNotificationText(language);
     const localizedTitle =
       resolveWork10LocalizedText(operationalText.title, language)?.text ?? work.title;
-    const title = work.priority === "URGENT" ? nt.urgentTitle : nt.priorityTitle;
+    const priorityLabel = work.priority === "URGENT" ? nt.urgentTitle : nt.priorityTitle;
     const reasonText =
       options.reason === "ASSIGNED_PRIORITY" ? nt.assignedPriority : nt.priorityChanged;
-    const body = `${reasonText} ${localizedTitle} · ${work10PriorityText(work.priority, language)}`;
+    const title = `${priorityLabel}: ${localizedTitle}`;
+    const body = [
+      reasonText,
+      work.address?.trim() || null,
+      work.workNumber ? `#${work.workNumber}` : null,
+    ]
+      .filter((value): value is string => Boolean(value))
+      .join(" · ");
+
+    // Vörn gegn tvísmelli/tvöfaldri server-action keyrslu. Sama raunatvik á ekki
+    // að búa til margar símtilkynningar á örfáum sekúndum, en ný hækkun síðar
+    // á samt að gefa nýtt hljóðmerki.
+    const duplicateSince = new Date(Date.now() - 20_000);
+    const duplicate = await prisma.userNotification.findFirst({
+      where: {
+        userId: recipient.id,
+        companyId: options.companyId,
+        notificationType: "WORK_PRIORITY",
+        sourceType: "WORK_ORDER",
+        sourceId,
+        title,
+        body,
+        createdAt: { gte: duplicateSince },
+      },
+      select: { id: true },
+    });
+    if (duplicate) continue;
 
     const notification = await prisma.userNotification.create({
       data: {
@@ -137,6 +162,8 @@ export async function notifyPriorityWork(options: {
             tag: `gloggt-work-priority-${work.id}`,
             notificationId: notification.id,
             silent: !subscription.soundEnabled,
+            lang: language,
+            renotify: true,
           },
           { ttlSeconds: 600, urgency: "high" },
         );

@@ -49,10 +49,17 @@ export default async function WorkResourceQrPage({ params }: Props) {
           labelSizeLabel={ops.labelSize}
           labelSizeHelp={ops.labelSizeHelp}
           labelSizeAuto={ops.labelSizeAuto}
+          printSetupHelp={ops.qrPrintSetupHelp}
+          qrUrl={qrUrl}
+          resourceCode={resource.code}
+          resourceName={resource.name}
+          resourceKindLabel={workResourceKindText(resource.kind, language)}
+          labelTitle={ops.qrLabelTitle}
         />
       </div>
 
       <section
+        id="gloggt-work-resource-label"
         className="mx-auto box-border flex items-center justify-center overflow-hidden border border-slate-950 bg-white text-center print:m-0"
         style={{
           width: "var(--gloggt-work-resource-label-width, 6.5cm)",
@@ -98,13 +105,13 @@ export default async function WorkResourceQrPage({ params }: Props) {
         </div>
 
         <div
-          style={{ display: "var(--gloggt-work-resource-compact-label-display, none)" }}
-          className="h-full w-full flex-row items-center justify-center gap-[0.04cm] leading-none"
+          style={{ display: "var(--gloggt-work-resource-compact-row-display, none)" }}
+          className="h-full w-full flex-row items-center justify-center gap-[0.05cm] leading-none"
         >
           <div
             className="shrink-0 whitespace-nowrap font-black uppercase text-slate-950"
             style={{
-              fontSize: "clamp(5px, calc(var(--gloggt-work-resource-qr-size, 0.5cm) * 0.32), 10px)",
+              fontSize: "clamp(5px, calc(var(--gloggt-work-resource-qr-size, 0.5cm) * 0.3), 10px)",
               letterSpacing: "0",
             }}
           >
@@ -117,6 +124,30 @@ export default async function WorkResourceQrPage({ params }: Props) {
             style={{
               width: "var(--gloggt-work-resource-qr-size, 0.5cm)",
               height: "var(--gloggt-work-resource-qr-size, 0.5cm)",
+            }}
+          />
+        </div>
+
+        <div
+          style={{ display: "var(--gloggt-work-resource-compact-column-display, none)" }}
+          className="h-full w-full flex-col items-center justify-center gap-[0.05cm] leading-none"
+        >
+          <div
+            className="shrink-0 whitespace-nowrap font-black uppercase text-slate-950"
+            style={{
+              fontSize: "clamp(6px, calc(var(--gloggt-work-resource-qr-size, 0.8cm) * 0.28), 11px)",
+              letterSpacing: "0",
+            }}
+          >
+            {resource.code}
+          </div>
+          <img
+            src={qrUrl}
+            alt={ops.qrTitle}
+            className="shrink-0"
+            style={{
+              width: "var(--gloggt-work-resource-qr-size, 0.8cm)",
+              height: "var(--gloggt-work-resource-qr-size, 0.8cm)",
             }}
           />
         </div>

@@ -34,7 +34,7 @@ export async function getMobileWorkActor() {
   }
 
   const language = normalizeUiLanguage(
-    employee?.preferredLanguage || settings?.interfaceLanguage || "is",
+    settings?.interfaceLanguage || employee?.preferredLanguage || "is",
   );
 
   const teamMemberships = employee

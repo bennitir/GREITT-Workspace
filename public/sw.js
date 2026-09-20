@@ -24,9 +24,11 @@ self.addEventListener("push", (event) => {
     icon: "/gloggt-192.png",
     badge: "/gloggt-192.png",
     tag: payload.tag || `gloggt-${Date.now()}`,
-    renotify: true,
+    renotify: payload.renotify !== false,
     silent: payload.silent === true,
     vibrate: payload.silent === true ? undefined : [220, 100, 220],
+    lang: payload.lang || undefined,
+    timestamp: Date.now(),
     data: {
       url: payload.url || "/mobile",
       notificationId: payload.notificationId || null,

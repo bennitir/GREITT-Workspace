@@ -163,6 +163,20 @@ function StatusDot({ active }: { active: boolean }) {
   return <span className={`h-2.5 w-2.5 rounded-full ${active ? "bg-emerald-500" : "bg-slate-400"}`} />;
 }
 
+function activePriorityRank(priority: string) {
+  if (priority === "URGENT") return 0;
+  if (priority === "HIGH") return 1;
+  if (priority === "NORMAL") return 2;
+  return 3;
+}
+
+function activeStatusRank(status: string) {
+  if (status === "IN_PROGRESS") return 0;
+  if (status === "READY") return 1;
+  if (status === "DRAFT") return 2;
+  return 3;
+}
+
 export default function Work10Dashboard({ data }: { data: Work10DashboardData }) {
   const t = work10Text(data.language);
   const resourceT = workResourceText(data.language);
@@ -170,7 +184,17 @@ export default function Work10Dashboard({ data }: { data: Work10DashboardData })
   const [resourceTab, setResourceTab] = useState<ResourceTab>("people");
   const [calendarMode, setCalendarMode] = useState<CalendarMode>("day");
   const activeWorkOrders = useMemo(
-    () => data.workOrders.filter((work) => work.status !== "COMPLETED" && work.status !== "CANCELLED"),
+    () =>
+      data.workOrders
+        .filter((work) => work.status !== "COMPLETED" && work.status !== "CANCELLED")
+        .slice()
+        .sort((a, b) => {
+          const priorityDiff = activePriorityRank(a.priority) - activePriorityRank(b.priority);
+          if (priorityDiff !== 0) return priorityDiff;
+          const statusDiff = activeStatusRank(a.status) - activeStatusRank(b.status);
+          if (statusDiff !== 0) return statusDiff;
+          return new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime();
+        }),
     [data.workOrders],
   );
   const completedWorkOrders = useMemo(

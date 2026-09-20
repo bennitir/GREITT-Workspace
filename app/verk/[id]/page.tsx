@@ -715,15 +715,18 @@ export default async function Verk10DetailPage({ params }: Props) {
                       {companyAccess.canWrite && (
                         <div className="mt-3 grid gap-2 lg:grid-cols-2">
                           {availablePeople.length > 0 && (
-                            <form action={assignPersonToWorkPart} className="flex min-w-0 gap-2">
-                              <input type="hidden" name="workOrderId" value={work.id} />
-                              <input type="hidden" name="workPartId" value={part.id} />
-                              <select name="employeeId" required defaultValue="" className="min-w-0 flex-1 rounded-lg border bg-white px-3 py-2 text-sm">
-                                <option value="" disabled>{t.choosePerson}</option>
-                                {availablePeople.map((person) => <option key={person.id} value={person.id}>{person.name}</option>)}
-                              </select>
-                              <button type="submit" className="rounded-lg bg-blue-600 px-3 py-2 text-sm font-semibold text-white hover:bg-blue-700">{t.assignPersonAction}</button>
-                            </form>
+                            <div className="rounded-lg border border-blue-100 bg-white p-2 lg:col-span-2">
+                              <p className="px-1 text-xs font-semibold text-blue-800">{t.assignPersonTitle}</p>
+                              <form action={assignPersonToWorkPart} className="mt-2 flex min-w-0 gap-2">
+                                <input type="hidden" name="workOrderId" value={work.id} />
+                                <input type="hidden" name="workPartId" value={part.id} />
+                                <select name="employeeId" required defaultValue="" className="min-w-0 flex-1 rounded-lg border bg-white px-3 py-2 text-sm">
+                                  <option value="" disabled>{t.choosePerson}</option>
+                                  {availablePeople.map((person) => <option key={person.id} value={person.id}>{person.name}</option>)}
+                                </select>
+                                <button type="submit" className="rounded-lg bg-blue-600 px-3 py-2 text-sm font-semibold text-white hover:bg-blue-700">{t.assignPersonAction}</button>
+                              </form>
+                            </div>
                           )}
 
                           {availableTeams.length > 0 && (
