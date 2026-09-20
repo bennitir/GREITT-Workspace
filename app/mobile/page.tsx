@@ -132,7 +132,7 @@ export default async function MobilePage({
               {hasSeenMobileSettings ? (
                 <Link
                   href="/mobile/stillingar"
-                  className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl border border-slate-200 bg-white text-lg shadow-sm active:bg-slate-50"
+                  className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg border border-slate-200 bg-white text-base shadow-sm active:bg-slate-50"
                   aria-label={t.settings}
                   title={t.settings}
                 >

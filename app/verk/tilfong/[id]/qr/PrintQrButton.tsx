@@ -49,11 +49,21 @@ export default function PrintQrButton({
 
   useEffect(() => {
     const selected = labelSizes[labelSize];
-    const automaticWidth = Math.max(1.3, qrSizeCm + 0.75);
-    const automaticHeight = qrSizeCm <= 1 ? Math.max(0.7, qrSizeCm + 0.16) : null;
+    const compactLabel = selected
+      ? selected.width <= 2.5 || selected.height <= 1.5
+      : qrSizeCm <= 1;
+
+    const automaticWidth = compactLabel
+      ? Math.max(1.15, qrSizeCm + 0.62)
+      : Math.max(3, qrSizeCm + 1.5);
+    const automaticHeight = compactLabel
+      ? Math.max(0.62, qrSizeCm + 0.08)
+      : Math.max(3.2, qrSizeCm + 2);
+
     const effectiveWidth = selected?.width ?? automaticWidth;
     const effectiveHeight = selected?.height ?? automaticHeight;
-    const compactLabel = effectiveWidth <= 2.5 || qrSizeCm <= 1;
+    const labelPadding = compactLabel ? 0.02 : 0.2;
+    const labelRadius = compactLabel ? 0.03 : 0.16;
 
     document.documentElement.style.setProperty(
       "--gloggt-work-resource-label-width",
@@ -61,22 +71,48 @@ export default function PrintQrButton({
     );
     document.documentElement.style.setProperty(
       "--gloggt-work-resource-label-height",
-      effectiveHeight ? `${effectiveHeight}cm` : "auto",
+      `${effectiveHeight}cm`,
+    );
+    document.documentElement.style.setProperty(
+      "--gloggt-work-resource-label-padding",
+      `${labelPadding}cm`,
+    );
+    document.documentElement.style.setProperty(
+      "--gloggt-work-resource-label-radius",
+      `${labelRadius}cm`,
     );
     document.documentElement.style.setProperty(
       "--gloggt-work-resource-full-label-display",
-      compactLabel ? "none" : "block",
+      compactLabel ? "none" : "flex",
     );
     document.documentElement.style.setProperty(
       "--gloggt-work-resource-compact-label-display",
       compactLabel ? "flex" : "none",
     );
 
+    // Chrome/Vercel print preview can pass physical CSS dimensions through to
+    // label-printer drivers. Keep @page in sync with the chosen label size so
+    // 1.5 × 0.8 cm stays landscape instead of being stretched by the page.
+    const styleId = "gloggt-work-resource-print-page-size";
+    document.getElementById(styleId)?.remove();
+    const style = document.createElement("style");
+    style.id = styleId;
+    style.textContent = `@media print {
+      @page { size: ${effectiveWidth}cm ${effectiveHeight}cm; margin: 0; }
+      html, body { width: ${effectiveWidth}cm !important; height: ${effectiveHeight}cm !important; margin: 0 !important; padding: 0 !important; }
+      body { overflow: hidden !important; }
+      main { width: ${effectiveWidth}cm !important; height: ${effectiveHeight}cm !important; margin: 0 !important; padding: 0 !important; }
+    }`;
+    document.head.appendChild(style);
+
     return () => {
       document.documentElement.style.removeProperty("--gloggt-work-resource-label-width");
       document.documentElement.style.removeProperty("--gloggt-work-resource-label-height");
+      document.documentElement.style.removeProperty("--gloggt-work-resource-label-padding");
+      document.documentElement.style.removeProperty("--gloggt-work-resource-label-radius");
       document.documentElement.style.removeProperty("--gloggt-work-resource-full-label-display");
       document.documentElement.style.removeProperty("--gloggt-work-resource-compact-label-display");
+      document.getElementById(styleId)?.remove();
     };
   }, [labelSize, qrSizeCm]);
 

@@ -53,15 +53,17 @@ export default async function WorkResourceQrPage({ params }: Props) {
       </div>
 
       <section
-        className="mx-auto flex min-h-[28rem] min-w-[12rem] max-w-sm flex-col items-center justify-center overflow-hidden rounded-3xl border border-slate-950 bg-white p-8 text-center print:min-h-0 print:min-w-0 print:max-w-none print:rounded-[0.08cm] print:p-[0.025cm]"
+        className="mx-auto box-border flex items-center justify-center overflow-hidden border border-slate-950 bg-white text-center print:m-0"
         style={{
-          width: "var(--gloggt-work-resource-label-width, min(100%, 22rem))",
-          height: "var(--gloggt-work-resource-label-height, auto)",
+          width: "var(--gloggt-work-resource-label-width, 6.5cm)",
+          height: "var(--gloggt-work-resource-label-height, 7cm)",
+          padding: "var(--gloggt-work-resource-label-padding, 0.2cm)",
+          borderRadius: "var(--gloggt-work-resource-label-radius, 0.16cm)",
         }}
       >
         <div
-          style={{ display: "var(--gloggt-work-resource-full-label-display, block)" }}
-          className="w-full"
+          style={{ display: "var(--gloggt-work-resource-full-label-display, flex)" }}
+          className="h-full w-full flex-col items-center justify-center"
         >
           <div
             className="font-black uppercase text-slate-950"
@@ -97,12 +99,12 @@ export default async function WorkResourceQrPage({ params }: Props) {
 
         <div
           style={{ display: "var(--gloggt-work-resource-compact-label-display, none)" }}
-          className="w-full flex-row items-center justify-center gap-[0.035cm] leading-none"
+          className="h-full w-full flex-row items-center justify-center gap-[0.025cm] leading-none"
         >
           <div
             className="shrink-0 whitespace-nowrap font-black uppercase text-slate-950"
             style={{
-              fontSize: "clamp(5px, calc(var(--gloggt-work-resource-qr-size, 0.5cm) * 0.35), 11px)",
+              fontSize: "clamp(5px, calc(var(--gloggt-work-resource-qr-size, 0.5cm) * 0.32), 10px)",
               letterSpacing: "0",
             }}
           >
