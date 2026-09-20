@@ -6,43 +6,54 @@ import { workResourceKindText, workResourceStatusText, workResourceText } from "
 import { workResourceOperationsText } from "@/lib/i18n/work-resource-operations";
 import { work10FormatCurrencyIsk, work10UnitText } from "@/lib/i18n/work10";
 import { prisma } from "@/lib/prisma";
-import { WORK10_RESOURCE_KINDS, WORK10_RESOURCE_STATUSES, WORK10_RESOURCE_UNITS } from "@/lib/work10/resources";
+import { WORK10_EQUIPMENT_KINDS, WORK10_RESOURCE_STATUSES } from "@/lib/work10/resources";
 import { deriveWorkMaintenanceState } from "@/lib/work10/maintenance";
 import { workResourceQrDataUrl } from "@/lib/work10/qr";
 import { signedWorkResourceMediaUrl } from "@/lib/work10/resource-media";
 import Card from "@/components/ui/Card";
 import PageHeader from "@/components/ui/PageHeader";
 import {
-  addWorkResourceMember,
   addWorkResourceMeterReading,
   completeWorkResourceMaintenance,
   createWorkResource,
   createWorkResourceMaintenanceKey,
-  removeWorkResourceMember,
   updateWorkResourceDetails,
   updateWorkResourceStatus,
 } from "./actions";
+import WorkEquipmentUnitFields from "./WorkEquipmentUnitFields";
 
 function todayIso() {
   return new Date().toISOString().slice(0, 10);
 }
 
-export default async function WorkResourcesPage() {
+function formatReadingDate(value: Date, language: string) {
+  if (language === "is") {
+    const day = String(value.getUTCDate()).padStart(2, "0");
+    const month = String(value.getUTCMonth() + 1).padStart(2, "0");
+    return `${day}.${month}.${value.getUTCFullYear()}`;
+  }
+
+  return value.toLocaleDateString(
+    language === "pl" ? "pl-PL" : language === "sr" ? "sr-RS" : "en-GB",
+  );
+}
+
+type WorkResourcesPageProps = {
+  searchParams?: Promise<{ createError?: string }>;
+};
+
+export default async function WorkResourcesPage({ searchParams }: WorkResourcesPageProps) {
+  const params = await searchParams;
   const companyId = await requireCompanyModule("verk");
   const effectiveUser = await getEffectiveUser();
-  const [access, settings, resources, employees] = await Promise.all([
+  const [access, settings, resources] = await Promise.all([
     getCompanyAccess(companyId),
     effectiveUser
       ? prisma.userSettings.findUnique({ where: { userId: effectiveUser.id }, select: { interfaceLanguage: true } })
       : Promise.resolve(null),
     prisma.workResource.findMany({
-      where: { companyId },
+      where: { companyId, kind: { in: [...WORK10_EQUIPMENT_KINDS] } },
       include: {
-        members: {
-          where: { removedAt: null },
-          include: { employee: { select: { id: true, fullName: true, jobTitle: true } } },
-          orderBy: { createdAt: "asc" },
-        },
         meterReadings: { orderBy: { readingAt: "desc" }, take: 5 },
         maintenanceKeys: {
           where: { isActive: true },
@@ -53,16 +64,12 @@ export default async function WorkResourcesPage() {
       },
       orderBy: [{ isActive: "desc" }, { kind: "asc" }, { name: "asc" }],
     }),
-    prisma.employee.findMany({
-      where: { companyId, isActive: true },
-      select: { id: true, fullName: true, jobTitle: true },
-      orderBy: { fullName: "asc" },
-    }),
   ]);
 
   const language = settings?.interfaceLanguage ?? "is";
   const t = workResourceText(language);
   const ops = workResourceOperationsText(language);
+  const createError = params?.createError === "duplicateCode" ? t.errors.duplicateCode : null;
   const photoPairs = await Promise.all(
     resources.flatMap((resource) =>
       resource.meterReadings
@@ -86,6 +93,12 @@ export default async function WorkResourcesPage() {
         <Link href="/verk" className="text-sm font-semibold text-blue-700 hover:underline">← {t.back}</Link>
       </div>
 
+      {createError ? (
+        <div role="alert" className="rounded-xl border border-amber-300 bg-amber-50 px-4 py-3 text-sm font-semibold text-amber-950">
+          {createError}
+        </div>
+      ) : null}
+
       {access.canWrite && (
         <Card>
           <h2 className="text-lg font-bold text-slate-950">{t.newResource}</h2>
@@ -93,12 +106,13 @@ export default async function WorkResourcesPage() {
             <label className="grid gap-1 text-sm font-medium text-slate-700">
               <span>{t.kind}</span>
               <select name="kind" defaultValue="MACHINE" className="rounded-lg border bg-white px-3 py-2">
-                {WORK10_RESOURCE_KINDS.map((kind) => <option key={kind} value={kind}>{workResourceKindText(kind, language)}</option>)}
+                {WORK10_EQUIPMENT_KINDS.map((kind) => <option key={kind} value={kind}>{workResourceKindText(kind, language)}</option>)}
               </select>
             </label>
             <label className="grid gap-1 text-sm font-medium text-slate-700">
               <span>{t.code}</span>
-              <input name="code" required maxLength={60} className="rounded-lg border px-3 py-2" placeholder="VEL-001" />
+              <input name="code" required maxLength={60} className="rounded-lg border px-3 py-2" placeholder={t.codePlaceholder} />
+              <span className="text-xs font-normal leading-5 text-slate-500">{t.codeHelp}</span>
             </label>
             <label className="grid gap-1 text-sm font-medium text-slate-700 md:col-span-2">
               <span>{t.name}</span>
@@ -108,17 +122,12 @@ export default async function WorkResourcesPage() {
               <span>{t.description}</span>
               <textarea name="description" rows={2} maxLength={1000} className="rounded-lg border px-3 py-2" />
             </label>
-            <label className="grid gap-1 text-sm font-medium text-slate-700">
-              <span>{t.baseUnit}</span>
-              <select name="baseUnit" defaultValue="" className="rounded-lg border bg-white px-3 py-2">
-                <option value="">{t.resourceDefaultUnit}</option>
-                {WORK10_RESOURCE_UNITS.map((unit) => <option key={unit} value={unit}>{work10UnitText(unit, null, language)}</option>)}
-              </select>
-            </label>
-            <label className="grid gap-1 text-sm font-medium text-slate-700">
-              <span>{t.customUnit}</span>
-              <input name="customUnit" maxLength={40} className="rounded-lg border px-3 py-2" />
-            </label>
+            <WorkEquipmentUnitFields
+              language={language}
+              baseUnitLabel={t.baseUnit}
+              customUnitLabel={t.customUnit}
+              defaultUnitLabel={t.resourceDefaultUnit}
+            />
             <label className="grid gap-1 text-sm font-medium text-slate-700">
               <span>{t.costRate}</span>
               <input name="costRateIsk" inputMode="decimal" className="rounded-lg border px-3 py-2" />
@@ -148,8 +157,6 @@ export default async function WorkResourcesPage() {
         ) : (
           <div className="mt-4 grid gap-4 lg:grid-cols-2">
             {resources.map((resource) => {
-              const memberIds = new Set(resource.members.map((member) => member.employeeId));
-              const availableEmployees = employees.filter((employee) => !memberIds.has(employee.id));
               const latestReading = resource.meterReadings[0] ?? null;
               return (
                 <article key={resource.id} className={`rounded-2xl border p-4 ${resource.isActive ? "bg-white" : "bg-slate-50 opacity-75"}`}>
@@ -178,6 +185,11 @@ export default async function WorkResourcesPage() {
                       <form action={updateWorkResourceDetails} className="mt-3 grid gap-2 sm:grid-cols-2">
                         <input type="hidden" name="resourceId" value={resource.id} />
                         <label className="grid gap-1 text-xs font-medium text-slate-600 sm:col-span-2">
+                          <span>{t.code}</span>
+                          <input name="code" required maxLength={60} defaultValue={resource.code} className="rounded-lg border bg-white px-3 py-2 text-sm" />
+                          <span className="font-normal leading-5 text-slate-500">{t.codeHelp}</span>
+                        </label>
+                        <label className="grid gap-1 text-xs font-medium text-slate-600 sm:col-span-2">
                           <span>{t.name}</span>
                           <input name="name" required maxLength={160} defaultValue={resource.name} className="rounded-lg border bg-white px-3 py-2 text-sm" />
                         </label>
@@ -185,16 +197,14 @@ export default async function WorkResourcesPage() {
                           <span>{t.description}</span>
                           <textarea name="description" rows={2} maxLength={1000} defaultValue={resource.description ?? ""} className="rounded-lg border bg-white px-3 py-2 text-sm" />
                         </label>
-                        <label className="grid gap-1 text-xs font-medium text-slate-600">
-                          <span>{t.baseUnit}</span>
-                          <select name="baseUnit" defaultValue={resource.baseUnit ?? "HOUR"} className="rounded-lg border bg-white px-3 py-2 text-sm">
-                            {WORK10_RESOURCE_UNITS.map((unit) => <option key={unit} value={unit}>{work10UnitText(unit, null, language)}</option>)}
-                          </select>
-                        </label>
-                        <label className="grid gap-1 text-xs font-medium text-slate-600">
-                          <span>{t.customUnit}</span>
-                          <input name="customUnit" maxLength={40} defaultValue={resource.customUnit ?? ""} className="rounded-lg border bg-white px-3 py-2 text-sm" />
-                        </label>
+                        <WorkEquipmentUnitFields
+                          language={language}
+                          baseUnitLabel={t.baseUnit}
+                          customUnitLabel={t.customUnit}
+                          initialUnit={resource.baseUnit ?? (resource.kind === "VEHICLE" ? "KM" : resource.kind === "MACHINE" ? "HOUR" : "PCS")}
+                          initialCustomUnit={resource.customUnit}
+                          compact
+                        />
                         <label className="grid gap-1 text-xs font-medium text-slate-600">
                           <span>{t.costRate}</span>
                           <input name="costRateIsk" inputMode="decimal" defaultValue={resource.costRateIsk ?? ""} className="rounded-lg border bg-white px-3 py-2 text-sm" />
@@ -240,33 +250,6 @@ export default async function WorkResourcesPage() {
                     </details>
                   ) : null}
 
-                  {resource.kind === "TEAM" && (
-                    <div className="mt-4 border-t pt-4">
-                      <h4 className="text-sm font-bold text-slate-900">{t.teamMembers}</h4>
-                      {resource.members.length === 0 ? <p className="mt-2 text-sm text-slate-500">{t.noTeamMembers}</p> : (
-                        <div className="mt-2 space-y-2">
-                          {resource.members.map((member) => (
-                            <div key={member.id} className="flex items-center justify-between gap-3 rounded-lg bg-slate-50 px-3 py-2 text-sm">
-                              <span><strong>{member.employee.fullName}</strong>{member.roleLabel ? ` · ${member.roleLabel}` : member.employee.jobTitle ? ` · ${member.employee.jobTitle}` : ""}</span>
-                              {access.canWrite && <form action={removeWorkResourceMember}><input type="hidden" name="memberId" value={member.id} /><button className="text-xs font-semibold text-rose-700" type="submit">{t.removeMember}</button></form>}
-                            </div>
-                          ))}
-                        </div>
-                      )}
-                      {access.canWrite && availableEmployees.length > 0 && resource.isActive && (
-                        <form action={addWorkResourceMember} className="mt-3 grid gap-2 sm:grid-cols-[1fr_1fr_auto]">
-                          <input type="hidden" name="resourceId" value={resource.id} />
-                          <select name="employeeId" required defaultValue="" className="rounded-lg border bg-white px-3 py-2 text-sm">
-                            <option value="" disabled>{t.chooseEmployee}</option>
-                            {availableEmployees.map((employee) => <option key={employee.id} value={employee.id}>{employee.fullName}{employee.jobTitle ? ` · ${employee.jobTitle}` : ""}</option>)}
-                          </select>
-                          <input name="roleLabel" maxLength={120} placeholder={t.roleLabel} className="rounded-lg border px-3 py-2 text-sm" />
-                          <button type="submit" className="rounded-lg border px-3 py-2 text-sm font-semibold hover:bg-slate-50">{t.addMember}</button>
-                        </form>
-                      )}
-                    </div>
-                  )}
-
                   {["MACHINE", "VEHICLE", "TOOL"].includes(resource.kind) && (
                     <div className="mt-4 border-t pt-4">
                       <div className="flex items-center justify-between gap-3">
@@ -297,7 +280,7 @@ export default async function WorkResourcesPage() {
                             return (
                               <div key={reading.id} className="flex items-center gap-3 rounded-lg bg-slate-50 p-2 text-xs text-slate-600">
                                 {photoUrl ? <a href={photoUrl} target="_blank" rel="noreferrer"><img src={photoUrl} alt={ops.meterPhoto} className="h-14 w-14 rounded-md object-cover" /></a> : null}
-                                <div><strong className="text-slate-900">{reading.value} {reading.unit}</strong><div>{reading.readingAt.toLocaleDateString(language === "is" ? "is-IS" : language === "pl" ? "pl-PL" : language === "sr" ? "sr-RS" : "en-GB")}</div>{reading.note ? <div className="mt-1">{reading.note}</div> : null}</div>
+                                <div><strong className="text-slate-900">{reading.value} {reading.unit}</strong><div>{formatReadingDate(reading.readingAt, language)}</div>{reading.note ? <div className="mt-1">{reading.note}</div> : null}</div>
                               </div>
                             );
                           })}

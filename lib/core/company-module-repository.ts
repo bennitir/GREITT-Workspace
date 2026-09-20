@@ -41,6 +41,8 @@ export async function setCompanyModuleEnabled(
   });
 
   revalidatePath("/stjornbord");
+  revalidatePath("/stjornun");
+  revalidatePath("/mobile");
   revalidatePath("/");
   return result;
 }

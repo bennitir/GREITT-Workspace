@@ -99,6 +99,7 @@ model Company {
   bookkeepingSettings CompanyBookkeepingSettings?
   serviceTimeEntries ServiceTimeEntry[]
   tasks CompanyTask[]
+  userMobileFeatures UserCompanyMobileFeature[]
 }
 
 
@@ -485,6 +486,7 @@ model User {
   updatedEmployees Employee[] @relation("EmployeeUpdatedBy")
   createdEmployeeCompensations EmployeeCompensation[] @relation("EmployeeCompensationCreatedBy")
   createdEmployeeQualifications EmployeeQualification[] @relation("EmployeeQualificationCreatedBy")
+  companyMobileFeatures UserCompanyMobileFeature[]
 }
 
 
@@ -727,6 +729,23 @@ model CompanyModule {
 
   @@unique([companyId, moduleId])
   @@index([companyId])
+}
+
+model UserCompanyMobileFeature {
+  id         Int      @id @default(autoincrement())
+  companyId  Int
+  userId     Int
+  featureKey String
+  visible    Boolean  @default(true)
+  createdAt  DateTime @default(now())
+  updatedAt  DateTime @updatedAt
+
+  company Company @relation(fields: [companyId], references: [id], onDelete: Cascade)
+  user    User    @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([companyId, userId, featureKey])
+  @@index([companyId, userId])
+  @@index([userId])
 }
 
 model VoucherNumberReservation {

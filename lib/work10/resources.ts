@@ -8,6 +8,10 @@ export const WORK10_RESOURCE_KINDS = [
 
 export type Work10PersistentResourceKind = (typeof WORK10_RESOURCE_KINDS)[number];
 
+export const WORK10_EQUIPMENT_KINDS = ["MACHINE", "VEHICLE", "TOOL"] as const;
+
+export type Work10EquipmentKind = (typeof WORK10_EQUIPMENT_KINDS)[number];
+
 export const WORK10_RESOURCE_STATUSES = [
   "AVAILABLE",
   "IN_USE",
@@ -22,6 +26,10 @@ export const WORK10_RESOURCE_UNITS = ["HOUR", "KM", "PCS", "CUSTOM"] as const;
 
 export function isWork10PersistentResourceKind(value: string): value is Work10PersistentResourceKind {
   return (WORK10_RESOURCE_KINDS as readonly string[]).includes(value);
+}
+
+export function isWork10EquipmentKind(value: string): value is Work10EquipmentKind {
+  return (WORK10_EQUIPMENT_KINDS as readonly string[]).includes(value);
 }
 
 export function isWork10ResourceStatus(value: string): value is Work10ResourceStatus {

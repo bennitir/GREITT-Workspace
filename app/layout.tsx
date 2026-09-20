@@ -193,9 +193,20 @@ export default async function RootLayout({
           select: {
             accessRole: true,
             isActive: true,
+            canManageCompanySettings: true,
           },
         })
       : null;
+
+  const canManageCompany = Boolean(
+    activeCompany &&
+      effectiveActiveUser &&
+      (effectiveActiveUser.role === "ADMIN" ||
+        (activeCompanyAccess?.isActive &&
+          (activeCompanyAccess.accessRole === "OWNER" ||
+            activeCompanyAccess.accessRole === "MANAGER" ||
+            activeCompanyAccess.canManageCompanySettings))),
+  );
 
   const userSettings = effectiveActiveUser
     ? await prisma.userSettings.findUnique({ where: { userId: effectiveActiveUser.id }, select: { interfaceLanguage: true } })
@@ -247,6 +258,7 @@ export default async function RootLayout({
                     : null
                 }
                 enabledModuleIds={enabledModuleIds}
+                canManageCompany={canManageCompany}
                 interfaceLanguage={userSettings?.interfaceLanguage ?? "is"}
               />
             }

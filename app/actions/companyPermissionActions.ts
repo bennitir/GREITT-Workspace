@@ -27,5 +27,6 @@ export async function saveCompanyUserPermissions(formData: FormData) {
     },
   });
   revalidatePath("/stillingar/fyrirtaeki");
+  revalidatePath("/stjornun");
   revalidatePath(`/stjornbord/fyrirtaeki/${companyId}`);
 }

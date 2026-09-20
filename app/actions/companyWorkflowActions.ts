@@ -40,5 +40,6 @@ export async function saveCompanyWorkflowSettings(formData: FormData) {
     prisma.company.update({ where: { id: companyId }, data: { receiptEntryMode: preparationMode } }),
   ]);
   revalidatePath("/stillingar/fyrirtaeki");
+  revalidatePath("/stjornun");
   revalidatePath(`/stjornbord/fyrirtaeki/${companyId}`);
 }

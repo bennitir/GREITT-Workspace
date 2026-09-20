@@ -2,6 +2,7 @@
 
 import { randomBytes } from "node:crypto";
 import { revalidatePath } from "next/cache";
+import { redirect } from "next/navigation";
 
 import { getEffectiveUser, requireActiveCompanyWriteAccess } from "@/lib/core/access-control";
 import { normalizeUiLanguage } from "@/lib/i18n/ui";
@@ -13,7 +14,7 @@ import { removeWorkResourceMedia, saveWorkResourceMeterPhoto } from "@/lib/work1
 import {
   WORK10_RESOURCE_UNITS,
   defaultResourceUnit,
-  isWork10PersistentResourceKind,
+  isWork10EquipmentKind,
   isWork10ResourceStatus,
 } from "@/lib/work10/resources";
 
@@ -84,7 +85,7 @@ export async function createWorkResource(formData: FormData) {
   const costRateIsk = optionalNumber(formData.get("costRateIsk"), t.errors);
   const saleRateIsk = optionalNumber(formData.get("saleRateIsk"), t.errors);
 
-  if (!isWork10PersistentResourceKind(kind)) throw new Error(t.errors.invalidKind);
+  if (!isWork10EquipmentKind(kind)) throw new Error(t.errors.invalidKind);
   if (!code || code.length > 60) throw new Error(t.errors.invalidCode);
   if (!name || name.length > 160) throw new Error(t.errors.invalidName);
   if (description.length > 1000) throw new Error(t.errors.descriptionTooLong);
@@ -99,7 +100,7 @@ export async function createWorkResource(formData: FormData) {
   const userId = effectiveUser?.id ?? null;
 
   const existing = await prisma.workResource.findFirst({ where: { companyId, code }, select: { id: true } });
-  if (existing) throw new Error(t.errors.duplicateCode);
+  if (existing) redirect("/verk/tilfong?createError=duplicateCode");
 
   await prisma.$transaction(async (tx) => {
     const resource = await tx.workResource.create({
@@ -115,7 +116,7 @@ export async function createWorkResource(formData: FormData) {
         costRateIsk,
         saleRateIsk,
         meterUnit: meterUnit || (kind === "MACHINE" || kind === "VEHICLE" ? baseUnit : null),
-        qrToken: kind === "TEAM" || kind === "CONTRACTOR" ? null : randomBytes(8).toString("hex"),
+        qrToken: randomBytes(8).toString("hex"),
         createdById: userId,
         updatedById: userId,
       },
@@ -141,6 +142,7 @@ export async function createWorkResource(formData: FormData) {
 export async function updateWorkResourceDetails(formData: FormData) {
   const { effectiveUser, t } = await resourceActionContext();
   const resourceId = Number(formData.get("resourceId"));
+  const code = normalizeCode(String(formData.get("code") ?? ""));
   const name = String(formData.get("name") ?? "").trim();
   const description = String(formData.get("description") ?? "").trim();
   const baseUnit = String(formData.get("baseUnit") ?? "").trim();
@@ -150,6 +152,7 @@ export async function updateWorkResourceDetails(formData: FormData) {
   const saleRateIsk = optionalNumber(formData.get("saleRateIsk"), t.errors);
 
   if (!Number.isInteger(resourceId)) throw new Error(t.errors.invalidResource);
+  if (!code || code.length > 60) throw new Error(t.errors.invalidCode);
   if (!name || name.length > 160) throw new Error(t.errors.invalidName);
   if (description.length > 1000) throw new Error(t.errors.descriptionTooLong);
   if (!(WORK10_RESOURCE_UNITS as readonly string[]).includes(baseUnit)) throw new Error(t.errors.invalidUnit);
@@ -161,6 +164,7 @@ export async function updateWorkResourceDetails(formData: FormData) {
     where: { id: resourceId, companyId },
     select: {
       id: true,
+      code: true,
       name: true,
       description: true,
       baseUnit: true,
@@ -172,7 +176,14 @@ export async function updateWorkResourceDetails(formData: FormData) {
   });
   if (!resource) throw new Error(t.errors.resourceNotFound);
 
+  const duplicateCode = await prisma.workResource.findFirst({
+    where: { companyId, code, id: { not: resourceId } },
+    select: { id: true },
+  });
+  if (duplicateCode) redirect("/verk/tilfong?createError=duplicateCode");
+
   const next = {
+    code,
     name,
     description: description || null,
     baseUnit,

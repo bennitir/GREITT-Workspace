@@ -4,11 +4,13 @@ import { usePathname } from "next/navigation";
 import Link from "next/link";
 import ServiceTimeTracker from "@/components/ServiceTimeTracker";
 import { uiText } from "@/lib/i18n/ui";
+import { companyManagementText } from "@/lib/i18n/company-management";
 type Props = {
   activeCompanyName: string | null;
   activeUserRole: string | null;
   activeCompanyRole: string | null;
   enabledModuleIds: string[];
+  canManageCompany: boolean;
   interfaceLanguage?: string;
 };
 export default function Sidebar({
@@ -16,10 +18,12 @@ export default function Sidebar({
   activeUserRole,
   activeCompanyRole,
   enabledModuleIds,
+  canManageCompany,
   interfaceLanguage,
 }: Props) {
   const pathname = usePathname();
   const t = uiText(interfaceLanguage);
+  const managementT = companyManagementText(interfaceLanguage);
   return (
     <aside className="w-64 h-screen sticky top-0 bg-slate-900 text-white p-6 overflow-y-auto">
       <Link href="/" className="block">
@@ -234,6 +238,19 @@ export default function Sidebar({
     {t.work}
   </Link>
 )}
+
+        {canManageCompany && activeCompanyName ? (
+          <Link
+            href="/stjornun"
+            className={`block rounded-lg px-4 py-3 transition-colors ${
+              pathname.startsWith("/stjornun")
+                ? "bg-blue-600 text-white"
+                : "text-slate-300 hover:bg-slate-800"
+            }`}
+          >
+            {managementT.nav}
+          </Link>
+        ) : null}
 
         <Link
           href="/stillingar"

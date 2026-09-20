@@ -634,10 +634,15 @@ export default async function Verk10DetailPage({ params }: Props) {
                     part.assignments.map((assignment) => assignment.workResourceId).filter((resourceId): resourceId is number => resourceId !== null),
                   );
                   const availablePeople = companyPeople.filter((person) => !assignedEmployeeIds.has(person.id));
-                  const availableResources = companyResources.filter(
+                  const assignableResources = companyResources.filter(
                     (resource) =>
                       !assignedResourceIds.has(resource.id) &&
                       (resource.status === "AVAILABLE" || resource.status === "IN_USE"),
+                  );
+                  const availableTeams = assignableResources.filter((resource) => resource.kind === "TEAM");
+                  const availableContractors = assignableResources.filter((resource) => resource.kind === "CONTRACTOR");
+                  const availableEquipment = assignableResources.filter((resource) =>
+                    ["MACHINE", "VEHICLE", "TOOL"].includes(resource.kind),
                   );
 
                   return (
@@ -694,17 +699,45 @@ export default async function Verk10DetailPage({ params }: Props) {
                             </form>
                           )}
 
-                          {availableResources.length > 0 && (
+                          {availableTeams.length > 0 && (
+                            <form action={assignWorkResourceToWorkPart} className="flex min-w-0 gap-2">
+                              <input type="hidden" name="workOrderId" value={work.id} />
+                              <input type="hidden" name="workPartId" value={part.id} />
+                              <select name="workResourceId" required defaultValue="" className="min-w-0 flex-1 rounded-lg border bg-white px-3 py-2 text-sm">
+                                <option value="" disabled>{resourceT.chooseTeam}</option>
+                                {availableTeams.map((resource) => (
+                                  <option key={resource.id} value={resource.id}>{resource.name} · {resource.code}</option>
+                                ))}
+                              </select>
+                              <button type="submit" className="rounded-lg bg-emerald-600 px-3 py-2 text-sm font-semibold text-white hover:bg-emerald-700">{resourceT.assignTeam}</button>
+                            </form>
+                          )}
+
+                          {availableEquipment.length > 0 && (
                             <form action={assignWorkResourceToWorkPart} className="flex min-w-0 gap-2">
                               <input type="hidden" name="workOrderId" value={work.id} />
                               <input type="hidden" name="workPartId" value={part.id} />
                               <select name="workResourceId" required defaultValue="" className="min-w-0 flex-1 rounded-lg border bg-white px-3 py-2 text-sm">
                                 <option value="" disabled>{resourceT.chooseResource}</option>
-                                {availableResources.map((resource) => (
+                                {availableEquipment.map((resource) => (
                                   <option key={resource.id} value={resource.id}>{workResourceKindText(resource.kind, language)} · {resource.name} · {resource.code}{resource.baseUnit ? ` · ${work10UnitText(resource.baseUnit, resource.customUnit, language)}` : ""}</option>
                                 ))}
                               </select>
                               <button type="submit" className="rounded-lg bg-violet-600 px-3 py-2 text-sm font-semibold text-white hover:bg-violet-700">{resourceT.assignResource}</button>
+                            </form>
+                          )}
+
+                          {availableContractors.length > 0 && (
+                            <form action={assignWorkResourceToWorkPart} className="flex min-w-0 gap-2">
+                              <input type="hidden" name="workOrderId" value={work.id} />
+                              <input type="hidden" name="workPartId" value={part.id} />
+                              <select name="workResourceId" required defaultValue="" className="min-w-0 flex-1 rounded-lg border bg-white px-3 py-2 text-sm">
+                                <option value="" disabled>{resourceT.chooseContractor}</option>
+                                {availableContractors.map((resource) => (
+                                  <option key={resource.id} value={resource.id}>{resource.name} · {resource.code}</option>
+                                ))}
+                              </select>
+                              <button type="submit" className="rounded-lg bg-slate-700 px-3 py-2 text-sm font-semibold text-white hover:bg-slate-800">{resourceT.assignContractor}</button>
                             </form>
                           )}
                         </div>
@@ -741,7 +774,7 @@ export default async function Verk10DetailPage({ params }: Props) {
                   const voidedMaterialFacts = part.usageFacts.filter((fact) => Boolean(fact.voidedAt) && fact.kind === "MATERIAL");
                   const activeResourceFacts = part.usageFacts.filter((fact) => !fact.voidedAt && fact.kind !== "MATERIAL");
                   const voidedResourceFacts = part.usageFacts.filter((fact) => Boolean(fact.voidedAt) && fact.kind !== "MATERIAL");
-                  const usableResources = companyResources.filter((resource) => resource.kind !== "TEAM");
+                  const usableResources = companyResources.filter((resource) => ["MACHINE", "VEHICLE", "TOOL"].includes(resource.kind));
                   const totalMinutes = activeFacts.reduce(
                     (sum, fact) => sum + fact.durationMinutes,
                     0,

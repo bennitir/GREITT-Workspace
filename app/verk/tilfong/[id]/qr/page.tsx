@@ -18,8 +18,16 @@ export default async function WorkResourceQrPage({ params }: Props) {
   const companyId = await requireCompanyModule("verk");
   const effectiveUser = await getEffectiveUser();
   const [settings, resource] = await Promise.all([
-    effectiveUser ? prisma.userSettings.findUnique({ where: { userId: effectiveUser.id }, select: { interfaceLanguage: true } }) : Promise.resolve(null),
-    prisma.workResource.findFirst({ where: { id: resourceId, companyId }, select: { id: true, kind: true, code: true, name: true, qrToken: true } }),
+    effectiveUser
+      ? prisma.userSettings.findUnique({
+          where: { userId: effectiveUser.id },
+          select: { interfaceLanguage: true },
+        })
+      : Promise.resolve(null),
+    prisma.workResource.findFirst({
+      where: { id: resourceId, companyId },
+      select: { id: true, kind: true, code: true, name: true, qrToken: true },
+    }),
   ]);
   if (!resource?.qrToken) notFound();
   const language = settings?.interfaceLanguage ?? "is";
@@ -28,17 +36,58 @@ export default async function WorkResourceQrPage({ params }: Props) {
   if (!qrUrl) notFound();
 
   return (
-    <main className="mx-auto max-w-xl p-5 print:p-0">
-      <div className="mb-5 flex items-center justify-between gap-3 print:hidden">
-        <Link href="/verk/tilfong" className="font-semibold text-blue-700">← {ops.qrTitle}</Link>
-        <PrintQrButton label={ops.printQr} />
+    <main className="mx-auto max-w-3xl p-5 print:max-w-none print:p-0">
+      <div className="mb-5 flex flex-wrap items-end justify-between gap-3 print:hidden">
+        <Link href="/verk/tilfong" className="font-semibold text-blue-700">
+          ← {ops.qrTitle}
+        </Link>
+        <PrintQrButton
+          label={ops.printQr}
+          qrSizeLabel={ops.qrSize}
+          qrSizeHelp={ops.qrSizeHelp}
+          labelSizeLabel={ops.labelSize}
+          labelSizeHelp={ops.labelSizeHelp}
+          labelSizeAuto={ops.labelSizeAuto}
+        />
       </div>
-      <section className="mx-auto flex aspect-[4/5] max-w-sm flex-col items-center justify-center rounded-3xl border-2 border-slate-950 bg-white p-8 text-center print:border-2">
-        <div className="text-sm font-black uppercase tracking-[0.2em] text-slate-950">{ops.qrLabelTitle}</div>
-        <div className="mt-3 text-xs font-bold uppercase tracking-wide text-slate-500">{workResourceKindText(resource.kind, language)} · {resource.code}</div>
-        <h1 className="mt-2 text-2xl font-black text-slate-950">{resource.name}</h1>
-        <img src={qrUrl} alt={ops.qrTitle} className="mt-6 aspect-square w-64 max-w-full" />
-        <code className="mt-4 text-sm font-bold tracking-wider text-slate-700">{resource.qrToken}</code>
+
+      <section
+        className="mx-auto flex min-h-[28rem] max-w-sm flex-col items-center justify-center overflow-hidden rounded-3xl border-2 border-slate-950 bg-white p-8 text-center print:min-h-0 print:max-w-none print:rounded-xl print:p-[0.35cm]"
+        style={{
+          width: "var(--gloggt-work-resource-label-width, min(100%, 22rem))",
+          height: "var(--gloggt-work-resource-label-height, auto)",
+        }}
+      >
+        <div
+          className="font-black uppercase text-slate-950"
+          style={{
+            fontSize: "clamp(8px, calc(var(--gloggt-work-resource-label-width, 10cm) * 0.035), 14px)",
+            letterSpacing: "0.2em",
+          }}
+        >
+          {ops.qrLabelTitle}
+        </div>
+        <div
+          className="mt-2 font-bold uppercase tracking-wide text-slate-500"
+          style={{ fontSize: "clamp(7px, calc(var(--gloggt-work-resource-label-width, 10cm) * 0.03), 12px)" }}
+        >
+          {workResourceKindText(resource.kind, language)} · {resource.code}
+        </div>
+        <h1
+          className="mt-2 font-black text-slate-950"
+          style={{ fontSize: "clamp(12px, calc(var(--gloggt-work-resource-label-width, 10cm) * 0.06), 24px)" }}
+        >
+          {resource.name}
+        </h1>
+        <img
+          src={qrUrl}
+          alt={ops.qrTitle}
+          className="mt-5 max-h-[70%] max-w-[90%]"
+          style={{
+            width: "var(--gloggt-work-resource-qr-size, 5cm)",
+            height: "var(--gloggt-work-resource-qr-size, 5cm)",
+          }}
+        />
       </section>
     </main>
   );

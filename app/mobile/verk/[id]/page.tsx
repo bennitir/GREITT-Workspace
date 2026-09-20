@@ -372,9 +372,13 @@ export default async function MobileWorkDetailPage({ params }: Props) {
                               <button type="submit" className="rounded-lg bg-slate-900 px-3 py-2 text-sm font-semibold text-white">{t.recordMeter}</button>
                             </div>
                             <input name="note" maxLength={500} placeholder={t.note} className="mt-2 w-full rounded-lg border bg-white px-3 py-2 text-sm" />
-                            <label className="mt-2 grid gap-1 text-xs font-semibold text-slate-600">
+                            <label className="mt-2 grid gap-2 text-xs font-semibold text-slate-600">
                               <span>{ops.meterPhoto}</span>
-                              <input type="file" name="photo" accept="image/*" capture="environment" className="rounded-lg border bg-white px-3 py-2 text-sm" />
+                              <span className="inline-flex min-h-11 cursor-pointer items-center justify-center rounded-lg border border-blue-200 bg-blue-50 px-3 py-2 text-sm font-bold text-blue-800 active:bg-blue-100">
+                                📷 {ops.takeMeterPhoto}
+                              </span>
+                              <input type="file" name="photo" accept="image/*" capture="environment" className="sr-only" />
+                              <span className="font-normal leading-5 text-slate-500">{ops.meterPhotoHelp}</span>
                             </label>
                           </form>
                         ))}

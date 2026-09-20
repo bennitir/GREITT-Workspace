@@ -135,9 +135,12 @@ export default async function MobileWorkResourcePage({ params }: Props) {
                 <span>{ops.currentMeter}</span>
                 <input name="value" required inputMode="decimal" className="rounded-xl border bg-white px-4 py-3 text-base" />
               </label>
-              <label className="grid gap-1 text-sm font-semibold text-slate-700">
+              <label className="grid gap-2 text-sm font-semibold text-slate-700">
                 <span>{ops.meterPhoto}</span>
-                <input type="file" name="photo" accept="image/*" capture="environment" className="rounded-xl border bg-white px-3 py-3 text-sm" />
+                <span className="inline-flex min-h-12 cursor-pointer items-center justify-center rounded-xl border border-blue-200 bg-blue-50 px-4 py-3 font-bold text-blue-800 active:bg-blue-100">
+                  📷 {ops.takeMeterPhoto}
+                </span>
+                <input type="file" name="photo" accept="image/*" capture="environment" className="sr-only" />
                 <span className="text-xs font-normal leading-5 text-slate-500">{ops.meterPhotoHelp}</span>
               </label>
               <input name="note" maxLength={500} placeholder={ops.maintenanceNote} className="rounded-xl border bg-white px-4 py-3 text-sm" />
