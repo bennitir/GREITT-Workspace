@@ -32,6 +32,39 @@ import {
   translateWork10OperationalItems,
   type Work10TranslationItem,
 } from "@/lib/work10/translation-service";
+import {
+  effectiveUiLanguagesForUsers,
+  ensureWork10OperationalTranslationsForWorkOrders,
+} from "@/lib/work10/translation-sync";
+
+async function bestEffortEnsureOperationalTranslations(args: {
+  companyId: number;
+  workOrderId: number;
+  actingUserId: number | null;
+  recipientUserIds?: number[];
+  fallbackLanguages?: string[];
+}) {
+  try {
+    const userLanguages = await effectiveUiLanguagesForUsers({
+      companyId: args.companyId,
+      userIds: args.recipientUserIds ?? [],
+    });
+    const targetLanguages = [
+      ...userLanguages,
+      ...(args.fallbackLanguages ?? []),
+    ];
+    await ensureWork10OperationalTranslationsForWorkOrders({
+      companyId: args.companyId,
+      userId: args.actingUserId,
+      workOrderIds: [args.workOrderId],
+      targetLanguages,
+    });
+  } catch (error) {
+    // Úthlutun má aldrei falla niður þó AI-þýðing sé tímabundið ótiltæk.
+    // Mobile reynir aftur þegar starfsmaður opnar Verkið.
+    console.error("Operational translation preparation failed", error);
+  }
+}
 
 function workPartStatusFromLegacy(status: string) {
   if (status === "IN_PROGRESS") return "IN_PROGRESS";
@@ -104,7 +137,7 @@ export async function persistLegacyFirstWorkPart(formData: FormData) {
       ? Promise.resolve(null)
       : prisma.employee.findFirst({
           where: { id: employeeId, companyId, isActive: true },
-          select: { id: true, fullName: true, userId: true },
+          select: { id: true, fullName: true, userId: true, preferredLanguage: true },
         }),
   ]);
 
@@ -198,6 +231,16 @@ export async function persistLegacyFirstWorkPart(formData: FormData) {
         },
       });
     }
+  }
+
+  if (employee) {
+    await bestEffortEnsureOperationalTranslations({
+      companyId,
+      workOrderId,
+      actingUserId: effectiveUser?.id ?? null,
+      recipientUserIds: employee.userId ? [employee.userId] : [],
+      fallbackLanguages: [employee.preferredLanguage],
+    });
   }
 
   if (employee?.userId) {
@@ -352,7 +395,7 @@ export async function assignPersonToWorkPart(formData: FormData) {
     }),
     prisma.employee.findFirst({
       where: { id: employeeId, companyId, isActive: true },
-      select: { id: true, fullName: true, userId: true },
+      select: { id: true, fullName: true, userId: true, preferredLanguage: true },
     }),
   ]);
 
@@ -399,6 +442,14 @@ export async function assignPersonToWorkPart(formData: FormData) {
       }
     }
   }
+
+  await bestEffortEnsureOperationalTranslations({
+    companyId,
+    workOrderId,
+    actingUserId: effectiveUser?.id ?? null,
+    recipientUserIds: employee.userId ? [employee.userId] : [],
+    fallbackLanguages: [employee.preferredLanguage],
+  });
 
   revalidatePath("/verk");
   revalidatePath(`/verk/${workOrderId}`);
@@ -527,6 +578,12 @@ export async function assignWorkResourceToWorkPart(formData: FormData) {
       try {
         const recipientUserIds = await priorityRecipientUserIdsForTeam(companyId, resource.id);
         if (recipientUserIds.length > 0) {
+          await bestEffortEnsureOperationalTranslations({
+            companyId,
+            workOrderId,
+            actingUserId: effectiveUser?.id ?? null,
+            recipientUserIds,
+          });
           await notifyPriorityWork({
             workOrderId,
             companyId,

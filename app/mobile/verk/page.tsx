@@ -1,5 +1,7 @@
 import Link from "next/link";
 
+import MobileOperationalTranslationSync from "@/components/MobileOperationalTranslationSync";
+
 import { work10PriorityText, work10StatusText } from "@/lib/i18n/work10";
 import { workMobileText } from "@/lib/i18n/work-mobile";
 import { workResourceOperationsText } from "@/lib/i18n/work-resource-operations";
@@ -238,6 +240,7 @@ export default async function MobileVerkPage({ searchParams }: Props) {
   return (
     <main className="min-h-screen bg-slate-100">
       <div className="mx-auto min-h-screen max-w-md bg-white px-4 pb-24 pt-5">
+        <MobileOperationalTranslationSync />
         <header>
           <Link
             href="/mobile"

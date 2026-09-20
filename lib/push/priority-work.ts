@@ -4,6 +4,10 @@ import { prisma } from "@/lib/prisma";
 import { projectPersistedWorkOrderText } from "@/lib/work10/work-order-text";
 import { resolveWork10LocalizedText } from "@/lib/work10/operational-text";
 import { sendWebPush, webPushConfigured } from "@/lib/push/web-push";
+import {
+  effectiveUiLanguagesForUsers,
+  ensureWork10OperationalTranslationsForWorkOrders,
+} from "@/lib/work10/translation-sync";
 
 export type PriorityNotificationReason = "PRIORITY_CHANGED" | "ASSIGNED_PRIORITY";
 
@@ -55,7 +59,7 @@ export async function notifyPriorityWork(options: {
   reason: PriorityNotificationReason;
   recipientUserIds?: number[];
 }) {
-  const work = await prisma.workOrder.findFirst({
+  let work = await prisma.workOrder.findFirst({
     where: { id: options.workOrderId, companyId: options.companyId },
     include: { translations: true },
   });
@@ -66,6 +70,30 @@ export async function notifyPriorityWork(options: {
     ? [...new Set(requestedIds)]
     : await recipientUserIdsForWork(work.id, options.companyId);
   if (recipientIds.length === 0) return;
+
+  try {
+    const targetLanguages = await effectiveUiLanguagesForUsers({
+      companyId: options.companyId,
+      userIds: recipientIds,
+    });
+    const synced = await ensureWork10OperationalTranslationsForWorkOrders({
+      companyId: options.companyId,
+      userId: null,
+      workOrderIds: [work.id],
+      targetLanguages,
+    });
+    if (synced.translatedCount > 0) {
+      const refreshedWork = await prisma.workOrder.findFirst({
+        where: { id: work.id, companyId: options.companyId },
+        include: { translations: true },
+      });
+      if (refreshedWork) work = refreshedWork;
+    }
+  } catch (error) {
+    // Tilkynning má ekki falla niður þó þýðingarþjónusta sé tímabundið ótiltæk.
+    // Þá fer öruggt fallback á frumtexta.
+    console.error("Priority work translation sync failed", error);
+  }
 
   const recipients = await prisma.user.findMany({
     where: { id: { in: recipientIds }, isActive: true },

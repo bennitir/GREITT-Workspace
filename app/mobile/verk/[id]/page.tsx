@@ -1,4 +1,6 @@
 import Link from "next/link";
+
+import MobileOperationalTranslationSync from "@/components/MobileOperationalTranslationSync";
 import { notFound } from "next/navigation";
 
 import { getCompanyModuleSettings } from "@/lib/core/company-module-repository";
@@ -168,6 +170,7 @@ export default async function MobileWorkDetailPage({ params }: Props) {
   return (
     <main className="min-h-screen bg-slate-100">
       <div className="mx-auto min-h-screen max-w-md bg-white px-4 pb-24 pt-5">
+        <MobileOperationalTranslationSync workOrderId={work.id} />
         <Link
           href="/mobile/verk"
           className="inline-flex min-h-11 items-center rounded-xl border border-slate-200 bg-white px-4 text-base font-semibold text-slate-700 shadow-sm"
