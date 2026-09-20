@@ -53,42 +53,71 @@ export default async function WorkResourceQrPage({ params }: Props) {
       </div>
 
       <section
-        className="mx-auto flex min-h-[28rem] min-w-[12rem] max-w-sm flex-col items-center justify-center overflow-hidden rounded-3xl border-2 border-slate-950 bg-white p-8 text-center print:min-h-0 print:min-w-0 print:max-w-none print:rounded-xl print:p-[0.15cm]"
+        className="mx-auto flex min-h-[28rem] min-w-[12rem] max-w-sm flex-col items-center justify-center overflow-hidden rounded-3xl border border-slate-950 bg-white p-8 text-center print:min-h-0 print:min-w-0 print:max-w-none print:rounded-lg print:p-[0.08cm]"
         style={{
           width: "var(--gloggt-work-resource-label-width, min(100%, 22rem))",
           height: "var(--gloggt-work-resource-label-height, auto)",
         }}
       >
         <div
-          className="font-black uppercase text-slate-950"
-          style={{
-            fontSize: "clamp(6px, calc(var(--gloggt-work-resource-label-width, 10cm) * 0.035), 14px)",
-            letterSpacing: "0.2em",
-          }}
+          style={{ display: "var(--gloggt-work-resource-full-label-display, block)" }}
+          className="w-full"
         >
-          {ops.qrLabelTitle}
+          <div
+            className="font-black uppercase text-slate-950"
+            style={{
+              fontSize: "clamp(6px, calc(var(--gloggt-work-resource-label-width, 10cm) * 0.035), 14px)",
+              letterSpacing: "0.2em",
+            }}
+          >
+            {ops.qrLabelTitle}
+          </div>
+          <div
+            className="mt-2 font-bold uppercase tracking-wide text-slate-500 print:mt-[0.05cm]"
+            style={{ fontSize: "clamp(5px, calc(var(--gloggt-work-resource-label-width, 10cm) * 0.03), 12px)" }}
+          >
+            {workResourceKindText(resource.kind, language)} · {resource.code}
+          </div>
+          <h1
+            className="mt-2 font-black text-slate-950 print:mt-[0.05cm]"
+            style={{ fontSize: "clamp(7px, calc(var(--gloggt-work-resource-label-width, 10cm) * 0.06), 24px)" }}
+          >
+            {resource.name}
+          </h1>
+          <img
+            src={qrUrl}
+            alt={ops.qrTitle}
+            className="mx-auto mt-5 max-h-[70%] max-w-[90%] print:mt-[0.12cm]"
+            style={{
+              width: "var(--gloggt-work-resource-qr-size, 5cm)",
+              height: "var(--gloggt-work-resource-qr-size, 5cm)",
+            }}
+          />
         </div>
+
         <div
-          className="mt-2 font-bold uppercase tracking-wide text-slate-500 print:mt-[0.05cm]"
-          style={{ fontSize: "clamp(5px, calc(var(--gloggt-work-resource-label-width, 10cm) * 0.03), 12px)" }}
+          style={{ display: "var(--gloggt-work-resource-compact-label-display, none)" }}
+          className="w-full flex-col items-center justify-center gap-[0.06cm] leading-none"
         >
-          {workResourceKindText(resource.kind, language)} · {resource.code}
+          <div
+            className="max-w-full whitespace-nowrap font-black uppercase text-slate-950"
+            style={{
+              fontSize: "clamp(8px, calc(var(--gloggt-work-resource-qr-size, 0.5cm) * 0.55), 22px)",
+              letterSpacing: "0.03em",
+            }}
+          >
+            {resource.code}
+          </div>
+          <img
+            src={qrUrl}
+            alt={ops.qrTitle}
+            className="max-h-full max-w-full"
+            style={{
+              width: "var(--gloggt-work-resource-qr-size, 0.5cm)",
+              height: "var(--gloggt-work-resource-qr-size, 0.5cm)",
+            }}
+          />
         </div>
-        <h1
-          className="mt-2 font-black text-slate-950 print:mt-[0.05cm]"
-          style={{ fontSize: "clamp(7px, calc(var(--gloggt-work-resource-label-width, 10cm) * 0.06), 24px)" }}
-        >
-          {resource.name}
-        </h1>
-        <img
-          src={qrUrl}
-          alt={ops.qrTitle}
-          className="mt-5 max-h-[70%] max-w-[90%] print:mt-[0.12cm]"
-          style={{
-            width: "var(--gloggt-work-resource-qr-size, 5cm)",
-            height: "var(--gloggt-work-resource-qr-size, 5cm)",
-          }}
-        />
       </section>
     </main>
   );

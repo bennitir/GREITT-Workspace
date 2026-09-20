@@ -47,28 +47,33 @@ export default function PrintQrButton({
 
   useEffect(() => {
     const selected = labelSizes[labelSize];
-    if (!selected) {
-      const automaticWidth = Math.max(1.5, qrSizeCm + 0.8);
-      document.documentElement.style.setProperty(
-        "--gloggt-work-resource-label-width",
-        `${automaticWidth}cm`,
-      );
-      document.documentElement.style.setProperty(
-        "--gloggt-work-resource-label-height",
-        "auto",
-      );
-      return () => {
-        document.documentElement.style.removeProperty("--gloggt-work-resource-label-width");
-        document.documentElement.style.removeProperty("--gloggt-work-resource-label-height");
-      };
-    }
+    const automaticWidth = Math.max(1.5, qrSizeCm + 0.8);
+    const effectiveWidth = selected?.width ?? automaticWidth;
+    const effectiveHeight = selected?.height ?? null;
+    const compactLabel = effectiveWidth <= 2.5 || qrSizeCm <= 1;
 
-    document.documentElement.style.setProperty("--gloggt-work-resource-label-width", `${selected.width}cm`);
-    document.documentElement.style.setProperty("--gloggt-work-resource-label-height", `${selected.height}cm`);
+    document.documentElement.style.setProperty(
+      "--gloggt-work-resource-label-width",
+      `${effectiveWidth}cm`,
+    );
+    document.documentElement.style.setProperty(
+      "--gloggt-work-resource-label-height",
+      effectiveHeight ? `${effectiveHeight}cm` : "auto",
+    );
+    document.documentElement.style.setProperty(
+      "--gloggt-work-resource-full-label-display",
+      compactLabel ? "none" : "block",
+    );
+    document.documentElement.style.setProperty(
+      "--gloggt-work-resource-compact-label-display",
+      compactLabel ? "flex" : "none",
+    );
 
     return () => {
       document.documentElement.style.removeProperty("--gloggt-work-resource-label-width");
       document.documentElement.style.removeProperty("--gloggt-work-resource-label-height");
+      document.documentElement.style.removeProperty("--gloggt-work-resource-full-label-display");
+      document.documentElement.style.removeProperty("--gloggt-work-resource-compact-label-display");
     };
   }, [labelSize, qrSizeCm]);
 
