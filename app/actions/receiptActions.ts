@@ -35,20 +35,15 @@ import path from "path";
 import os from "os";
 import crypto from "crypto";
 import { prisma } from "@/lib/prisma";
-import { GLOGGT_MODULES } from "@/lib/core/modules";
+import { getCompanyModuleSettings } from "@/lib/core/company-module-repository";
+import { isCompanyModuleEnabled } from "@/lib/core/company-modules";
 import { supabaseAdmin } from "@/lib/supabase";
 import { revalidatePath } from "next/cache";
 import { receiptInventoryText } from "@/lib/i18n/receipt-inventory";
 
 async function isInventoryModuleEnabled(companyId: number) {
-  const setting = await prisma.companyModule.findUnique({
-    where: {
-      companyId_moduleId: { companyId, moduleId: "birgdir" },
-    },
-    select: { enabled: true },
-  });
-
-  return setting?.enabled ?? GLOGGT_MODULES.birgdir.available;
+  const moduleSettings = await getCompanyModuleSettings(companyId);
+  return isCompanyModuleEnabled("birgdir", moduleSettings);
 }
 
 async function requireInventoryModuleEnabled(companyId: number) {

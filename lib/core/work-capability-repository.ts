@@ -9,28 +9,26 @@ import {
 } from "@/lib/core/work-capabilities";
 
 /**
- * Fyrsta útgáfa capability-geymslu.
- *
- * Við nýtum núverandi CompanyModule töfluna með nafngreindum storage-id
- * (t.d. verk:machines) svo við þurfum enga migration á meðan mynstrið er
- * reynsluekið. Verk-kjarninn sjálfur veit aðeins um capability-lykla.
+ * Verk-capabilities eru fyrirtækisstillingar, ekki áskriftareiningar.
+ * Þær eru því vistaðar í CompanyFeatureSetting og CompanyModule er haldið
+ * hreinu sem entitlement-/einingalagi.
  */
 export async function getWorkCapabilitySettings(
   companyId: number,
 ): Promise<WorkCapabilitySettings> {
-  const storageIds = WORK_CAPABILITY_LIST.map(
-    (capability) => capability.storageId,
+  const settingKeys = WORK_CAPABILITY_LIST.map(
+    (capability) => capability.settingKey,
   );
 
-  const rows = await prisma.companyModule.findMany({
+  const rows = await prisma.companyFeatureSetting.findMany({
     where: {
       companyId,
-      moduleId: {
-        in: storageIds,
+      settingKey: {
+        in: settingKeys,
       },
     },
     select: {
-      moduleId: true,
+      settingKey: true,
       enabled: true,
     },
   });
@@ -39,7 +37,7 @@ export async function getWorkCapabilitySettings(
 
   for (const capability of WORK_CAPABILITY_LIST) {
     const row = rows.find(
-      (candidate) => candidate.moduleId === capability.storageId,
+      (candidate) => candidate.settingKey === capability.settingKey,
     );
 
     if (row) {
@@ -57,11 +55,11 @@ export async function setWorkCapabilityEnabled(
 ) {
   const capability = WORK_CAPABILITIES[capabilityKey];
 
-  const result = await prisma.companyModule.upsert({
+  const result = await prisma.companyFeatureSetting.upsert({
     where: {
-      companyId_moduleId: {
+      companyId_settingKey: {
         companyId,
-        moduleId: capability.storageId,
+        settingKey: capability.settingKey,
       },
     },
     update: {
@@ -69,7 +67,7 @@ export async function setWorkCapabilityEnabled(
     },
     create: {
       companyId,
-      moduleId: capability.storageId,
+      settingKey: capability.settingKey,
       enabled,
     },
   });

@@ -1,4 +1,3 @@
-import { formatDate } from "@/lib/locale";
 import AdminOpenCompanyButton from "@/components/AdminOpenCompanyButton";
 import Button from "@/components/ui/Button";
 import Link from "next/link";
@@ -24,6 +23,10 @@ import ReactivateCompanyButton from "@/components/ReactivateCompanyButton";
 import { saveCompanyBookkeepingSettings } from "@/app/actions/bookkeepingSettingsActions";
 import { getBookkeepingWorkflowSettings } from "@/lib/core/bookkeeping-workflow";
 import { companyAccessText } from "@/lib/i18n/company-access";
+import { WORK_CAPABILITY_LIST, isWorkCapabilityEnabled } from "@/lib/core/work-capabilities";
+import { getWorkCapabilitySettings, setWorkCapabilityEnabled } from "@/lib/core/work-capability-repository";
+import { workCapabilitiesText } from "@/lib/i18n/work-capabilities";
+import { adminLocale, adminModuleLabel, adminRoleLabel, adminText } from "@/lib/i18n/admin";
 
 export default async function CompanyAdminPage({
   params,
@@ -101,13 +104,18 @@ export default async function CompanyAdminPage({
     select: { interfaceLanguage: true },
   });
 
-  const tAccess = companyAccessText(userSettings?.interfaceLanguage ?? "is");
+  const language = userSettings?.interfaceLanguage ?? "is";
+  const tAccess = companyAccessText(language);
+  const tWorkCapabilities = workCapabilitiesText(language);
+  const tAdmin = adminText(language);
+  const locale = adminLocale(language);
 
-  const moduleSettings =
-    await getCompanyModuleSettings(company.id);
-
-  const bookkeepingSettings =
-    await getBookkeepingWorkflowSettings(company.id);
+  const [moduleSettings, workCapabilitySettings, bookkeepingSettings] =
+    await Promise.all([
+      getCompanyModuleSettings(company.id),
+      getWorkCapabilitySettings(company.id),
+      getBookkeepingWorkflowSettings(company.id),
+    ]);
 
   const userSearch =
     search.userSearch?.trim() ?? "";
@@ -154,7 +162,7 @@ export default async function CompanyAdminPage({
             href="/stjornbord"
             className="text-sm font-medium text-blue-700 hover:text-blue-900"
           >
-            ← Til baka í Stjórnstöð
+            {tAdmin.companyDetail.back}
           </Link>
 
           <h1 className="mt-3 text-3xl font-bold">
@@ -162,27 +170,28 @@ export default async function CompanyAdminPage({
           </h1>
 
           <p className="mt-1 text-slate-600">
-            Kennitala: {company.kennitala}
+            {tAdmin.companyDetail.idNumber}: {company.kennitala}
           </p>
 
           <p className="mt-1 text-sm text-slate-500">
-            Fyrirtæki #{company.id}
+            {tAdmin.companyDetail.companyNumber} #{company.id}
           </p>
         </div>
                 <div className="flex flex-wrap gap-2">
 
-        <AdminOpenCompanyButton companyId={company.id} />
+        <AdminOpenCompanyButton companyId={company.id} language={language} />
 
           {company.isActive ? (
             <DeleteCompanyButton
   id={company.id}
+  language={language}
   hasBookkeepingData={
     company._count.receipts > 0 ||
     company.nextVoucherNumber > 1
   }
 />
           ) : (
-            <ReactivateCompanyButton id={company.id} />
+            <ReactivateCompanyButton id={company.id} language={language} />
           )}
         </div>
       </div>
@@ -190,18 +199,16 @@ export default async function CompanyAdminPage({
       {!company.isActive && (
         <div className="mb-6 rounded-lg border border-amber-300 bg-amber-50 p-4">
           <p className="font-bold text-amber-900">
-            Fyrirtækið er lokað
+            {tAdmin.companyDetail.closedTitle}
           </p>
 
           <p className="mt-1 text-sm text-amber-800">
-            Gögn eru varðveitt en fyrirtækið er ekki í
-            venjulegri virkri notkun.
+            {tAdmin.companyDetail.closedText}
           </p>
 
           {company.closedAt && (
             <p className="mt-1 text-sm text-amber-800">
-              Lokað:{" "}
-              {formatDate(company.closedAt)}
+              {tAdmin.companyDetail.closedAt}: {new Intl.DateTimeFormat(locale).format(company.closedAt)}
             </p>
           )}
         </div>
@@ -210,7 +217,7 @@ export default async function CompanyAdminPage({
       <div className="mb-6 grid gap-3 md:grid-cols-3">
         <div className="rounded-lg border bg-white p-4">
           <p className="text-sm font-semibold text-slate-500">
-            Fylgiskjöl
+            {tAdmin.companyDetail.receipts}
           </p>
 
           <p className="mt-1 text-2xl font-bold">
@@ -220,7 +227,7 @@ export default async function CompanyAdminPage({
 
         <div className="rounded-lg border bg-white p-4">
           <p className="text-sm font-semibold text-slate-500">
-            Verk
+            {tAdmin.companyDetail.work}
           </p>
 
           <p className="mt-1 text-2xl font-bold">
@@ -230,7 +237,7 @@ export default async function CompanyAdminPage({
 
         <div className="rounded-lg border bg-white p-4">
           <p className="text-sm font-semibold text-slate-500">
-            Vinnufærslur
+            {tAdmin.companyDetail.workLogs}
           </p>
 
           <p className="mt-1 text-2xl font-bold">
@@ -241,12 +248,11 @@ export default async function CompanyAdminPage({
 
       <section className="mb-6 rounded-xl border bg-white p-6">
         <h2 className="text-xl font-bold">
-          GLÖGGT-einingar
+          {tAdmin.companyDetail.modulesTitle}
         </h2>
 
         <p className="mt-1 text-sm text-slate-600">
-          Kveiktu eða slökktu á þeim einingum sem þetta
-          fyrirtæki hefur aðgang að.
+          {tAdmin.companyDetail.modulesHelp}
         </p>
 
         <div className="mt-5 flex flex-wrap gap-3">
@@ -276,7 +282,7 @@ export default async function CompanyAdminPage({
                   }`}
                 >
                   {enabled ? "✓ " : ""}
-                  {module.name}
+                  {adminModuleLabel(module.id, module.name, language)}
                 </button>
               </form>
             );
@@ -287,15 +293,87 @@ export default async function CompanyAdminPage({
       <section className="mb-6 rounded-xl border bg-white p-6">
         <div className="flex flex-wrap items-start justify-between gap-4">
           <div>
-            <h2 className="text-xl font-bold">Bókhaldsferli</h2>
+            <h2 className="text-xl font-bold">
+              {tWorkCapabilities.sectionTitle}
+            </h2>
             <p className="mt-1 max-w-3xl text-sm text-slate-600">
-              Stillir hvernig fylgiskjöl eru undirbúin og hvaða stjórnskref þurfa að
-              klárast áður en bókun er heimil. AI er aðstoðarlag; þessar stillingar
-              stjórna bókhaldsferlinu sjálfu.
+              {tWorkCapabilities.sectionDescription}
+            </p>
+          </div>
+
+          <span className="rounded-full bg-slate-100 px-3 py-1 text-xs font-semibold text-slate-600">
+            {tWorkCapabilities.experimentalBadge}
+          </span>
+        </div>
+
+        <div className="mt-5 grid gap-3 lg:grid-cols-2">
+          {WORK_CAPABILITY_LIST.map((capability) => {
+            const enabled = isWorkCapabilityEnabled(
+              capability.key,
+              workCapabilitySettings,
+            );
+            const copy =
+              tWorkCapabilities.capabilities[capability.key];
+
+            return (
+              <form
+                key={capability.key}
+                action={async () => {
+                  "use server";
+
+                  await setWorkCapabilityEnabled(
+                    company.id,
+                    capability.key,
+                    !enabled,
+                  );
+                }}
+                className={`rounded-xl border p-4 ${
+                  enabled
+                    ? "border-emerald-300 bg-emerald-50"
+                    : "border-slate-200 bg-slate-50"
+                }`}
+              >
+                <div className="flex items-start justify-between gap-4">
+                  <div>
+                    <p className="font-semibold text-slate-900">
+                      {copy.name}
+                    </p>
+                    <p className="mt-1 text-sm leading-6 text-slate-600">
+                      {copy.description}
+                    </p>
+                  </div>
+
+                  <button
+                    type="submit"
+                    className={`shrink-0 rounded-lg border px-3 py-2 text-sm font-semibold ${
+                      enabled
+                        ? "border-emerald-300 bg-white text-emerald-800"
+                        : "border-slate-300 bg-white text-slate-700"
+                    }`}
+                  >
+                    {enabled ? `✓ ${tWorkCapabilities.enabled}` : tWorkCapabilities.disabled}
+                  </button>
+                </div>
+              </form>
+            );
+          })}
+        </div>
+
+        <p className="mt-4 text-xs leading-5 text-slate-500">
+          {tWorkCapabilities.moreLater}
+        </p>
+      </section>
+
+      <section className="mb-6 rounded-xl border bg-white p-6">
+        <div className="flex flex-wrap items-start justify-between gap-4">
+          <div>
+            <h2 className="text-xl font-bold">{tAdmin.companyDetail.bookkeepingTitle}</h2>
+            <p className="mt-1 max-w-3xl text-sm text-slate-600">
+              {tAdmin.companyDetail.bookkeepingHelp}
             </p>
           </div>
           <span className="rounded-full bg-slate-100 px-3 py-1 text-xs font-semibold text-slate-600">
-            Fyrirtækjastilling
+            {tAdmin.companyDetail.companySetting}
           </span>
         </div>
 
@@ -304,45 +382,45 @@ export default async function CompanyAdminPage({
 
           <div>
             <label className="block text-sm font-semibold text-slate-800">
-              Vinnuleið við skráningu fylgiskjala
+              {tAdmin.companyDetail.preparationMode}
             </label>
             <select
               name="preparationMode"
               defaultValue={bookkeepingSettings.preparationMode}
               className="mt-2 w-full max-w-xl rounded-lg border px-3 py-2"
             >
-              <option value="HYBRID">Blandað – handvirkt og AI</option>
-              <option value="AI">AI-aðstoð sjálfgefin</option>
-              <option value="MANUAL">Handskráning sjálfgefin</option>
+              <option value="HYBRID">{tAdmin.companyDetail.preparationHybrid}</option>
+              <option value="AI">{tAdmin.companyDetail.preparationAi}</option>
+              <option value="MANUAL">{tAdmin.companyDetail.preparationManual}</option>
             </select>
             <p className="mt-1 text-xs text-slate-500">
-              Þetta velur sjálfgefna vinnuleið en tekur ekki ákvörðunarvald af bókara.
+              {tAdmin.companyDetail.preparationHelp}
             </p>
           </div>
 
           <div>
             <p className="text-sm font-semibold text-slate-800">
-              Stjórnskref fyrir bókun
+              {tAdmin.companyDetail.controlSteps}
             </p>
             <div className="mt-3 grid gap-3 lg:grid-cols-3">
               {[
                 {
                   name: "requireReviewBeforeBooking",
                   checked: bookkeepingSettings.requireReviewBeforeBooking,
-                  title: "Yfirferð",
-                  text: "Krefjast yfirferðar áður en bókun er heimil.",
+                  title: tAdmin.companyDetail.reviewTitle,
+                  text: tAdmin.companyDetail.reviewText,
                 },
                 {
                   name: "requireReconciliationBeforeBooking",
                   checked: bookkeepingSettings.requireReconciliationBeforeBooking,
-                  title: "Afstemming",
-                  text: "Krefjast afstemmingar, t.d. við bankafærslu, áður en bóka má.",
+                  title: tAdmin.companyDetail.reconciliationTitle,
+                  text: tAdmin.companyDetail.reconciliationText,
                 },
                 {
                   name: "requireApprovalBeforeBooking",
                   checked: bookkeepingSettings.requireApprovalBeforeBooking,
-                  title: "Samþykki",
-                  text: "Krefjast samþykkis frá heimiluðum notanda áður en bóka má.",
+                  title: tAdmin.companyDetail.approvalTitle,
+                  text: tAdmin.companyDetail.approvalText,
                 },
               ].map((item) => (
                 <label key={item.name} className="flex gap-3 rounded-lg border p-4">
@@ -363,45 +441,44 @@ export default async function CompanyAdminPage({
 
           <div>
             <label className="block text-sm font-semibold text-slate-800">
-              Þegar öll virk stjórnskref eru kláruð
+              {tAdmin.companyDetail.completionMode}
             </label>
             <select
               name="completionMode"
               defaultValue={bookkeepingSettings.completionMode}
               className="mt-2 w-full max-w-xl rounded-lg border px-3 py-2"
             >
-              <option value="MANUAL_CONFIRMATION">Tilbúið – bókari ýtir á Bóka</option>
-              <option value="AUTO_BOOK">Bóka sjálfkrafa þegar allt er uppfyllt</option>
+              <option value="MANUAL_CONFIRMATION">{tAdmin.companyDetail.completionManual}</option>
+              <option value="AUTO_BOOK">{tAdmin.companyDetail.completionAuto}</option>
             </select>
           </div>
 
           <div className="rounded-lg border border-blue-200 bg-blue-50 p-4 text-sm text-blue-900">
-            <strong>Flæðið verður:</strong> undirbúningur → virk stjórnskref → bókun.
-            Ef ekkert stjórnskref er valið er skjalið strax bókunarhæft.
+            <strong>{tAdmin.companyDetail.flowPrefix}</strong> {tAdmin.companyDetail.flowText}
           </div>
 
           <button
             type="submit"
             className="rounded-lg bg-blue-600 px-4 py-2 font-medium text-white hover:bg-blue-700"
           >
-            Vista bókhaldsstillingar
+            {tAdmin.companyDetail.saveBookkeeping}
           </button>
         </form>
       </section>
 
       <section className="mb-6 rounded-xl border bg-white p-6">
         <h2 className="text-xl font-bold">
-          Notendur og heimildir
+          {tAdmin.companyDetail.usersTitle}
         </h2>
 
         <p className="mt-1 text-sm text-slate-600">
-          Notendur sem hafa aðgang að þessu fyrirtæki.
+          {tAdmin.companyDetail.usersHelp}
         </p>
 
         <div className="mt-5 space-y-3">
           {company.users.length === 0 ? (
             <p className="text-slate-500">
-              Enginn notandi er tengdur fyrirtækinu.
+              {tAdmin.companyDetail.noUsers}
             </p>
           ) : (
             company.users.map((access) => (
@@ -419,7 +496,7 @@ export default async function CompanyAdminPage({
                   </p>
 
                   <p className="mt-1 text-xs text-slate-500">
-                    Kerfishlutverk: {access.user.role}
+                    {tAdmin.companyDetail.systemRole}: {adminRoleLabel(access.user.role, language)}
                   </p>
 
                   <p className="mt-1 text-xs font-medium text-slate-600">
@@ -441,7 +518,7 @@ export default async function CompanyAdminPage({
 
   <label className="block">
     <span className="mb-1 block text-xs font-medium text-slate-600">
-      Netfang
+      {tAdmin.companyDetail.email}
     </span>
 
     <input
@@ -457,7 +534,7 @@ export default async function CompanyAdminPage({
     type="submit"
     className="rounded-lg bg-blue-600 px-3 py-2 text-sm font-medium text-white"
   >
-    Leiðrétta netfang og senda aðgang aftur
+    {tAdmin.companyDetail.correctEmail}
   </button>
 </form>
                 <div className="flex flex-wrap items-center gap-3">
@@ -482,21 +559,13 @@ export default async function CompanyAdminPage({
                       defaultValue={access.accessRole}
                       className="rounded-lg border px-3 py-2"
                     >
-                      <option value="OWNER">
-                        Eigandi
-                      </option>
+                      <option value="OWNER">{tAdmin.companyDetail.accessRoles.OWNER}</option>
 
-                      <option value="MANAGER">
-                        Stjórnandi
-                      </option>
+                      <option value="MANAGER">{tAdmin.companyDetail.accessRoles.MANAGER}</option>
 
-                      <option value="BOOKKEEPER">
-                        Bókari
-                      </option>
+                      <option value="BOOKKEEPER">{tAdmin.companyDetail.accessRoles.BOOKKEEPER}</option>
 
-                      <option value="VIEWER">
-                        Skoðunaraðgangur
-                      </option>
+                      <option value="VIEWER">{tAdmin.companyDetail.accessRoles.VIEWER}</option>
                     </select>
 
                     <label className="flex items-center gap-2 text-sm text-slate-700">
@@ -531,7 +600,7 @@ export default async function CompanyAdminPage({
                       type="submit"
                       className="rounded-lg border border-red-300 px-3 py-2 text-sm font-medium text-red-700"
                     >
-                      Aftengja
+                      {tAdmin.companyDetail.disconnect}
                     </button>
                   </form>
                 </div>
@@ -543,11 +612,11 @@ export default async function CompanyAdminPage({
 
       <section className="rounded-xl border bg-white p-6">
         <h2 className="text-xl font-bold">
-          Tengja notanda
+          {tAdmin.companyDetail.connectTitle}
         </h2>
 
         <p className="mt-1 text-sm text-slate-600">
-          Leitaðu eftir nafni eða netfangi.
+          {tAdmin.companyDetail.connectHelp}
         </p>
 
         <form
@@ -558,7 +627,7 @@ export default async function CompanyAdminPage({
             type="text"
             name="userSearch"
             defaultValue={userSearch}
-            placeholder="Leita að notanda"
+            placeholder={tAdmin.companyDetail.userSearchPlaceholder}
             className="w-full rounded-lg border px-3 py-2"
           />
 
@@ -566,7 +635,7 @@ export default async function CompanyAdminPage({
             type="submit"
             className="rounded-lg bg-slate-700 px-4 py-2 font-medium text-white"
           >
-            Leita
+            {tAdmin.companyDetail.search}
           </button>
         </form>
 
@@ -574,7 +643,7 @@ export default async function CompanyAdminPage({
           <div className="mt-4 max-w-xl space-y-2">
             {userSearchResults.length === 0 ? (
               <p className="text-sm text-slate-500">
-                Engir ótengdir notendur fundust.
+                {tAdmin.companyDetail.noUnlinkedUsers}
               </p>
             ) : (
               userSearchResults.map((user) => (
@@ -612,10 +681,10 @@ export default async function CompanyAdminPage({
                         defaultValue="MANAGER"
                         className="rounded-lg border px-3 py-2 text-sm"
                       >
-                        <option value="OWNER">Eigandi</option>
-                        <option value="MANAGER">Stjórnandi</option>
-                        <option value="BOOKKEEPER">Bókari</option>
-                        <option value="VIEWER">Skoðunaraðgangur</option>
+                        <option value="OWNER">{tAdmin.companyDetail.accessRoles.OWNER}</option>
+                        <option value="MANAGER">{tAdmin.companyDetail.accessRoles.MANAGER}</option>
+                        <option value="BOOKKEEPER">{tAdmin.companyDetail.accessRoles.BOOKKEEPER}</option>
+                        <option value="VIEWER">{tAdmin.companyDetail.accessRoles.VIEWER}</option>
                       </select>
                     </label>
 
@@ -637,7 +706,7 @@ export default async function CompanyAdminPage({
                       type="submit"
                       className="rounded-lg bg-blue-600 px-3 py-2 text-sm font-medium text-white"
                     >
-                      Tengja
+                      {tAdmin.companyDetail.connect}
                     </button>
                   </div>
                 </form>

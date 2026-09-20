@@ -1,22 +1,25 @@
 import type { GloggtModuleId } from "@/lib/core/modules";
-import { isCompanyModuleEnabled, type CompanyModuleSettings } from "@/lib/core/company-modules";
+import {
+  isCompanyModuleEnabled,
+  type CompanyModuleSettings,
+} from "@/lib/core/company-modules";
 
 export const MOBILE_FEATURES = {
   work: {
     key: "work",
-    storageId: "mobile:work",
+    settingKey: "mobile:work",
     moduleId: "verk" as GloggtModuleId,
     defaultVisible: true,
   },
   inventoryCount: {
     key: "inventoryCount",
-    storageId: "mobile:inventory-count",
+    settingKey: "mobile:inventory-count",
     moduleId: "birgdir" as GloggtModuleId,
     defaultVisible: true,
   },
   receiptCapture: {
     key: "receiptCapture",
-    storageId: "mobile:receipt-capture",
+    settingKey: "mobile:receipt-capture",
     moduleId: "bokhald" as GloggtModuleId,
     defaultVisible: true,
   },
@@ -31,7 +34,10 @@ export function isMobileFeatureAvailable(
   featureKey: MobileFeatureKey,
   moduleSettings: CompanyModuleSettings = {},
 ) {
-  return isCompanyModuleEnabled(MOBILE_FEATURES[featureKey].moduleId, moduleSettings);
+  return isCompanyModuleEnabled(
+    MOBILE_FEATURES[featureKey].moduleId,
+    moduleSettings,
+  );
 }
 
 export function isMobileFeatureVisible(

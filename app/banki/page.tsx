@@ -4,28 +4,29 @@ import Link from "next/link";
 import { bankAnalysisLanguage } from "@/app/banki/_lib/i18n/analysis-text";
 import { annualAnalysisText } from "@/app/banki/_lib/i18n/annual-analysis-text";
 import { annualStatementText } from "@/app/banki/_lib/i18n/annual-statement-text";
+import { bankText } from "@/lib/i18n/bank";
 
 export default async function BankiPage() {
   const cookieStore = await cookies();
-  const activeCompanyId = cookieStore.get("activeCompanyId")?.value;
+  const token = cookieStore.get("sessionToken")?.value;
+  const session = token ? await prisma.session.findUnique({ where: { token }, select: { userId: true } }) : null;
+  const userSettings = session ? await prisma.userSettings.findUnique({ where: { userId: session.userId }, select: { interfaceLanguage: true } }) : null;
+  const language = bankAnalysisLanguage(userSettings?.interfaceLanguage);
+  const t = bankText(language);
 
+  const activeCompanyId = cookieStore.get("activeCompanyId")?.value;
   if (!activeCompanyId) {
     return (
       <main className="p-8">
-        <h1 className="text-2xl font-bold">🏦 Banki</h1>
+        <h1 className="text-2xl font-bold">🏦 {t.title}</h1>
         <p className="mt-4 text-red-600">
-          Ekkert virkt fyrirtæki er valið.
+          {t.noActiveCompany}
         </p>
       </main>
     );
   }
 
   const companyId = Number(activeCompanyId);
-
-  const token = cookieStore.get("sessionToken")?.value;
-  const session = token ? await prisma.session.findUnique({ where: { token }, select: { userId: true } }) : null;
-  const userSettings = session ? await prisma.userSettings.findUnique({ where: { userId: session.userId }, select: { interfaceLanguage: true } }) : null;
-  const language = bankAnalysisLanguage(userSettings?.interfaceLanguage);
   const annualText = annualAnalysisText(language);
   const statementText = annualStatementText(language);
 
@@ -38,9 +39,9 @@ export default async function BankiPage() {
   if (!company) {
     return (
       <main className="p-8">
-        <h1 className="text-2xl font-bold">🏦 Banki</h1>
+        <h1 className="text-2xl font-bold">🏦 {t.title}</h1>
         <p className="mt-4 text-red-600">
-          Virkt fyrirtæki fannst ekki.
+          {t.activeCompanyNotFound}
         </p>
       </main>
     );
@@ -58,11 +59,11 @@ export default async function BankiPage() {
 
   return (
     <main className="p-8">
-      <h1 className="text-2xl font-bold">🏦 Banki</h1>
+      <h1 className="text-2xl font-bold">🏦 {t.title}</h1>
 
       <div className="mt-6 rounded-lg border p-6">
         <p className="text-sm text-gray-500">
-          VIRKT FYRIRTÆKI
+          {t.activeCompany}
         </p>
 
         <h2 className="mt-1 text-xl font-semibold">
@@ -70,7 +71,7 @@ export default async function BankiPage() {
         </h2>
 
         <p className="mt-2 text-gray-600">
-          Bankareikningar þessa fyrirtækis
+          {t.companyAccounts}
         </p>
 
         <div className="mt-6 flex flex-wrap gap-3">
@@ -78,7 +79,7 @@ export default async function BankiPage() {
             href="/banki/tengja"
             className="inline-block rounded-lg bg-blue-600 px-4 py-2 font-medium text-white"
           >
-            + Bæta við bankareikningi
+            {t.addAccount}
           </Link>
           <Link
             href="/banki/arsgreining"
@@ -97,7 +98,7 @@ export default async function BankiPage() {
         <div className="mt-6 space-y-4">
           {bankAccounts.length === 0 ? (
             <div className="rounded-lg border bg-gray-50 p-4">
-              <p>Enginn bankareikningur hefur verið tengdur enn.</p>
+              <p>{t.noAccounts}</p>
             </div>
           ) : (
             bankAccounts.map((account) => (
@@ -111,13 +112,13 @@ export default async function BankiPage() {
   </p>
 
   <p className="mt-2">
-    <strong>{account.bankName} · Reikningsnúmer:</strong>{" "}
-    {account.accountNumber ?? "Ekki skráð"}
+    <strong>{account.bankName} · {t.accountNumber}:</strong>{" "}
+    {account.accountNumber ?? t.notRegistered}
   </p>
 
   <p className="mt-1">
-    <strong>IBAN:</strong>{" "}
-    {account.iban ?? "Ekki skráð"}
+    <strong>{t.iban}:</strong>{" "}
+    {account.iban ?? t.notRegistered}
   </p>
 </Link>
             ))

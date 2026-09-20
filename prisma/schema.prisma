@@ -55,6 +55,7 @@ model Company {
   aiUsage      AiUsage[]
   auditEvents  AuditEvent[]
   modules      CompanyModule[]
+  featureSettings CompanyFeatureSetting[]
   imports      ImportBatch[]
   receipts     Receipt[]
   usageEvents  UsageEvent[]
@@ -728,6 +729,20 @@ model CompanyModule {
   company Company @relation(fields: [companyId], references: [id], onDelete: Cascade)
 
   @@unique([companyId, moduleId])
+  @@index([companyId])
+}
+
+model CompanyFeatureSetting {
+  id         Int      @id @default(autoincrement())
+  companyId  Int
+  settingKey String
+  enabled    Boolean  @default(true)
+  createdAt  DateTime @default(now())
+  updatedAt  DateTime @updatedAt
+
+  company Company @relation(fields: [companyId], references: [id], onDelete: Cascade)
+
+  @@unique([companyId, settingKey])
   @@index([companyId])
 }
 

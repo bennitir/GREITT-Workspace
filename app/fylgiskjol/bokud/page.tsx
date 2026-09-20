@@ -15,6 +15,8 @@ import BookedDocumentRow from "@/components/BookedDocumentRow";
 import { cookies } from "next/headers";
 import { prisma } from "@/lib/prisma";
 import Link from "next/link";
+import { getCurrentInterfaceLanguage } from "@/lib/i18n/current-language";
+import { bookedDocumentsText } from "@/lib/i18n/booked-documents";
 
 export default async function BokudFylgiskjolPage({
   searchParams,
@@ -26,6 +28,8 @@ export default async function BokudFylgiskjolPage({
 }) {
 
     const { q, sort } = await searchParams;
+    const language = await getCurrentInterfaceLanguage();
+    const t = bookedDocumentsText(language);
     const sortOption = sort ?? "voucher-desc";
 const searchVoucherNumber = q ? Number(q) : null;
   const cookieStore = await cookies();
@@ -167,13 +171,13 @@ bookedDocuments.sort((a, b) => {
   return (
     <main className="p-8">
       <h1 className="text-3xl font-bold">
-        Bókuð fylgiskjöl
+        {t.title}
       </h1>
 
       <form className="mt-4 flex items-end gap-3">
   <label className="block">
     <span className="mb-1 block font-semibold">
-      Leita að fylgiskjali
+      {t.searchDocument}
     </span>
 
     <input
@@ -187,7 +191,7 @@ bookedDocuments.sort((a, b) => {
 
   <label className="block">
   <span className="mb-1 block font-semibold">
-    Raða eftir
+    {t.sortBy}
   </span>
 
   <select
@@ -196,16 +200,16 @@ bookedDocuments.sort((a, b) => {
     className="rounded border px-3 py-2"
   >
     <option value="voucher-desc">
-      Fylgiskjal – nýjasta fyrst
+      {t.voucherNewest}
     </option>
     <option value="voucher-asc">
-      Fylgiskjal – elsta fyrst
+      {t.voucherOldest}
     </option>
     <option value="date-desc">
-      Dagsetning – nýjasta fyrst
+      {t.dateNewest}
     </option>
     <option value="date-asc">
-      Dagsetning – elsta fyrst
+      {t.dateOldest}
     </option>
   </select>
 </label>
@@ -214,7 +218,7 @@ bookedDocuments.sort((a, b) => {
     type="submit"
     className="rounded bg-blue-600 px-4 py-2 font-medium text-white hover:bg-blue-700"
   >
-    Leita
+    {t.search}
   </button>
 
   {q && (
@@ -222,13 +226,13 @@ bookedDocuments.sort((a, b) => {
       href="/fylgiskjol/bokud"
       className="rounded border px-4 py-2 hover:bg-slate-50"
     >
-      Hreinsa leit
+      {t.clearSearch}
     </Link>
   )}
 </form>
 
       <p className="mt-2 text-slate-600">
-        Yfirlit yfir bókuð fylgiskjöl fyrirtækisins.
+        {t.description}
       </p>
 
       <div className="mt-6 overflow-x-auto rounded border bg-white">
@@ -236,22 +240,22 @@ bookedDocuments.sort((a, b) => {
           <thead className="bg-slate-100">
             <tr>
               <th className="border-b p-3">
-                Fylgiskjal
+                {t.voucher}
               </th>
               <th className="border-b p-3">
-                Dagsetning
+                {t.date}
               </th>
               <th className="border-b p-3">
-                Seljandi
+                {t.seller}
               </th>
               <th className="border-b p-3">
-                Kennitala
+                {t.idNumber}
               </th>
               <th className="border-b p-3">
-                Upphæð
+                {t.amount}
               </th>
               <th className="border-b p-3">
-                Bókun
+                {t.booking}
               </th>
             </tr>
           </thead>

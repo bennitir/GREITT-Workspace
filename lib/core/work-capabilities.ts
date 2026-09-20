@@ -8,7 +8,7 @@
 export const WORK_CAPABILITIES = {
   machines: {
     key: "machines",
-    storageId: "verk:machines",
+    settingKey: "verk:machines",
     defaultEnabled: false,
   },
 } as const;

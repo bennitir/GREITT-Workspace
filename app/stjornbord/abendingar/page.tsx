@@ -4,14 +4,7 @@ import { redirect } from "next/navigation";
 
 import { prisma } from "@/lib/prisma";
 import { updateSuggestionReview } from "@/app/actions/suggestionActions";
-
-const statusLabel: Record<string, string> = {
-  NEW: "Ný",
-  IN_REVIEW: "Í skoðun",
-  ACCEPTED: "Samþykkt",
-  REJECTED: "Hafnað",
-  IMPLEMENTED: "Útfært",
-};
+import { adminLocale, adminText } from "@/lib/i18n/admin";
 
 export default async function SuggestionsAdminPage() {
   const cookieStore = await cookies();
@@ -30,6 +23,14 @@ export default async function SuggestionsAdminPage() {
     redirect("/");
   }
 
+  const settings = await prisma.userSettings.findUnique({
+    where: { userId: session.user.id },
+    select: { interfaceLanguage: true },
+  });
+  const language = settings?.interfaceLanguage ?? "is";
+  const t = adminText(language);
+  const locale = adminLocale(language);
+
   const suggestions = await prisma.suggestion.findMany({
     orderBy: [{ createdAt: "desc" }],
     take: 200,
@@ -40,39 +41,35 @@ export default async function SuggestionsAdminPage() {
     },
   });
 
+  const statusLabel = t.suggestions.statuses as Record<string, string>;
+
   return (
     <main className="p-8">
       <div className="flex flex-wrap items-start justify-between gap-3">
         <div>
-          <h1 className="text-3xl font-bold">Ábendingar</h1>
-          <p className="mt-1 text-slate-600">
-            Metum ábendinguna sjálfa: kosti, galla, áhættu og áhrif á vinnuflæði.
-          </p>
+          <h1 className="text-3xl font-bold">{t.suggestions.title}</h1>
+          <p className="mt-1 text-slate-600">{t.suggestions.subtitle}</p>
         </div>
         <Link href="/stjornbord" className="rounded border bg-white px-4 py-2 font-medium">
-          ← Stjórnborð
+          {t.suggestions.back}
         </Link>
       </div>
 
       <div className="mt-6 space-y-4">
         {suggestions.length === 0 ? (
-          <div className="rounded-lg border bg-white p-6 text-slate-600">
-            Engar ábendingar hafa borist enn.
-          </div>
+          <div className="rounded-lg border bg-white p-6 text-slate-600">{t.suggestions.empty}</div>
         ) : (
           suggestions.map((suggestion) => (
             <article key={suggestion.id} className="rounded-xl border bg-white p-5">
               <div className="flex flex-wrap items-start justify-between gap-3">
                 <div>
-                  <p className="font-semibold">
-                    {suggestion.company?.name ?? "Almenn ábending"}
-                  </p>
+                  <p className="font-semibold">{suggestion.company?.name ?? t.suggestions.general}</p>
                   <p className="text-sm text-slate-500">
-                    {suggestion.submittedBy.name} · {suggestion.createdAt.toLocaleString("is-IS")}
+                    {suggestion.submittedBy.name} · {suggestion.createdAt.toLocaleString(locale)}
                   </p>
                   {suggestion.entityType && suggestion.entityId != null && (
                     <p className="mt-1 text-xs text-slate-500">
-                      Samhengi: {suggestion.entityType} #{suggestion.entityId}
+                      {t.suggestions.context}: {suggestion.entityType} #{suggestion.entityId}
                     </p>
                   )}
                 </div>
@@ -88,26 +85,24 @@ export default async function SuggestionsAdminPage() {
               <form action={updateSuggestionReview} className="mt-4 grid gap-3 md:grid-cols-[180px_1fr_auto]">
                 <input type="hidden" name="suggestionId" value={suggestion.id} />
                 <select name="status" defaultValue={suggestion.status} className="rounded border px-3 py-2">
-                  <option value="NEW">Ný</option>
-                  <option value="IN_REVIEW">Í skoðun</option>
-                  <option value="ACCEPTED">Samþykkt</option>
-                  <option value="REJECTED">Hafnað</option>
-                  <option value="IMPLEMENTED">Útfært</option>
+                  {Object.entries(t.suggestions.statuses).map(([value, label]) => (
+                    <option key={value} value={value}>{label}</option>
+                  ))}
                 </select>
                 <input
                   name="adminNote"
                   defaultValue={suggestion.adminNote ?? ""}
-                  placeholder="Kostir, gallar, áhætta eða niðurstaða…"
+                  placeholder={t.suggestions.notePlaceholder}
                   className="rounded border px-3 py-2"
                 />
                 <button type="submit" className="rounded bg-slate-800 px-4 py-2 font-semibold text-white">
-                  Vista
+                  {t.suggestions.save}
                 </button>
               </form>
 
               {suggestion.reviewedBy && suggestion.reviewedAt && (
                 <p className="mt-2 text-xs text-slate-500">
-                  Síðast yfirfarið af {suggestion.reviewedBy.name} {suggestion.reviewedAt.toLocaleString("is-IS")}
+                  {t.suggestions.lastReviewedBy} {suggestion.reviewedBy.name} {suggestion.reviewedAt.toLocaleString(locale)}
                 </p>
               )}
             </article>

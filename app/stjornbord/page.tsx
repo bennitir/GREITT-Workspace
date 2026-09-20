@@ -3,6 +3,7 @@ import { cookies } from "next/headers";
 import { redirect } from "next/navigation";
 
 import { prisma } from "@/lib/prisma";
+import { adminRoleLabel, adminText } from "@/lib/i18n/admin";
 import {
   clearActiveUser,
   setActiveUser,
@@ -77,27 +78,34 @@ export default async function StjornbordPage({
 
   const isClient = activeUser?.role === "CLIENT";
 
+  const userSettings = await prisma.userSettings.findUnique({
+    where: { userId: session.user.id },
+    select: { interfaceLanguage: true },
+  });
+  const language = userSettings?.interfaceLanguage ?? "is";
+  const t = adminText(language);
+
   if (isClient) {
     return (
       <main className="p-8">
-        <h1 className="text-3xl font-bold">Stjórnstöð</h1>
+        <h1 className="text-3xl font-bold">{t.dashboard.title}</h1>
 
         <form action={clearActiveUser} className="mt-4">
           <button
             type="submit"
             className="rounded bg-slate-700 px-4 py-2 font-medium text-white hover:bg-slate-800"
           >
-            Til baka í admin
+            {t.dashboard.backToAdmin}
           </button>
         </form>
 
         <p className="mt-2 text-slate-600">
-          Yfirlit yfir fyrirtækin þín og stöðu þeirra.
+          {t.dashboard.clientSubtitle}
         </p>
 
         <div className="mt-6 rounded-lg border bg-white p-6">
           <h2 className="text-xl font-semibold">
-            Velkomin/n, {activeUser?.name ?? ""}
+            {t.dashboard.welcome}, {activeUser?.name ?? ""}
           </h2>
 
           <div className="mt-4 space-y-3">
@@ -112,11 +120,11 @@ export default async function StjornbordPage({
                   </p>
 
                   <p className="mt-1 text-sm text-slate-600">
-                    Fylgiskjöl: {access.company._count.receipts}
+                    {t.common.receipts}: {access.company._count.receipts}
                   </p>
 
                   <p className="mt-1 text-sm text-slate-600">
-                    Óyfirfarin:{" "}
+                    {t.dashboard.unreviewed}:{" "}
                     {
                       access.company.receipts.filter(
                         (receipt) => receipt.status === "NEW"
@@ -125,7 +133,7 @@ export default async function StjornbordPage({
                   </p>
 
                   <p className="mt-1 text-sm text-slate-600">
-                    Yfirfarin:{" "}
+                    {t.dashboard.reviewed}:{" "}
                     {
                       access.company.receipts.filter(
                         (receipt) => receipt.status === "REVIEWED"
@@ -134,7 +142,7 @@ export default async function StjornbordPage({
                   </p>
 
                   <p className="mt-1 text-sm text-slate-600">
-                    Þarf skoðun:{" "}
+                    {t.dashboard.needsAttention}:{" "}
                     {
                       access.company.receipts.filter(
                         (receipt) =>
@@ -146,7 +154,7 @@ export default async function StjornbordPage({
               ))
             ) : (
               <p className="text-slate-600">
-                Engin fyrirtæki tengd þessum notanda.
+                {t.dashboard.noLinkedCompanies}
               </p>
             )}
           </div>
@@ -220,21 +228,21 @@ export default async function StjornbordPage({
     <main className="p-8">
       {params.error === "inactive-user" && (
         <div className="mb-6 rounded-lg border border-red-300 bg-red-50 p-4 text-red-800">
-          <p className="font-bold">Aðgangi hafnað</p>
-          <p>Þessi notandi er óvirkur og má ekki skrá sig inn.</p>
+          <p className="font-bold">{t.dashboard.accessDenied}</p>
+          <p>{t.dashboard.inactiveUserMessage}</p>
         </div>
       )}
 
       <div className="mb-6 flex flex-wrap items-start justify-between gap-4">
         <div>
-          <h1 className="text-3xl font-bold">Stjórnstöð</h1>
+          <h1 className="text-3xl font-bold">{t.dashboard.title}</h1>
 
           <p className="mt-1 text-slate-600">
-            Yfirlit yfir fyrirtæki, notendur og aðgang.
+            {t.dashboard.subtitle}
           </p>
 
           <p className="mt-2 text-sm font-semibold text-blue-700">
-            Prófunarnotandi: {activeUser?.name ?? "Enginn"}
+            {t.dashboard.testUser}: {activeUser?.name ?? t.common.none}
           </p>
         </div>
 
@@ -243,28 +251,28 @@ export default async function StjornbordPage({
             href="/stjornbord/abendingar"
             className="rounded-lg bg-violet-600 px-4 py-2 font-medium text-white hover:bg-violet-700"
           >
-            Ábendingar
+            {t.dashboard.suggestions}
           </Link>
 
           <Link
             href="/stjornbord/kostnadur"
             className="rounded-lg bg-emerald-600 px-4 py-2 font-medium text-white hover:bg-emerald-700"
           >
-            Kostnaður
+            {t.dashboard.cost}
           </Link>
 
           <Link
             href="/fyrirtaeki/lokud"
             className="rounded-lg border bg-white px-4 py-2 font-medium hover:bg-slate-50"
           >
-            Lokuð fyrirtæki ({closedCount})
+            {t.dashboard.closedCompanies} ({closedCount})
           </Link>
 
           <Link
             href="/stjornbord/nyr"
             className="rounded-lg bg-blue-600 px-4 py-2 font-medium text-white hover:bg-blue-700"
           >
-            + Nýr notandi
+            {t.dashboard.newUser}
           </Link>
         </div>
       </div>
@@ -272,11 +280,10 @@ export default async function StjornbordPage({
       <section className="mb-8 rounded-xl border bg-white p-6">
         <div className="flex flex-wrap items-end justify-between gap-4">
           <div>
-            <h2 className="text-xl font-bold">Fyrirtæki</h2>
+            <h2 className="text-xl font-bold">{t.dashboard.companiesTitle}</h2>
 
             <p className="mt-1 text-sm text-slate-600">
-              Leitaðu og opnaðu fyrirtæki til að stjórna einingum,
-              notendum og heimildum.
+              {t.dashboard.companiesHelp}
             </p>
           </div>
 
@@ -285,7 +292,7 @@ export default async function StjornbordPage({
               type="text"
               name="companySearch"
               defaultValue={companySearch}
-              placeholder="Leita eftir nafni eða kennitölu"
+              placeholder={t.dashboard.companySearchPlaceholder}
               className="w-full rounded-lg border px-3 py-2"
             />
 
@@ -293,7 +300,7 @@ export default async function StjornbordPage({
               type="submit"
               className="rounded-lg bg-slate-700 px-4 py-2 font-medium text-white"
             >
-              Leita
+              {t.common.search}
             </button>
 
             {companySearch && (
@@ -301,7 +308,7 @@ export default async function StjornbordPage({
                 href="/stjornbord"
                 className="rounded-lg border bg-white px-4 py-2 font-medium"
               >
-                Hreinsa
+                {t.common.clear}
               </Link>
             )}
           </form>
@@ -310,7 +317,7 @@ export default async function StjornbordPage({
         <div className="mt-5 divide-y rounded-lg border">
           {companies.length === 0 ? (
             <p className="p-5 text-slate-500">
-              Engin fyrirtæki fundust.
+              {t.dashboard.noCompanies}
             </p>
           ) : (
             companies.map((company) => (
@@ -323,26 +330,26 @@ export default async function StjornbordPage({
                   <p className="font-semibold">{company.name}</p>
 
                   <p className="mt-1 text-sm text-slate-500">
-                    Kt. {company.kennitala}
+                    {t.dashboard.idNumberShort} {company.kennitala}
                     {company.vatNumber
-                      ? ` · VSK-nr. ${company.vatNumber}`
+                      ? ` · ${t.dashboard.vatNumberShort} ${company.vatNumber}`
                       : ""}
                   </p>
                 </div>
 
                 <div className="flex gap-6 text-sm text-slate-600">
                   <span>
-                    Fylgiskjöl:{" "}
+                    {t.common.receipts}:{" "}
                     <strong>{company._count.receipts}</strong>
                   </span>
 
                   <span>
-                    Notendur:{" "}
+                    {t.common.users}:{" "}
                     <strong>{company._count.users}</strong>
                   </span>
 
                   <span className="font-medium text-blue-700">
-                    Opna →
+                    {t.common.open} →
                   </span>
                 </div>
               </Link>
@@ -354,10 +361,10 @@ export default async function StjornbordPage({
       <section className="rounded-xl border bg-white p-6">
         <div className="mb-4 flex flex-wrap items-center justify-between gap-3">
           <div>
-            <h2 className="text-xl font-bold">Notendur</h2>
+            <h2 className="text-xl font-bold">{t.dashboard.usersTitle}</h2>
 
             <p className="mt-1 text-sm text-slate-600">
-              Virkja, gera óvirka eða prófa aðgang notanda.
+              {t.dashboard.usersHelp}
             </p>
           </div>
 
@@ -365,14 +372,14 @@ export default async function StjornbordPage({
             href="/stjornbord/nyr"
             className="rounded-lg bg-blue-600 px-4 py-2 font-medium text-white"
           >
-            + Nýr notandi
+            {t.dashboard.newUser}
           </Link>
         </div>
 
         <div className="divide-y rounded-lg border">
           {users.length === 0 ? (
             <p className="p-5 text-slate-500">
-              Engir notendur skráðir.
+              {t.dashboard.noUsers}
             </p>
           ) : (
             users.map((user) => (
@@ -388,7 +395,7 @@ export default async function StjornbordPage({
                   </p>
 
                   <p className="mt-1 text-xs text-slate-500">
-                    {user.role}
+                    {adminRoleLabel(user.role, language)}
                   </p>
                 </div>
 
@@ -400,7 +407,7 @@ export default async function StjornbordPage({
                         : "text-red-700"
                     }`}
                   >
-                    {user.isActive ? "Virkur" : "Óvirkur"}
+                    {user.isActive ? t.common.active : t.common.inactive}
                   </span>
 
                   <form
@@ -422,8 +429,8 @@ export default async function StjornbordPage({
                       }`}
                     >
                       {user.isActive
-                        ? "Gera óvirkan"
-                        : "Virkja aftur"}
+                        ? t.dashboard.deactivate
+                        : t.dashboard.reactivate}
                     </button>
                   </form>
 
@@ -444,8 +451,8 @@ export default async function StjornbordPage({
                       }`}
                     >
                       {user.isActive
-                        ? "Prófa sem þessi notandi"
-                        : "Notandi óvirkur"}
+                        ? t.dashboard.testAsUser
+                        : t.dashboard.userInactive}
                     </button>
                   </form>
                 </div>

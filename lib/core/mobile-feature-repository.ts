@@ -10,18 +10,22 @@ import {
 export async function getMobileFeatureSettings(
   companyId: number,
 ): Promise<MobileFeatureSettings> {
-  const rows = await prisma.companyModule.findMany({
+  const rows = await prisma.companyFeatureSetting.findMany({
     where: {
       companyId,
-      moduleId: { in: MOBILE_FEATURE_LIST.map((feature) => feature.storageId) },
+      settingKey: {
+        in: MOBILE_FEATURE_LIST.map((feature) => feature.settingKey),
+      },
     },
-    select: { moduleId: true, enabled: true },
+    select: { settingKey: true, enabled: true },
   });
 
   const settings: MobileFeatureSettings = {};
 
   for (const feature of MOBILE_FEATURE_LIST) {
-    const row = rows.find((candidate) => candidate.moduleId === feature.storageId);
+    const row = rows.find(
+      (candidate) => candidate.settingKey === feature.settingKey,
+    );
     if (row) settings[feature.key as MobileFeatureKey] = row.enabled;
   }
 
@@ -71,15 +75,15 @@ export async function setMobileFeatureVisible(
   const feature = MOBILE_FEATURE_LIST.find((item) => item.key === featureKey);
   if (!feature) throw new Error("Ógild Mobile-aðgerð.");
 
-  const result = await prisma.companyModule.upsert({
+  const result = await prisma.companyFeatureSetting.upsert({
     where: {
-      companyId_moduleId: {
+      companyId_settingKey: {
         companyId,
-        moduleId: feature.storageId,
+        settingKey: feature.settingKey,
       },
     },
     update: { enabled },
-    create: { companyId, moduleId: feature.storageId, enabled },
+    create: { companyId, settingKey: feature.settingKey, enabled },
   });
 
   revalidatePath("/mobile");

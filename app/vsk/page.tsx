@@ -8,6 +8,8 @@ import { redirect } from "next/navigation";
 import { prisma } from "@/lib/prisma";
 import PageHeader from "@/components/ui/PageHeader";
 import { getEffectiveUser } from "@/lib/core/access-control";
+import { getCurrentInterfaceLanguage } from "@/lib/i18n/current-language";
+import { vatMonthNames, vatText } from "@/lib/i18n/vat";
 
 const formatKr = (amount: number) =>
   formatNumber(amount, {
@@ -27,151 +29,47 @@ type PeriodOption = {
 };
 
 function getSettlementLabel(
-  settlementType: string | null
+  settlementType: string | null,
+  t: ReturnType<typeof vatText>,
 ) {
   switch (settlementType) {
     case "BIMONTHLY":
-      return "Tveggja mánaða skil";
-
+      return t.bimonthly;
     case "MONTHLY":
-      return "Mánaðarleg skil";
-
+      return t.monthly;
     case "ANNUAL":
-      return "Árleg skil";
-
+      return t.annual;
     default:
-      return "Ekki staðfest";
+      return t.notConfirmed;
   }
 }
 
 function getPeriodOptions(
-  settlementType: string | null
+  settlementType: string | null,
+  t: ReturnType<typeof vatText>,
+  monthNames: readonly string[],
 ): PeriodOption[] {
   if (settlementType === "MONTHLY") {
-    return [
-      {
-        value: 1,
-        label: "Janúar",
-        startMonth: 0,
-        monthCount: 1,
-      },
-      {
-        value: 2,
-        label: "Febrúar",
-        startMonth: 1,
-        monthCount: 1,
-      },
-      {
-        value: 3,
-        label: "Mars",
-        startMonth: 2,
-        monthCount: 1,
-      },
-      {
-        value: 4,
-        label: "Apríl",
-        startMonth: 3,
-        monthCount: 1,
-      },
-      {
-        value: 5,
-        label: "Maí",
-        startMonth: 4,
-        monthCount: 1,
-      },
-      {
-        value: 6,
-        label: "Júní",
-        startMonth: 5,
-        monthCount: 1,
-      },
-      {
-        value: 7,
-        label: "Júlí",
-        startMonth: 6,
-        monthCount: 1,
-      },
-      {
-        value: 8,
-        label: "Ágúst",
-        startMonth: 7,
-        monthCount: 1,
-      },
-      {
-        value: 9,
-        label: "September",
-        startMonth: 8,
-        monthCount: 1,
-      },
-      {
-        value: 10,
-        label: "Október",
-        startMonth: 9,
-        monthCount: 1,
-      },
-      {
-        value: 11,
-        label: "Nóvember",
-        startMonth: 10,
-        monthCount: 1,
-      },
-      {
-        value: 12,
-        label: "Desember",
-        startMonth: 11,
-        monthCount: 1,
-      },
-    ];
+    return monthNames.map((label, index) => ({
+      value: index + 1,
+      label,
+      startMonth: index,
+      monthCount: 1,
+    }));
   }
 
   if (settlementType === "ANNUAL") {
-    return [
-      {
-        value: 1,
-        label: "Allt árið",
-        startMonth: 0,
-        monthCount: 12,
-      },
-    ];
+    return [{ value: 1, label: t.wholeYear, startMonth: 0, monthCount: 12 }];
   }
 
+  const short = monthNames.map((name) => name.slice(0, 3));
   return [
-    {
-      value: 1,
-      label: "Jan–feb",
-      startMonth: 0,
-      monthCount: 2,
-    },
-    {
-      value: 2,
-      label: "Mars–apríl",
-      startMonth: 2,
-      monthCount: 2,
-    },
-    {
-      value: 3,
-      label: "Maí–júní",
-      startMonth: 4,
-      monthCount: 2,
-    },
-    {
-      value: 4,
-      label: "Júlí–ágúst",
-      startMonth: 6,
-      monthCount: 2,
-    },
-    {
-      value: 5,
-      label: "Sep–okt",
-      startMonth: 8,
-      monthCount: 2,
-    },
-    {
-      value: 6,
-      label: "Nóv–des",
-      startMonth: 10,
-      monthCount: 2,
-    },
+    { value: 1, label: `${short[0]}–${short[1]}`, startMonth: 0, monthCount: 2 },
+    { value: 2, label: `${short[2]}–${short[3]}`, startMonth: 2, monthCount: 2 },
+    { value: 3, label: `${short[4]}–${short[5]}`, startMonth: 4, monthCount: 2 },
+    { value: 4, label: `${short[6]}–${short[7]}`, startMonth: 6, monthCount: 2 },
+    { value: 5, label: `${short[8]}–${short[9]}`, startMonth: 8, monthCount: 2 },
+    { value: 6, label: `${short[10]}–${short[11]}`, startMonth: 10, monthCount: 2 },
   ];
 }
 
@@ -190,8 +88,8 @@ function getDefaultPeriod(
   return Math.floor(month / 2) + 1;
 }
 
-function formatOptionalDate(date: Date | null) {
-  return date ? formatDate(date) : "Ekki skráð";
+function formatOptionalDate(date: Date | null, t: ReturnType<typeof vatText>) {
+  return date ? formatDate(date) : t.notRegisteredValue;
 }
 
 export default async function VskPage({
@@ -203,6 +101,9 @@ export default async function VskPage({
   }>;
 }) {
   const cookieStore = await cookies();
+  const language = await getCurrentInterfaceLanguage();
+  const t = vatText(language);
+  const monthNames = vatMonthNames(language);
 
   const activeUser = await getEffectiveUser();
 
@@ -270,7 +171,9 @@ export default async function VskPage({
   const defaultYear = now.getUTCFullYear();
 
   const periodOptions = getPeriodOptions(
-    company.vatSettlementType
+    company.vatSettlementType,
+    t,
+    monthNames,
   );
 
   const defaultPeriod = getDefaultPeriod(
@@ -634,8 +537,8 @@ export default async function VskPage({
   return (
     <main className="p-8">
       <PageHeader
-        title="VSK og skil"
-        description="Yfirlit byggt beint á bókuðum færslum og VSK-stofngögnum fyrirtækisins."
+        title={t.title}
+        description={t.description}
       />
 
       {/* VSK-STAÐA FYRIRTÆKIS */}
@@ -644,7 +547,7 @@ export default async function VskPage({
           <div className="flex flex-wrap items-start justify-between gap-4">
             <div>
               <p className="text-sm font-semibold uppercase tracking-wide text-slate-500">
-                Virkt fyrirtæki
+                {t.activeCompany}
               </p>
 
               <h2 className="mt-1 text-2xl font-bold">
@@ -652,7 +555,7 @@ export default async function VskPage({
               </h2>
 
               <p className="mt-1 text-slate-600">
-                Kt. {company.kennitala}
+                {t.idNumberShort} {company.kennitala}
               </p>
             </div>
 
@@ -669,53 +572,55 @@ export default async function VskPage({
             >
               {isVatRegistered
                 ? hasVatSetupWarning
-                  ? "⚠ VSK-skráð – stofngögn ófullnægjandi"
-                  : "✓ VSK-skráð"
+                  ? t.vatRegisteredIncomplete
+                  : t.vatRegistered
                 : isNotVatRegistered
-                  ? "Ekki VSK-skráð"
-                  : "⚠ VSK-staða ekki staðfest"}
+                  ? t.notVatRegistered
+                  : t.vatUnknown}
             </div>
           </div>
 
           <div className="mt-5 grid gap-3 md:grid-cols-2 lg:grid-cols-4">
             <div className="rounded-lg border bg-slate-50 p-4">
               <p className="text-sm font-semibold text-slate-500">
-                VSK-númer
+                {t.vatNumber}
               </p>
 
               <p className="mt-1 font-semibold">
                 {company.vatNumber ||
-                  "Ekki skráð"}
+                  t.notRegisteredValue}
               </p>
             </div>
 
             <div className="rounded-lg border bg-slate-50 p-4">
               <p className="text-sm font-semibold text-slate-500">
-                Skráð frá
+                {t.registeredFrom}
               </p>
 
               <p className="mt-1 font-semibold">
                 {formatOptionalDate(
-                  company.vatRegistrationDate
+                  company.vatRegistrationDate,
+                  t,
                 )}
               </p>
             </div>
 
             <div className="rounded-lg border bg-slate-50 p-4">
               <p className="text-sm font-semibold text-slate-500">
-                Uppgjörstegund
+                {t.settlementType}
               </p>
 
               <p className="mt-1 font-semibold">
                 {getSettlementLabel(
-                  company.vatSettlementType
+                  company.vatSettlementType,
+                  t,
                 )}
               </p>
             </div>
 
             <div className="rounded-lg border bg-slate-50 p-4">
               <p className="text-sm font-semibold text-slate-500">
-                Staðfesting
+                {t.confirmation}
               </p>
 
               <p className="mt-1 font-semibold">
@@ -723,7 +628,7 @@ export default async function VskPage({
                   ? formatDate(
                       company.vatConfirmedAt
                     )
-                  : "Ekki staðfest"}
+                  : t.notConfirmed}
               </p>
 
               {company.vatConfirmedBy && (
@@ -736,13 +641,13 @@ export default async function VskPage({
 
           {company.vatDataSource && (
             <p className="mt-4 text-sm text-slate-500">
-              Uppruni VSK-upplýsinga:{" "}
+              {t.source}:{" "}
               <span className="font-medium text-slate-700">
                 {company.vatDataSource}
               </span>
 
               {company.vatDataUpdatedAt
-                ? ` · Uppfært ${formatDate(
+                ? ` · ${t.updated} ${formatDate(
                     company.vatDataUpdatedAt
                   )}`
                 : ""}
@@ -754,34 +659,29 @@ export default async function VskPage({
         {hasVatSetupWarning && (
           <div className="border-b bg-amber-50 p-6">
             <p className="font-bold text-amber-900">
-              Athuga þarf VSK-stofngögn
+              {t.checkSetup}
             </p>
 
             <div className="mt-2 space-y-1 text-sm text-amber-900">
               {!vatStatusConfirmed && (
                 <p>
-                  • Ekki hefur verið staðfest hvort
-                  fyrirtækið sé VSK-skráð.
+                  {t.warningStatus}
                 </p>
               )}
 
               {missingVatNumber && (
-                <p>
-                  • Fyrirtækið er merkt VSK-skráð en
-                  VSK-númer vantar.
-                </p>
+                <p>{t.warningNumber}</p>
               )}
 
               {missingRegistrationDate && (
                 <p>
-                  • Skráningardag VSK vantar.
+                  {t.warningDate}
                 </p>
               )}
 
               {missingSettlementType && (
                 <p>
-                  • Uppgjörstegund VSK hefur ekki
-                  verið staðfest.
+                  {t.warningSettlement}
                 </p>
               )}
             </div>
@@ -793,19 +693,15 @@ export default async function VskPage({
       {isNotVatRegistered && (
         <section className="mt-6 max-w-6xl rounded-xl border bg-white p-6 shadow-sm">
           <h2 className="text-xl font-bold">
-            VSK-uppgjör á ekki við
+            {t.vatNotApplicable}
           </h2>
 
           <p className="mt-2 text-slate-600">
-            Samkvæmt stofngögnum GLÖGGT er
-            fyrirtækið ekki VSK-skráð.
+            {t.vatNotApplicableText}
           </p>
 
           <p className="mt-2 text-sm text-slate-500">
-            Bókaðar færslur eru ekki fjarlægðar eða
-            breyttar. Ef VSK-staða fyrirtækisins
-            breytist síðar verða stofngögnin uppfærð
-            og VSK-uppgjör virkjast samkvæmt þeim.
+            {t.vatNotApplicableHelp}
           </p>
         </section>
       )}
@@ -814,20 +710,15 @@ export default async function VskPage({
       {!vatStatusConfirmed && (
         <section className="mt-6 max-w-6xl rounded-xl border border-amber-200 bg-amber-50 p-6">
           <h2 className="text-xl font-bold text-amber-900">
-            VSK-staða þarf staðfestingu
+            {t.vatNeedsConfirmation}
           </h2>
 
           <p className="mt-2 text-amber-900">
-            GLÖGGT mun ekki gera ráð fyrir að
-            fyrirtækið sé VSK-skráð eingöngu vegna
-            þess að VSK-númer eða VSK-færslur kunna
-            að vera til staðar.
+            {t.vatNeedsConfirmationText}
           </p>
 
           <p className="mt-2 text-sm text-amber-800">
-            Staðfestu VSK-stöðu í
-            stofnupplýsingum fyrirtækisins áður en
-            VSK-tímabil er stofnað.
+            {t.vatNeedsConfirmationHelp}
           </p>
         </section>
       )}
@@ -838,7 +729,7 @@ export default async function VskPage({
           <section className="mt-6 max-w-6xl rounded-xl border bg-white p-6 shadow-sm">
             <div className="flex flex-wrap items-center gap-3">
               <span className="font-semibold">
-                Ár:
+                {t.year}:
               </span>
 
               <a
@@ -866,7 +757,7 @@ export default async function VskPage({
 
             <div className="mt-4">
               <p className="font-semibold">
-                VSK-tímabil:
+                {t.vatPeriod}:
               </p>
 
               <div className="mt-2 flex flex-wrap gap-2">
@@ -891,13 +782,13 @@ export default async function VskPage({
               <div className="flex flex-wrap items-start justify-between gap-4">
                 <div>
                   <p className="text-sm font-semibold text-slate-500">
-                    Staða VSK-tímabils
+                    {t.periodStatus}
                   </p>
 
                   <p className="mt-1 text-lg font-bold">
                     {vatPeriod
                       ? vatPeriod.status
-                      : "Ekki stofnað"}
+                      : t.notCreated}
                   </p>
 
                   <p className="mt-1 text-sm text-slate-500">
@@ -909,7 +800,8 @@ export default async function VskPage({
                 <div className="text-right text-sm text-slate-500">
                   <p>
                     {getSettlementLabel(
-                      company.vatSettlementType
+                      company.vatSettlementType,
+                      t,
                     )}
                   </p>
 
@@ -926,8 +818,8 @@ export default async function VskPage({
 
               <p className="mt-2 text-sm text-slate-500">
                 {vatPeriod
-                  ? `${vatPeriod.submissions.length} skráðar sendingar / útgáfur`
-                  : "Tímabilið hefur ekki enn verið stofnað í VSK-uppgjörskerfinu."}
+                  ? `${vatPeriod.submissions.length} ${t.submissions}`
+                  : t.periodNotCreated}
               </p>
             </div>
 
@@ -949,17 +841,14 @@ export default async function VskPage({
                     type="submit"
                     className="rounded-lg bg-blue-600 px-4 py-2 font-semibold text-white"
                   >
-                    Stofna VSK-tímabil
+                    {t.createPeriod}
                   </button>
                 </form>
               )}
 
             {!settlementTypeConfirmed && (
               <div className="mt-3 rounded-lg border border-amber-200 bg-amber-50 p-4 text-sm text-amber-900">
-                Ekki er hægt að stofna
-                VSK-tímabil fyrr en uppgjörstegund
-                hefur verið staðfest í
-                stofnupplýsingum fyrirtækisins.
+                {t.createBlocked}
               </div>
             )}
           </section>
@@ -970,7 +859,7 @@ export default async function VskPage({
               <div className="flex flex-wrap items-start justify-between gap-4">
                 <div>
                   <p className="text-sm font-semibold uppercase tracking-wide text-slate-500">
-                    VSK-útreikningur
+                    {t.calculation}
                   </p>
 
                   <h2 className="mt-1 text-2xl font-bold">
@@ -979,14 +868,14 @@ export default async function VskPage({
                   </h2>
 
                   <p className="mt-1 text-slate-600">
-                    Byggt á samþykktum bókuðum
-                    færslum tímabilsins.
+                    {t.calculationHelp}
                   </p>
                 </div>
 
                 <div className="rounded-lg bg-slate-100 px-4 py-3 text-sm font-semibold text-slate-700">
                   {getSettlementLabel(
-                    company.vatSettlementType
+                    company.vatSettlementType,
+                    t,
                   )}
                 </div>
               </div>
@@ -996,7 +885,7 @@ export default async function VskPage({
               <div className="grid gap-3 md:grid-cols-2 lg:grid-cols-3">
                 <div className="rounded-lg border p-4">
                   <p className="text-sm font-semibold text-slate-500">
-                    A – Skattskyld velta 24%
+                    {t.taxable24}
                   </p>
 
                   <p className="mt-1 text-2xl font-bold">
@@ -1006,7 +895,7 @@ export default async function VskPage({
 
                 <div className="rounded-lg border p-4">
                   <p className="text-sm font-semibold text-slate-500">
-                    B – Skattskyld velta 11%
+                    {t.taxable11}
                   </p>
 
                   <p className="mt-1 text-2xl font-bold">
@@ -1016,7 +905,7 @@ export default async function VskPage({
 
                 <div className="rounded-lg border p-4">
                   <p className="text-sm font-semibold text-slate-500">
-                    C – Undanþegin velta
+                    {t.exempt}
                   </p>
 
                   <p className="mt-1 text-2xl font-bold">
@@ -1029,7 +918,7 @@ export default async function VskPage({
             <div className="grid gap-0 border-y md:grid-cols-3">
               <div className="p-6 md:border-r">
                 <p className="text-slate-500">
-                  D – Útskattur
+                  {t.outputVat}
                 </p>
 
                 <p className="mt-2 text-3xl font-bold">
@@ -1039,7 +928,7 @@ export default async function VskPage({
 
               <div className="p-6 md:border-r">
                 <p className="text-slate-500">
-                  E – Innskattur
+                  {t.inputVat}
                 </p>
 
                 <p className="mt-2 text-3xl font-bold">
@@ -1049,7 +938,7 @@ export default async function VskPage({
 
               <div className="p-6">
                 <p className="text-slate-500">
-                  F – Álagning
+                  {t.assessment}
                 </p>
 
                 <p className="mt-2 text-3xl font-bold">
@@ -1059,7 +948,7 @@ export default async function VskPage({
 
               <div className="p-6 md:border-r md:border-t">
                 <p className="text-slate-500">
-                  G – Álag
+                  {t.surcharge}
                 </p>
 
                 <p className="mt-2 text-3xl font-bold">
@@ -1069,7 +958,7 @@ export default async function VskPage({
 
               <div className="p-6 md:col-span-2 md:border-t">
                 <p className="text-slate-500">
-                  H – Til greiðslu / inneign
+                  {t.payableCredit}
                 </p>
 
                 <p
@@ -1086,17 +975,17 @@ export default async function VskPage({
 
                 <p className="mt-1 text-sm text-slate-500">
                   {balance > 0
-                    ? "Til greiðslu"
+                    ? t.payable
                     : balance < 0
-                      ? "Inneign"
-                      : "Stendur á núlli"}
+                      ? t.credit
+                      : t.zeroBalance}
                 </p>
               </div>
             </div>
 
             <details open className="p-6">
               <summary className="cursor-pointer text-xl font-bold">
-                Sundurliðun bókaðra VSK-færslna (
+                {t.breakdown} (
                 {rows.length})
               </summary>
 
@@ -1105,23 +994,23 @@ export default async function VskPage({
                   <thead>
                     <tr className="border-b bg-slate-50">
                       <th className="p-3">
-                        Dags.
+                        {t.dateShort}
                       </th>
 
                       <th className="p-3">
-                        Fylgiskjal
+                        {t.voucher}
                       </th>
 
                       <th className="p-3">
-                        Lýsing
+                        {t.descriptionCol}
                       </th>
 
                       <th className="p-3 text-right">
-                        Útskattur
+                        {t.outputVat}
                       </th>
 
                       <th className="p-3 text-right">
-                        Innskattur
+                        {t.inputVat}
                       </th>
                     </tr>
                   </thead>
@@ -1170,9 +1059,7 @@ export default async function VskPage({
                           colSpan={5}
                           className="p-6 text-center text-slate-500"
                         >
-                          Engar bókaðar
-                          VSK-færslur fundust á
-                          þessu tímabili.
+                          {t.noRows}
                         </td>
                       </tr>
                     )}

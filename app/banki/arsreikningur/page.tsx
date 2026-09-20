@@ -109,7 +109,7 @@ export default async function AnnualStatementPage({ searchParams }: Props) {
             <h2 className="mt-1 text-lg font-semibold text-amber-950">{t.draftNotReady}</h2>
             <p className="mt-2 max-w-4xl text-sm leading-6 text-amber-950">{t.draftNotReadyText}</p>
           </div>
-          <span className="rounded-full border border-amber-300 bg-white px-3 py-1 text-xs font-semibold text-amber-900">VINNUSKJAL</span>
+          <span className="rounded-full border border-amber-300 bg-white px-3 py-1 text-xs font-semibold text-amber-900">{t.workpaperBadge}</span>
         </div>
       </section>
 

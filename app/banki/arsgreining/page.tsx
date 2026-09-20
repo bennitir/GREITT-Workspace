@@ -8,6 +8,7 @@ import { formatNumber } from "@/app/banki/_lib/formatting/numbers";
 import { bankAnalysisLanguage } from "@/app/banki/_lib/i18n/analysis-text";
 import { annualAnalysisText } from "@/app/banki/_lib/i18n/annual-analysis-text";
 import { annualStatementText } from "@/app/banki/_lib/i18n/annual-statement-text";
+import { annualAnalysisExtraText } from "@/app/banki/_lib/i18n/annual-analysis-extra-text";
 import { analyzeExpenseEvidence, analyzeIncomeEvidence, buildAccountBankAnalysis, buildAnnualBankAnalysis, buildGrantFlowSources, findPriorRelatedBankTransactions } from "@/app/banki/_lib/analysis/annual";
 import { analyzeBankTransaction, parseRawBankData } from "@/app/banki/_lib/analysis/transactions";
 
@@ -99,6 +100,7 @@ export default async function AnnualBankAnalysisPage({ searchParams }: Props) {
   const query = await searchParams;
   const { companyId, language } = await getContext();
   const t = annualAnalysisText(language);
+  const x = annualAnalysisExtraText(language);
   const statementText = annualStatementText(language);
 
   const accounts = await prisma.bankAccount.findMany({
@@ -797,15 +799,15 @@ export default async function AnnualBankAnalysisPage({ searchParams }: Props) {
         )) : <span>{year}</span>}
       </div>
 
-      <nav className="sticky top-0 z-20 mt-5 flex flex-wrap gap-2 border-y bg-white/95 py-3 backdrop-blur" aria-label="Ársgreining – hlutar">
+      <nav className="sticky top-0 z-20 mt-5 flex flex-wrap gap-2 border-y bg-white/95 py-3 backdrop-blur" aria-label={x.navAria}>
         {[
-          ["overview", "Yfirlit"],
-          ["summary", "Samantekt"],
-          ["income", "Tekjur"],
-          ["expenses", "Gjöld"],
-          ["flows", "Peningaflæði"],
-          ["patterns", "Mynstur"],
-          ["accounts", "Reikningar"],
+          ["overview", x.overview],
+          ["summary", x.summary],
+          ["income", x.income],
+          ["expenses", x.expenses],
+          ["flows", x.flows],
+          ["patterns", x.patterns],
+          ["accounts", x.accounts],
         ].map(([key, label]) => (
           <Link
             key={key}
@@ -825,48 +827,48 @@ export default async function AnnualBankAnalysisPage({ searchParams }: Props) {
             <div className="rounded-2xl border-2 border-slate-300 bg-slate-50 p-6">
               <div className="flex flex-wrap items-start justify-between gap-4">
                 <div>
-                  <p className="text-sm font-semibold uppercase tracking-wide text-slate-500">Ársgreining {year}</p>
-                  <h2 className="mt-1 text-2xl font-bold">Brú að ársreikningi</h2>
+                  <p className="text-sm font-semibold uppercase tracking-wide text-slate-500">{x.analysis} {year}</p>
+                  <h2 className="mt-1 text-2xl font-bold">{x.bridgeTitle}</h2>
                   <p className="mt-2 max-w-4xl text-sm text-slate-600">
-                    Samantektin byggir á því sem bankagögnin styðja nú þegar. Hún er ekki ársreikningur og reynir ekki að laga niðurstöðuna að fyrirliggjandi ársreikningstölum. Óvissa og fjárflæði sem ekki er rekstrarkostnaður eru sýnd sérstaklega.
+                    {x.bridgeHelp}
                   </p>
                 </div>
-                <span className="rounded-full border bg-white px-3 py-1 text-xs font-semibold text-slate-600">Gögn fyrst · AI 0 kr.</span>
+                <span className="rounded-full border bg-white px-3 py-1 text-xs font-semibold text-slate-600">{x.dataFirst}</span>
               </div>
 
               <div className="mt-6 grid gap-3 md:grid-cols-2 xl:grid-cols-4">
-                <Stat label="Innborganir alls" value={`${formatNumber(Math.round(analysis.grossInflows))} kr.`} />
-                <Stat label="Útborganir alls" value={`${formatNumber(Math.round(analysis.grossOutflows))} kr.`} />
-                <Stat label="Líkleg velta / greiðsluuppgjör" value={`${formatNumber(Math.round(analysis.likelyTurnover))} kr.`} />
-                <Stat label="Óflokkað útstreymi" value={`${formatNumber(Math.round(analysis.outflowStillToClassify))} kr.`} href={`/banki/arsgreining?year=${year}&view=expenses&expenseCategory=UNKNOWN&expenseSort=amount-desc#utgjaldalisti`} hint="Skoða óflokkað →" />
+                <Stat label={x.totalInflows} value={`${formatNumber(Math.round(analysis.grossInflows))} kr.`} />
+                <Stat label={x.totalOutflows} value={`${formatNumber(Math.round(analysis.grossOutflows))} kr.`} />
+                <Stat label={x.likelyTurnover} value={`${formatNumber(Math.round(analysis.likelyTurnover))} kr.`} />
+                <Stat label={x.unclassifiedOutflow} value={`${formatNumber(Math.round(analysis.outflowStillToClassify))} kr.`} href={`/banki/arsgreining?year=${year}&view=expenses&expenseCategory=UNKNOWN&expenseSort=amount-desc#utgjaldalisti`} hint={x.viewUnclassified} />
               </div>
             </div>
 
             <div className="grid gap-6 xl:grid-cols-2">
               <div className="rounded-xl border p-6">
-                <h3 className="text-lg font-semibold">Tekjuhlið</h3>
-                <p className="mt-1 text-sm text-gray-500">Bankagreiningin heldur rekstrartekjum, greiðsluuppgjörum og öðrum innstreymum aðskildum þar til gögn staðfesta eðli þeirra.</p>
+                <h3 className="text-lg font-semibold">{x.incomeSide}</h3>
+                <p className="mt-1 text-sm text-gray-500">{x.incomeSideHelp}</p>
                 <div className="mt-4 space-y-3">
-                  <BridgeRow label="Sterkt merkt rekstrartekjuinnstreymi" value={analysis.classificationTotals.OPERATING_REVENUE} />
-                  <BridgeRow label="Greiðslumiðlunaruppgjör" value={analysis.classificationTotals.PAYMENT_SETTLEMENT} />
-                  <BridgeRow label="Styrkir / framlög" value={analysis.classificationTotals.GRANT_CONTRIBUTION} />
-                  <BridgeRow label="Lán / fjármagnshreyfingar" value={analysis.classificationTotals.LOAN_CAPITAL} />
-                  <BridgeRow label="Endurgreiðslur" value={analysis.classificationTotals.REFUND} />
-                  <div className="border-t pt-3"><BridgeRow label="Óflokkað / óvíst innstreymi" value={analysis.classificationTotals.UNKNOWN} strong /></div>
+                  <BridgeRow label={x.strongOperatingRevenue} value={analysis.classificationTotals.OPERATING_REVENUE} />
+                  <BridgeRow label={x.paymentSettlement} value={analysis.classificationTotals.PAYMENT_SETTLEMENT} />
+                  <BridgeRow label={x.grants} value={analysis.classificationTotals.GRANT_CONTRIBUTION} />
+                  <BridgeRow label={x.loans} value={analysis.classificationTotals.LOAN_CAPITAL} />
+                  <BridgeRow label={x.refunds} value={analysis.classificationTotals.REFUND} />
+                  <div className="border-t pt-3"><BridgeRow label={x.unknownInflows} value={analysis.classificationTotals.UNKNOWN} strong /></div>
                 </div>
               </div>
 
               <div className="rounded-xl border p-6">
-                <h3 className="text-lg font-semibold">Gjaldahlið</h3>
-                <p className="mt-1 text-sm text-gray-500">Rekstrarkostnaður er dreginn saman, en laun, tengdar einingar og aðrir sérstakir fjárstraumar standa sér.</p>
+                <h3 className="text-lg font-semibold">{x.expenseSide}</h3>
+                <p className="mt-1 text-sm text-gray-500">{x.expenseSideHelp}</p>
                 <div className="mt-4 space-y-3">
-                  <BridgeRow label="Greindur rekstrarkostnaður" value={analysis.expenseClassificationTotals.OPERATING_EXPENSE} />
-                  <BridgeRow label="Laun" value={analysis.expenseClassificationTotals.WAGES} />
-                  <BridgeRow label="Launatengd gjöld" value={analysis.expenseClassificationTotals.PAYROLL_RELATED} />
-                  <BridgeRow label="Greiðslur til einstaklinga" value={analysis.expenseClassificationTotals.PERSON_PAYMENT} />
-                  <BridgeRow label="Fjárflæði til tengdrar einingar / deildar" value={analysis.expenseClassificationTotals.RELATED_ENTITY_FLOW} />
-                  <BridgeRow label="Bankakostnaður" value={analysis.expenseClassificationTotals.BANK_FEE} />
-                  <div className="border-t pt-3"><BridgeRow label="Óflokkað útstreymi" value={analysis.outflowStillToClassify} strong /></div>
+                  <BridgeRow label={x.identifiedOperatingExpense} value={analysis.expenseClassificationTotals.OPERATING_EXPENSE} />
+                  <BridgeRow label={x.wages} value={analysis.expenseClassificationTotals.WAGES} />
+                  <BridgeRow label={x.payrollRelated} value={analysis.expenseClassificationTotals.PAYROLL_RELATED} />
+                  <BridgeRow label={x.personPayments} value={analysis.expenseClassificationTotals.PERSON_PAYMENT} />
+                  <BridgeRow label={x.relatedEntity} value={analysis.expenseClassificationTotals.RELATED_ENTITY_FLOW} />
+                  <BridgeRow label={x.bankFees} value={analysis.expenseClassificationTotals.BANK_FEE} />
+                  <div className="border-t pt-3"><BridgeRow label={x.unknownOutflows} value={analysis.outflowStillToClassify} strong /></div>
                 </div>
               </div>
             </div>
@@ -874,14 +876,14 @@ export default async function AnnualBankAnalysisPage({ searchParams }: Props) {
             <div className="rounded-xl border p-6">
               <div className="flex flex-wrap items-end justify-between gap-3">
                 <div>
-                  <h3 className="text-lg font-semibold">Rekstrarkostnaður eftir eðli</h3>
-                  <p className="mt-1 text-sm text-gray-500">Þetta er vinnubrú úr bankagögnum yfir í ársreikningsliði. Fylgiskjöl og bókhald geta síðar staðfest eða fært einstaka liði.</p>
+                  <h3 className="text-lg font-semibold">{x.operatingByNature}</h3>
+                  <p className="mt-1 text-sm text-gray-500">{x.operatingByNatureHelp}</p>
                 </div>
-                <Link href={`/banki/arsgreining?year=${year}&view=expenses`} className="rounded-lg border bg-white px-3 py-2 text-sm font-medium hover:bg-slate-50">Opna gjaldagreiningu →</Link>
+                <Link href={`/banki/arsgreining?year=${year}&view=expenses`} className="rounded-lg border bg-white px-3 py-2 text-sm font-medium hover:bg-slate-50">{x.openExpenseAnalysis}</Link>
               </div>
               <div className="mt-4 overflow-x-auto">
                 <table className="min-w-full text-sm">
-                  <thead className="border-b text-left text-gray-500"><tr><th className="p-2">Liður</th><th className="p-2 text-right">Greint úr bankagögnum</th><th className="p-2">Staða</th></tr></thead>
+                  <thead className="border-b text-left text-gray-500"><tr><th className="p-2">{x.item}</th><th className="p-2 text-right">{x.fromBankData}</th><th className="p-2">{x.status}</th></tr></thead>
                   <tbody>
                     {[
                       ["PREMISES", t.premises], ["UTILITIES", t.utilities], ["TELECOM", t.telecom], ["SOFTWARE", t.software],
@@ -893,7 +895,7 @@ export default async function AnnualBankAnalysisPage({ searchParams }: Props) {
                     ].map(([category, label]) => {
                       const amount = analysis.expenseClassificationTotals[category as keyof typeof analysis.expenseClassificationTotals];
                       if (!amount) return null;
-                      return <tr key={String(category)} className="border-b last:border-0"><td className="p-2 font-medium">{label}</td><td className="p-2 text-right font-semibold">{formatNumber(Math.round(amount))} kr.</td><td className="p-2 text-slate-600">Greint úr bankagögnum</td></tr>;
+                      return <tr key={String(category)} className="border-b last:border-0"><td className="p-2 font-medium">{label}</td><td className="p-2 text-right font-semibold">{formatNumber(Math.round(amount))} kr.</td><td className="p-2 text-slate-600">{x.fromBankData}</td></tr>;
                     })}
                   </tbody>
                 </table>
@@ -901,7 +903,7 @@ export default async function AnnualBankAnalysisPage({ searchParams }: Props) {
             </div>
 
             <div className="rounded-xl border border-amber-200 bg-amber-50 p-5 text-sm text-amber-950">
-              <strong>Ekki lokaársreikningur.</strong> Næsta staðfestingarlag er bókhald og fylgiskjöl. Þegar fyrirliggjandi ársreikningur er tengdur við greininguna má bæta við dálkunum „Ársreikningur“, „Frávik“ og rekjanlegri skýringu án þess að nota ársreikningstölurnar til að þvinga flokkun bankagagnanna.
+              {x.notFinalAccounts}
             </div>
           </section>
 
@@ -1139,7 +1141,7 @@ export default async function AnnualBankAnalysisPage({ searchParams }: Props) {
                 label={t.expenseUnknown}
                 value={`${formatNumber(Math.round(analysis.outflowStillToClassify))} kr.`}
                 href={`/banki/arsgreining?year=${year}&view=expenses&expenseCategory=UNKNOWN&expenseSort=amount-desc#utgjaldalisti`}
-                hint="Skoða hvað myndar þessa tölu →"
+                hint={x.viewWhatForms}
               />
             </div>
             <div className="mt-4 rounded-lg border bg-slate-50 p-4">
@@ -1174,11 +1176,11 @@ export default async function AnnualBankAnalysisPage({ searchParams }: Props) {
                     key={String(category)}
                     href={`/banki/arsgreining?year=${year}&view=expenses&expenseCategory=${category}&expenseSort=amount-desc#utgjaldalisti`}
                     className="block rounded-lg bg-white px-3 py-2 text-sm transition hover:bg-blue-50 focus:outline-none focus:ring-2 focus:ring-blue-500"
-                    title={`Skoða færslur í ${String(label)}`}
+                    title={`${x.viewTransactionsIn} ${String(label)}`}
                   >
                     <div className="text-gray-500">{label}</div>
                     <div className="mt-1 font-semibold">{formatNumber(Math.round(Number(amount)))} kr.</div>
-                    <div className="mt-1 text-xs font-medium text-blue-700">Skoða færslur →</div>
+                    <div className="mt-1 text-xs font-medium text-blue-700">{x.viewTransactions}</div>
                   </Link>
                 ))}
               </div>
@@ -1718,18 +1720,18 @@ export default async function AnnualBankAnalysisPage({ searchParams }: Props) {
             <section id="innsyn-rannsokn" className="mt-8 scroll-mt-24 rounded-xl border-2 border-amber-300 bg-amber-50/50 p-6">
               <div className="flex flex-wrap items-start justify-between gap-3">
                 <div>
-                  <p className="text-xs font-semibold uppercase tracking-[0.14em] text-amber-800">Rannsókn úr Innsýn</p>
-                  <h2 className="mt-1 text-xl font-semibold">Nákvæmt færslusafn rannsóknaratriðis</h2>
-                  <p className="mt-2 max-w-3xl text-sm text-gray-600">Aðeins þær bankafærslur sem mynda valið rannsóknaratriði eru sýndar hér. Þetta breytir hvorki flokkun né bókun.</p>
+                  <p className="text-xs font-semibold uppercase tracking-[0.14em] text-amber-800">{x.insightResearch}</p>
+                  <h2 className="mt-1 text-xl font-semibold">{x.exactResearchTitle}</h2>
+                  <p className="mt-2 max-w-3xl text-sm text-gray-600">{x.exactResearchHelp}</p>
                 </div>
                 <div className="text-right text-sm">
-                  <div className="font-semibold">{formatNumber(researchTransactions.length)} færslur</div>
+                  <div className="font-semibold">{formatNumber(researchTransactions.length)} {x.transactionsLabel}</div>
                   <div className="text-gray-600">{formatNumber(Math.round(researchTransactionsTotal))} kr.</div>
                 </div>
               </div>
               <div className="mt-4 overflow-x-auto rounded-lg border bg-white">
                 <table className="min-w-full text-sm">
-                  <thead className="border-b text-left text-gray-500"><tr><th className="p-2">Dagsetning</th><th className="p-2">Reikningur</th><th className="p-2">Texti</th><th className="p-2 text-right">Upphæð</th></tr></thead>
+                  <thead className="border-b text-left text-gray-500"><tr><th className="p-2">{x.date}</th><th className="p-2">{x.account}</th><th className="p-2">{x.textLabel}</th><th className="p-2 text-right">{x.amount}</th></tr></thead>
                   <tbody>
                     {researchTransactions.map((item) => {
                       const href = researchTransactionHref(item.id);
@@ -1750,7 +1752,7 @@ export default async function AnnualBankAnalysisPage({ searchParams }: Props) {
           ) : null}
 
           <section id="innri-millifaerslur" className={`${view === "flows" ? "" : "hidden"} mt-8 scroll-mt-24 rounded-xl ${researchFocus === "internalTransfers" ? "border-2 border-amber-300 bg-amber-50/50" : "border"} p-6`}>
-            {researchFocus === "internalTransfers" ? <p className="mb-2 text-xs font-semibold uppercase tracking-[0.14em] text-amber-800">Rannsókn úr Innsýn · nákvæm pörun</p> : null}
+            {researchFocus === "internalTransfers" ? <p className="mb-2 text-xs font-semibold uppercase tracking-[0.14em] text-amber-800">{x.exactMatch}</p> : null}
             <h2 className="text-xl font-semibold">{t.internalTitle}</h2>
             <p className="mt-2 max-w-4xl text-sm text-gray-600">{t.internalHelp}</p>
             {analysis.internalPairs.length === 0 ? (
@@ -1759,7 +1761,7 @@ export default async function AnnualBankAnalysisPage({ searchParams }: Props) {
               <>
                 {researchFocus === "internalTransfers" ? (
                   <div className="mt-4 flex flex-wrap gap-x-6 gap-y-1 text-sm">
-                    <span><strong>{formatNumber(analysis.internalPairs.length)}</strong> pör</span>
+                    <span><strong>{formatNumber(analysis.internalPairs.length)}</strong> {x.pairs}</span>
                     <span><strong>{formatNumber(Math.round(analysis.likelyInternalInflows))} kr.</strong> samtals</span>
                   </div>
                 ) : null}

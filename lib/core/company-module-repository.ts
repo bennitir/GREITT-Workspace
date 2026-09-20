@@ -1,11 +1,18 @@
 import { revalidatePath } from "next/cache";
+
 import { prisma } from "@/lib/prisma";
-import type { GloggtModuleId } from "@/lib/core/modules";
+import {
+  GLOGGT_MODULE_LIST,
+  type GloggtModuleId,
+} from "@/lib/core/modules";
+
+const GLOGGT_MODULE_IDS = GLOGGT_MODULE_LIST.map((module) => module.id);
 
 export async function getCompanyModuleSettings(companyId: number) {
   const modules = await prisma.companyModule.findMany({
     where: {
       companyId,
+      moduleId: { in: GLOGGT_MODULE_IDS },
     },
     select: {
       moduleId: true,
