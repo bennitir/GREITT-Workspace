@@ -1,68 +1,52 @@
 "use client";
-import {
-  deleteCompany,
-  deactivateCompany,
-} from "@/app/actions/companyActions";
+
+import { deleteCompany, deactivateCompany } from "@/app/actions/companyActions";
 import { useRouter } from "next/navigation";
+import { adminText } from "@/lib/i18n/admin";
 
 type Props = {
   id: number;
   hasBookkeepingData: boolean;
+  language?: string | null;
 };
 
 export default function DeleteCompanyButton({
   id,
   hasBookkeepingData,
+  language = "is",
 }: Props) {
   const router = useRouter();
+  const t = adminText(language).companyButtons;
 
-async function handleDelete() {
-  if (hasBookkeepingData) {
-    const confirmed = window.confirm(
-      "Þetta fyrirtæki á bókhaldsgögn og verður því ekki eytt.\n\nViltu gera fyrirtækið óvirkt í staðinn?"
-    );
+  async function handleDelete() {
+    if (hasBookkeepingData) {
+      const confirmed = window.confirm(t.deactivateConfirm);
+      if (!confirmed) return;
 
-    if (!confirmed) {
+      await deactivateCompany(id);
+      router.push("/fyrirtaeki");
+      router.refresh();
       return;
     }
 
-    await deactivateCompany(id);
+    const confirmed = window.confirm(t.deleteConfirm);
+    if (!confirmed) return;
 
+    const reallyConfirmed = window.confirm(t.deleteConfirmFinal);
+    if (!reallyConfirmed) return;
+
+    await deleteCompany(id);
     router.push("/fyrirtaeki");
     router.refresh();
-    return;
   }
-
-  const confirmed = window.confirm(
-    "Ertu viss um að þú viljir eyða þessu fyrirtæki?"
-  );
-
-  if (!confirmed) {
-    return;
-  }
-
-  const reallyConfirmed = window.confirm(
-    "VARÚÐ: Þetta mun eyða fyrirtækinu og tengdum gögnum þess.\n\nErtu alveg viss um að þú viljir halda áfram?"
-  );
-
-  if (!reallyConfirmed) {
-    return;
-  }
-
-  await deleteCompany(id);
-
-  router.push("/fyrirtaeki");
-  router.refresh();
-}
 
   return (
     <button
+      type="button"
       onClick={handleDelete}
       className="rounded bg-red-600 px-4 py-2 text-white hover:bg-red-700"
     >
-      {hasBookkeepingData
-  ? "Gera fyrirtæki óvirkt"
-  : "Eyða fyrirtæki"}
+      {hasBookkeepingData ? t.deactivate : t.delete}
     </button>
   );
 }

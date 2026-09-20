@@ -5,14 +5,18 @@ import { useRouter } from "next/navigation";
 
 import { setActiveCompanyFromAdmin } from "@/app/actions/companyActions";
 import Button from "@/components/ui/Button";
+import { adminText } from "@/lib/i18n/admin";
 
 export default function AdminOpenCompanyButton({
   companyId,
+  language = "is",
 }: {
   companyId: number;
+  language?: string | null;
 }) {
   const router = useRouter();
   const [isPending, startTransition] = useTransition();
+  const t = adminText(language).companyButtons;
 
   function handleClick() {
     startTransition(async () => {
@@ -22,12 +26,8 @@ export default function AdminOpenCompanyButton({
   }
 
   return (
-    <Button
-      type="button"
-      onClick={handleClick}
-      disabled={isPending}
-    >
-      {isPending ? "Opna..." : "Opna fyrirtæki"}
+    <Button type="button" onClick={handleClick} disabled={isPending}>
+      {isPending ? t.opening : t.open}
     </Button>
   );
 }

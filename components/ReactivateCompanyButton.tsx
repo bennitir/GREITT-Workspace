@@ -2,25 +2,22 @@
 
 import { useRouter } from "next/navigation";
 import { reactivateCompany } from "@/app/actions/companyActions";
+import { adminText } from "@/lib/i18n/admin";
 
 type Props = {
   id: number;
+  language?: string | null;
 };
 
-export default function ReactivateCompanyButton({ id }: Props) {
+export default function ReactivateCompanyButton({ id, language = "is" }: Props) {
   const router = useRouter();
+  const t = adminText(language).companyButtons;
 
   async function handleReactivate() {
-    const confirmed = window.confirm(
-      "Viltu virkja fyrirtækið aftur? Þá verður aftur hægt að vinna með bókhald og fylgiskjöl þess."
-    );
-
-    if (!confirmed) {
-      return;
-    }
+    const confirmed = window.confirm(t.reactivateConfirm);
+    if (!confirmed) return;
 
     await reactivateCompany(id);
-
     router.push(`/fyrirtaeki/${id}`);
     router.refresh();
   }
@@ -31,7 +28,7 @@ export default function ReactivateCompanyButton({ id }: Props) {
       onClick={handleReactivate}
       className="rounded bg-green-600 px-4 py-2 text-white hover:bg-green-700"
     >
-      Virkja fyrirtæki aftur
+      {t.reactivate}
     </button>
   );
 }
