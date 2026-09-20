@@ -1445,6 +1445,7 @@ export async function updateWorkOrderPriority(formData: FormData) {
   revalidatePath(`/verk/${workOrderId}`);
   revalidatePath("/mobile");
   revalidatePath("/mobile/verk");
+  redirect(`/verk/${workOrderId}#forgangur`);
 }
 
 /**

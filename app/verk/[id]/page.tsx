@@ -305,7 +305,7 @@ export default async function Verk10DetailPage({ params }: Props) {
                 {work10StatusText(effectiveWorkStatus, language)}
               </dd>
             </div>
-            <div>
+            <div id="forgangur">
               <dt className="text-slate-500">{t.priority}</dt>
               {companyAccess.canWrite && !workIsCompleted ? (
                 <form action={updateWorkOrderPriority} className="mt-2 space-y-2">
