@@ -7,6 +7,7 @@ import { getEffectiveUser } from "@/lib/core/access-control";
 import { getCompanyModuleSettings } from "@/lib/core/company-module-repository";
 import { getMobileCompaniesForUser } from "@/lib/core/mobile-company";
 import { getEffectiveMobileFeatureSettings } from "@/lib/core/mobile-feature-repository";
+import { mobileSettingsSeenCookieName } from "@/lib/core/mobile-settings-visit";
 import { isMobileFeatureShown } from "@/lib/core/mobile-features";
 import { companyManagementText } from "@/lib/i18n/company-management";
 import { stocktakeMobileText } from "@/lib/i18n/stocktake-mobile";
@@ -62,6 +63,8 @@ export default async function MobilePage({
 
   const cookieStore = await cookies();
   const activeCompanyId = Number(cookieStore.get("activeCompanyId")?.value || 0);
+  const hasSeenMobileSettings =
+    cookieStore.get(mobileSettingsSeenCookieName(user.id))?.value === "1";
   const companies = await getMobileCompaniesForUser(user);
   const activeCompany = companies.find((company) => company.id === activeCompanyId) ?? null;
 
@@ -126,6 +129,16 @@ export default async function MobilePage({
             </div>
 
             <div className="flex items-center gap-2">
+              {hasSeenMobileSettings ? (
+                <Link
+                  href="/mobile/stillingar"
+                  className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl border border-slate-200 bg-white text-lg shadow-sm active:bg-slate-50"
+                  aria-label={t.settings}
+                  title={t.settings}
+                >
+                  <span aria-hidden="true">⚙️</span>
+                </Link>
+              ) : null}
               <Link href="/mobile?velja=1" className="rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm font-semibold text-slate-700 shadow-sm">
                 {t.switchCompany}
               </Link>
@@ -168,10 +181,12 @@ export default async function MobilePage({
           </div>
         )}
 
-        <Link href="/mobile/stillingar" className="mt-4 block rounded-2xl border bg-white p-5 text-left shadow-sm active:bg-slate-50">
-          <div className="text-lg font-bold">⚙️ {t.settings}</div>
-          <div className="mt-1 text-sm text-slate-500">{t.interfaceLanguage} · {t.timeTracking}</div>
-        </Link>
+        {!hasSeenMobileSettings ? (
+          <Link href="/mobile/stillingar" className="mt-4 block rounded-2xl border bg-white p-5 text-left shadow-sm active:bg-slate-50">
+            <div className="text-lg font-bold">⚙️ {t.settings}</div>
+            <div className="mt-1 text-sm text-slate-500">{t.interfaceLanguage} · {t.timeTracking}</div>
+          </Link>
+        ) : null}
 
         {showReceiptCapture ? (
           <Link href="/mobile/myndataka" className="mt-4 block w-full rounded-2xl bg-blue-600 p-5 text-left text-white shadow-sm active:bg-blue-700">

@@ -45,6 +45,7 @@ export default async function WorkResourceQrPage({ params }: Props) {
           label={ops.printQr}
           qrSizeLabel={ops.qrSize}
           qrSizeHelp={ops.qrSizeHelp}
+          qrSizeWarning={ops.qrSizeWarning}
           labelSizeLabel={ops.labelSize}
           labelSizeHelp={ops.labelSizeHelp}
           labelSizeAuto={ops.labelSizeAuto}
@@ -52,7 +53,7 @@ export default async function WorkResourceQrPage({ params }: Props) {
       </div>
 
       <section
-        className="mx-auto flex min-h-[28rem] max-w-sm flex-col items-center justify-center overflow-hidden rounded-3xl border-2 border-slate-950 bg-white p-8 text-center print:min-h-0 print:max-w-none print:rounded-xl print:p-[0.35cm]"
+        className="mx-auto flex min-h-[28rem] min-w-[12rem] max-w-sm flex-col items-center justify-center overflow-hidden rounded-3xl border-2 border-slate-950 bg-white p-8 text-center print:min-h-0 print:min-w-0 print:max-w-none print:rounded-xl print:p-[0.15cm]"
         style={{
           width: "var(--gloggt-work-resource-label-width, min(100%, 22rem))",
           height: "var(--gloggt-work-resource-label-height, auto)",
@@ -61,28 +62,28 @@ export default async function WorkResourceQrPage({ params }: Props) {
         <div
           className="font-black uppercase text-slate-950"
           style={{
-            fontSize: "clamp(8px, calc(var(--gloggt-work-resource-label-width, 10cm) * 0.035), 14px)",
+            fontSize: "clamp(6px, calc(var(--gloggt-work-resource-label-width, 10cm) * 0.035), 14px)",
             letterSpacing: "0.2em",
           }}
         >
           {ops.qrLabelTitle}
         </div>
         <div
-          className="mt-2 font-bold uppercase tracking-wide text-slate-500"
-          style={{ fontSize: "clamp(7px, calc(var(--gloggt-work-resource-label-width, 10cm) * 0.03), 12px)" }}
+          className="mt-2 font-bold uppercase tracking-wide text-slate-500 print:mt-[0.05cm]"
+          style={{ fontSize: "clamp(5px, calc(var(--gloggt-work-resource-label-width, 10cm) * 0.03), 12px)" }}
         >
           {workResourceKindText(resource.kind, language)} · {resource.code}
         </div>
         <h1
-          className="mt-2 font-black text-slate-950"
-          style={{ fontSize: "clamp(12px, calc(var(--gloggt-work-resource-label-width, 10cm) * 0.06), 24px)" }}
+          className="mt-2 font-black text-slate-950 print:mt-[0.05cm]"
+          style={{ fontSize: "clamp(7px, calc(var(--gloggt-work-resource-label-width, 10cm) * 0.06), 24px)" }}
         >
           {resource.name}
         </h1>
         <img
           src={qrUrl}
           alt={ops.qrTitle}
-          className="mt-5 max-h-[70%] max-w-[90%]"
+          className="mt-5 max-h-[70%] max-w-[90%] print:mt-[0.12cm]"
           style={{
             width: "var(--gloggt-work-resource-qr-size, 5cm)",
             height: "var(--gloggt-work-resource-qr-size, 5cm)",

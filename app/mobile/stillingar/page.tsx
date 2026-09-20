@@ -3,6 +3,7 @@ import { redirect } from "next/navigation";
 import { getEffectiveUser } from "@/lib/core/access-control";
 import { prisma } from "@/lib/prisma";
 import { saveMySettings } from "@/app/actions/userSettingsActions";
+import MobileSettingsVisitedMarker from "@/components/MobileSettingsVisitedMarker";
 import { EXPLANATION_LANGUAGE_OPTIONS, UI_LANGUAGE_OPTIONS, uiOptions, uiText } from "@/lib/i18n/ui";
 
 export default async function MobileSettingsPage({ searchParams }: { searchParams?: Promise<{ saved?: string }> }) {
@@ -15,6 +16,7 @@ export default async function MobileSettingsPage({ searchParams }: { searchParam
   const selectedUiLanguage = UI_LANGUAGE_OPTIONS.some(([value]) => value === settings?.interfaceLanguage) ? settings!.interfaceLanguage : "is";
 
   return <main className="min-h-screen bg-slate-100"><div className="mx-auto min-h-screen max-w-md bg-white px-4 pb-10 pt-5">
+    <MobileSettingsVisitedMarker userId={user.id} />
     <div className="flex items-center justify-between gap-3"><div><p className="text-sm font-bold tracking-wide text-slate-700">GLÖGGT MOBILE</p><h1 className="mt-1 text-2xl font-bold">{t.settingsTitle}</h1></div><Link href="/mobile" className="rounded-xl border px-3 py-2 text-sm font-semibold">← {t.backMobile}</Link></div>
     <p className="mt-3 text-sm text-slate-600">{t.settingsHelp}</p>
     {params.saved === "1" && <div className="mt-4 rounded-xl border border-green-200 bg-green-50 px-4 py-3 font-semibold text-green-800">{t.saved}</div>}
