@@ -14,6 +14,8 @@ type Props = {
 
 const labelSizes = {
   auto: null,
+  "1.5x0.8": { width: 1.5, height: 0.8 },
+  "2x1": { width: 2, height: 1 },
   "1.5x2": { width: 1.5, height: 2 },
   "2x2.5": { width: 2, height: 2.5 },
   "3x4": { width: 3, height: 4 },
@@ -47,9 +49,10 @@ export default function PrintQrButton({
 
   useEffect(() => {
     const selected = labelSizes[labelSize];
-    const automaticWidth = Math.max(1.5, qrSizeCm + 0.8);
+    const automaticWidth = Math.max(1.3, qrSizeCm + 0.75);
+    const automaticHeight = qrSizeCm <= 1 ? Math.max(0.7, qrSizeCm + 0.16) : null;
     const effectiveWidth = selected?.width ?? automaticWidth;
-    const effectiveHeight = selected?.height ?? null;
+    const effectiveHeight = selected?.height ?? automaticHeight;
     const compactLabel = effectiveWidth <= 2.5 || qrSizeCm <= 1;
 
     document.documentElement.style.setProperty(
@@ -106,6 +109,8 @@ export default function PrintQrButton({
           aria-describedby="label-size-help"
         >
           <option value="auto">{labelSizeAuto}</option>
+          <option value="1.5x0.8">1.5 × 0.8 cm</option>
+          <option value="2x1">2 × 1 cm</option>
           <option value="1.5x2">1.5 × 2 cm</option>
           <option value="2x2.5">2 × 2.5 cm</option>
           <option value="3x4">3 × 4 cm</option>

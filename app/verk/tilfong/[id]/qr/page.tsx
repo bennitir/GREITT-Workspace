@@ -53,7 +53,7 @@ export default async function WorkResourceQrPage({ params }: Props) {
       </div>
 
       <section
-        className="mx-auto flex min-h-[28rem] min-w-[12rem] max-w-sm flex-col items-center justify-center overflow-hidden rounded-3xl border border-slate-950 bg-white p-8 text-center print:min-h-0 print:min-w-0 print:max-w-none print:rounded-lg print:p-[0.08cm]"
+        className="mx-auto flex min-h-[28rem] min-w-[12rem] max-w-sm flex-col items-center justify-center overflow-hidden rounded-3xl border border-slate-950 bg-white p-8 text-center print:min-h-0 print:min-w-0 print:max-w-none print:rounded-[0.08cm] print:p-[0.025cm]"
         style={{
           width: "var(--gloggt-work-resource-label-width, min(100%, 22rem))",
           height: "var(--gloggt-work-resource-label-height, auto)",
@@ -97,13 +97,13 @@ export default async function WorkResourceQrPage({ params }: Props) {
 
         <div
           style={{ display: "var(--gloggt-work-resource-compact-label-display, none)" }}
-          className="w-full flex-col items-center justify-center gap-[0.06cm] leading-none"
+          className="w-full flex-row items-center justify-center gap-[0.035cm] leading-none"
         >
           <div
-            className="max-w-full whitespace-nowrap font-black uppercase text-slate-950"
+            className="shrink-0 whitespace-nowrap font-black uppercase text-slate-950"
             style={{
-              fontSize: "clamp(8px, calc(var(--gloggt-work-resource-qr-size, 0.5cm) * 0.55), 22px)",
-              letterSpacing: "0.03em",
+              fontSize: "clamp(5px, calc(var(--gloggt-work-resource-qr-size, 0.5cm) * 0.35), 11px)",
+              letterSpacing: "0",
             }}
           >
             {resource.code}
@@ -111,7 +111,7 @@ export default async function WorkResourceQrPage({ params }: Props) {
           <img
             src={qrUrl}
             alt={ops.qrTitle}
-            className="max-h-full max-w-full"
+            className="shrink-0"
             style={{
               width: "var(--gloggt-work-resource-qr-size, 0.5cm)",
               height: "var(--gloggt-work-resource-qr-size, 0.5cm)",
