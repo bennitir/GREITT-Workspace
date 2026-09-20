@@ -23,6 +23,13 @@ function priorityRank(priority: string) {
   return 3;
 }
 
+
+function priorityCardClass(priority: string) {
+  if (priority === "URGENT") return "bg-rose-100 text-rose-800 ring-1 ring-rose-200";
+  if (priority === "HIGH") return "bg-amber-100 text-amber-800 ring-1 ring-amber-200";
+  return "bg-slate-50 text-slate-600";
+}
+
 function matchesQuery(values: Array<string | null | undefined>, query: string) {
   if (!query) return true;
   const normalized = query.toLocaleLowerCase();
@@ -199,9 +206,9 @@ export default async function MobileVerkPage({ searchParams }: Props) {
       {card.address ? <p className="mt-2 text-sm text-slate-700">{card.address}</p> : null}
 
       <div className="mt-3 grid grid-cols-2 gap-2 text-xs">
-        <div className="rounded-xl bg-slate-50 p-2.5 text-slate-600">
+        <div className={`rounded-xl p-2.5 ${priorityCardClass(card.priority)}`}>
           <div>{t.priority}</div>
-          <div className="mt-1 font-semibold text-slate-900">{work10PriorityText(card.priority, actor.language)}</div>
+          <div className="mt-1 font-bold">{work10PriorityText(card.priority, actor.language)}</div>
         </div>
         <div className="rounded-xl bg-slate-50 p-2.5 text-slate-600">
           <div>{t.openParts}</div>

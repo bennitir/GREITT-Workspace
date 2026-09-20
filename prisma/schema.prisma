@@ -101,6 +101,7 @@ model Company {
   serviceTimeEntries ServiceTimeEntry[]
   tasks CompanyTask[]
   userMobileFeatures UserCompanyMobileFeature[]
+  notifications UserNotification[]
 }
 
 
@@ -488,8 +489,65 @@ model User {
   createdEmployeeCompensations EmployeeCompensation[] @relation("EmployeeCompensationCreatedBy")
   createdEmployeeQualifications EmployeeQualification[] @relation("EmployeeQualificationCreatedBy")
   companyMobileFeatures UserCompanyMobileFeature[]
+  pushSubscriptions UserPushSubscription[]
+  notifications UserNotification[]
 }
 
+
+model UserPushSubscription {
+  id Int @id @default(autoincrement())
+  userId Int
+
+  // PushSubscription endpoint er einstakt auðkenni vafrans/tækisins.
+  // Ef sami vafri skráist síðar inn sem annar notandi flyst endpointið
+  // yfir á þann notanda við næstu Mobile-samstillingu.
+  endpoint String @unique
+  p256dh   String
+  auth     String
+
+  soundEnabled Boolean @default(true)
+  userAgent String?
+
+  lastSuccessAt DateTime?
+  lastFailureAt DateTime?
+  failureCount  Int @default(0)
+  disabledAt    DateTime?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId, disabledAt])
+}
+
+model UserNotification {
+  id Int @id @default(autoincrement())
+  userId Int
+  companyId Int
+
+  notificationType String
+  severity String @default("INFO")
+  title String
+  body String?
+  href String?
+
+  sourceType String?
+  sourceId String?
+
+  readAt DateTime?
+  pushAttemptedAt DateTime?
+  pushDeliveredAt DateTime?
+
+  createdAt DateTime @default(now())
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+  company Company @relation(fields: [companyId], references: [id], onDelete: Cascade)
+
+  @@index([userId, readAt, createdAt])
+  @@index([companyId, createdAt])
+  @@index([sourceType, sourceId])
+}
 
 model UserSettings {
   userId Int @id

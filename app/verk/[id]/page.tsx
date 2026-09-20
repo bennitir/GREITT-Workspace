@@ -51,6 +51,7 @@ import {
   removeWorkPartDependency,
   recordPersonLaborFact,
   recordWorkResourceUsageFact,
+  updateWorkOrderPriority,
   updateWorkPartStatus,
   voidPersonLaborFact,
   voidWorkPartUsageFact,
@@ -306,9 +307,22 @@ export default async function Verk10DetailPage({ params }: Props) {
             </div>
             <div>
               <dt className="text-slate-500">{t.priority}</dt>
-              <dd className="mt-1 font-semibold">
-                {work10PriorityText(work.priority, language)}
-              </dd>
+              {companyAccess.canWrite && !workIsCompleted ? (
+                <form action={updateWorkOrderPriority} className="mt-2 space-y-2">
+                  <input type="hidden" name="workOrderId" value={work.id} />
+                  <div className="flex gap-2">
+                    <select name="priority" defaultValue={work.priority} className="min-w-0 flex-1 rounded-lg border bg-white px-3 py-2 text-sm font-semibold">
+                      {(["LOW", "NORMAL", "HIGH", "URGENT"] as const).map((priority) => (
+                        <option key={priority} value={priority}>{work10PriorityText(priority, language)}</option>
+                      ))}
+                    </select>
+                    <button type="submit" className="rounded-lg bg-slate-900 px-3 py-2 text-sm font-semibold text-white">{t.savePriority}</button>
+                  </div>
+                  <p className="text-xs leading-5 text-slate-500">{t.priorityAlertHelp}</p>
+                </form>
+              ) : (
+                <dd className="mt-1 font-semibold">{work10PriorityText(work.priority, language)}</dd>
+              )}
             </div>
             <div>
               <dt className="text-slate-500">{t.address}</dt>
@@ -611,6 +625,7 @@ export default async function Verk10DetailPage({ params }: Props) {
           </Card>
 
           <Card>
+            <div id="uthlutun" className="scroll-mt-4">
             <div className="flex flex-wrap items-start justify-between gap-3">
               <div>
                 <h2 className="font-bold">{t.assignments}</h2>
@@ -622,7 +637,19 @@ export default async function Verk10DetailPage({ params }: Props) {
             </div>
 
             {!hasPersistedWorkParts ? (
-              <p className="mt-3 rounded-lg bg-slate-50 px-3 py-2 text-xs font-medium text-slate-500">{t.assignmentNeedsPart}</p>
+              <div className="mt-3 rounded-xl border border-blue-100 bg-blue-50 p-3">
+                <p className="text-sm font-medium text-blue-950">{t.assignmentNeedsPart}</p>
+                {companyAccess.canWrite && !workIsCompleted && companyPeople.length > 0 ? (
+                  <form action={persistLegacyFirstWorkPart} className="mt-3 flex flex-col gap-2 sm:flex-row">
+                    <input type="hidden" name="workOrderId" value={work.id} />
+                    <select name="employeeId" required defaultValue="" className="min-w-0 flex-1 rounded-lg border bg-white px-3 py-2 text-sm">
+                      <option value="" disabled>{t.choosePerson}</option>
+                      {companyPeople.map((person) => <option key={person.id} value={person.id}>{person.name}</option>)}
+                    </select>
+                    <button type="submit" className="rounded-lg bg-blue-600 px-4 py-2 text-sm font-semibold text-white hover:bg-blue-700">{t.savePartAndAssign}</button>
+                  </form>
+                ) : null}
+              </div>
             ) : (
               <div className="mt-4 space-y-4">
                 {work.workParts.map((part) => {
@@ -749,6 +776,7 @@ export default async function Verk10DetailPage({ params }: Props) {
                 <p className="text-xs leading-5 text-slate-500">{t.assignmentHistoryHelp}</p>
               </div>
             )}
+            </div>
           </Card>
 
           <Card>

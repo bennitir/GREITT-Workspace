@@ -3,6 +3,7 @@ import { cookies } from "next/headers";
 import { redirect } from "next/navigation";
 
 import { logoutMobileUser } from "@/app/actions/userActions";
+import MobilePushRegistrationSync from "@/components/MobilePushRegistrationSync";
 import { getEffectiveUser } from "@/lib/core/access-control";
 import { getCompanyModuleSettings } from "@/lib/core/company-module-repository";
 import { getMobileCompaniesForUser } from "@/lib/core/mobile-company";
@@ -10,6 +11,7 @@ import { getEffectiveMobileFeatureSettings } from "@/lib/core/mobile-feature-rep
 import { mobileSettingsSeenCookieName } from "@/lib/core/mobile-settings-visit";
 import { isMobileFeatureShown } from "@/lib/core/mobile-features";
 import { companyManagementText } from "@/lib/i18n/company-management";
+import { mobileNotificationText } from "@/lib/i18n/mobile-notifications";
 import { stocktakeMobileText } from "@/lib/i18n/stocktake-mobile";
 import { uiText } from "@/lib/i18n/ui";
 import { prisma } from "@/lib/prisma";
@@ -59,6 +61,7 @@ export default async function MobilePage({
   const language = userSettings?.interfaceLanguage ?? "is";
   const t = uiText(language);
   const managementT = companyManagementText(language);
+  const notificationT = mobileNotificationText(language);
   const stocktakeT = stocktakeMobileText(language);
 
   const cookieStore = await cookies();
@@ -108,9 +111,12 @@ export default async function MobilePage({
     );
   }
 
-  const [moduleSettings, mobileSettings] = await Promise.all([
+  const [moduleSettings, mobileSettings, unreadNotificationCount] = await Promise.all([
     getCompanyModuleSettings(activeCompany.id),
     getEffectiveMobileFeatureSettings(activeCompany.id, user.id),
+    prisma.userNotification.count({
+      where: { userId: user.id, companyId: activeCompany.id, readAt: null },
+    }),
   ]);
 
   const showWork = isMobileFeatureShown("work", moduleSettings, mobileSettings);
@@ -121,6 +127,7 @@ export default async function MobilePage({
   return (
     <main className="min-h-screen bg-slate-100">
       <div className="mx-auto min-h-screen max-w-md bg-white px-4 pb-24 pt-5">
+        <MobilePushRegistrationSync />
         <header>
           <div className="flex items-start justify-between gap-3">
             <div>
@@ -132,11 +139,26 @@ export default async function MobilePage({
               {hasSeenMobileSettings ? (
                 <Link
                   href="/mobile/stillingar"
-                  className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg border border-slate-200 bg-white text-base shadow-sm active:bg-slate-50"
+                  className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg border border-slate-200 bg-white text-sm shadow-sm active:bg-slate-50"
                   aria-label={t.settings}
                   title={t.settings}
                 >
                   <span aria-hidden="true">⚙️</span>
+                </Link>
+              ) : null}
+              {showWork ? (
+                <Link
+                  href="/mobile/tilkynningar"
+                  className="relative flex h-8 w-8 shrink-0 items-center justify-center rounded-lg border border-slate-200 bg-white text-sm shadow-sm active:bg-slate-50"
+                  aria-label={notificationT.notifications}
+                  title={notificationT.notifications}
+                >
+                  <span aria-hidden="true">🔔</span>
+                  {unreadNotificationCount > 0 ? (
+                    <span className="absolute -right-1.5 -top-1.5 min-w-5 rounded-full bg-rose-600 px-1 text-center text-[10px] font-bold leading-5 text-white">
+                      {unreadNotificationCount > 99 ? "99+" : unreadNotificationCount}
+                    </span>
+                  ) : null}
                 </Link>
               ) : null}
               <Link href="/mobile?velja=1" className="rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm font-semibold text-slate-700 shadow-sm">

@@ -169,9 +169,17 @@ export default function Work10Dashboard({ data }: { data: Work10DashboardData })
   const [mainTab, setMainTab] = useState<MainTab>("schedule");
   const [resourceTab, setResourceTab] = useState<ResourceTab>("people");
   const [calendarMode, setCalendarMode] = useState<CalendarMode>("day");
-  const fallbackInitialDate = data.initialDate ?? data.workOrders[0]?.createdAt?.slice(0, 10) ?? "2000-01-01";
+  const activeWorkOrders = useMemo(
+    () => data.workOrders.filter((work) => work.status !== "COMPLETED" && work.status !== "CANCELLED"),
+    [data.workOrders],
+  );
+  const completedWorkOrders = useMemo(
+    () => data.workOrders.filter((work) => work.status === "COMPLETED" || work.status === "CANCELLED"),
+    [data.workOrders],
+  );
+  const fallbackInitialDate = data.initialDate ?? activeWorkOrders[0]?.createdAt?.slice(0, 10) ?? data.workOrders[0]?.createdAt?.slice(0, 10) ?? "2000-01-01";
   const [selectedDate, setSelectedDate] = useState(() => dateFromIsoDate(fallbackInitialDate));
-  const [selectedWorkId, setSelectedWorkId] = useState<number | null>(() => data.workOrders[0]?.id ?? null);
+  const [selectedWorkId, setSelectedWorkId] = useState<number | null>(() => activeWorkOrders[0]?.id ?? null);
   const [search, setSearch] = useState("");
 
   const machinesEnabled = data.capabilities.machines;
@@ -179,7 +187,7 @@ export default function Work10Dashboard({ data }: { data: Work10DashboardData })
     ? ["people", "machines", "teams"]
     : ["people", "teams"];
 
-  const selectedWork = data.workOrders.find((work) => work.id === selectedWorkId) ?? data.workOrders[0] ?? null;
+  const selectedWork = activeWorkOrders.find((work) => work.id === selectedWorkId) ?? activeWorkOrders[0] ?? null;
 
   const filteredPeople = useMemo(() => {
     const q = search.trim().toLowerCase();
@@ -221,7 +229,7 @@ export default function Work10Dashboard({ data }: { data: Work10DashboardData })
     const rows = new Map<number, WorkOrderData[]>();
 
     for (const person of data.people) {
-      const related = data.workOrders.filter((work) => {
+      const related = activeWorkOrders.filter((work) => {
         const assigned = work.workParts.some((part) => part.assignedEmployeeIds.includes(person.id));
         const hasActualLabor = work.actualLabor.some((entry) => entry.employeeId === person.id);
         return assigned || hasActualLabor;
@@ -230,7 +238,7 @@ export default function Work10Dashboard({ data }: { data: Work10DashboardData })
     }
 
     return rows;
-  }, [data.people, data.workOrders]);
+  }, [data.people, activeWorkOrders]);
 
   const inProgressCount = data.workOrders.filter((work) => work.status === "IN_PROGRESS").length;
   const newCount = data.workOrders.filter(
@@ -439,7 +447,7 @@ export default function Work10Dashboard({ data }: { data: Work10DashboardData })
                     <div className="relative divide-y">
                       <div className="relative h-[58px] bg-amber-50/40 px-2 py-2">
                         <span className="absolute left-2 top-2 rounded-md bg-amber-100 px-2 py-1 text-[11px] font-semibold text-amber-800">{t.unassignedInNewCore}</span>
-                        {data.workOrders.slice(0, 3).map((work, index) => (
+                        {activeWorkOrders.slice(0, 3).map((work, index) => (
                           <button
                             key={work.id}
                             type="button"
@@ -582,13 +590,33 @@ export default function Work10Dashboard({ data }: { data: Work10DashboardData })
                 </h2>
                 {mainTab !== "list" && mainTab !== "machines" ? <p className="mt-2 max-w-3xl text-sm leading-6 text-slate-600">{t.tabPlaceholder}</p> : null}
                 {mainTab === "list" && (
-                  <div className="mt-5 divide-y overflow-hidden rounded-xl border bg-white">
-                    {data.workOrders.map((work) => (
-                      <Link key={work.id} href={`/verk/${work.id}`} className="flex w-full items-center justify-between gap-4 p-4 text-left hover:bg-slate-50">
-                        <div><p className="font-semibold text-slate-900">{work.title}</p><p className="text-sm text-slate-500">#{work.workNumber}{work.workKey ? ` · ${work.workKey}` : ""}{work.address ? ` · ${work.address}` : ""}</p></div>
-                        <span className="rounded-full bg-slate-100 px-2.5 py-1 text-xs font-medium text-slate-600">{work10StatusText(work.status, data.language)}</span>
-                      </Link>
-                    ))}
+                  <div className="mt-5 space-y-4">
+                    <div>
+                      <h3 className="mb-2 text-sm font-bold text-slate-700">{t.activeWork}</h3>
+                      <div className="divide-y overflow-hidden rounded-xl border bg-white">
+                        {activeWorkOrders.length === 0 ? (
+                          <p className="p-4 text-sm text-slate-500">{t.noWorkToShow}</p>
+                        ) : activeWorkOrders.map((work) => (
+                          <Link key={work.id} href={`/verk/${work.id}`} className="flex w-full items-center justify-between gap-4 p-4 text-left hover:bg-slate-50">
+                            <div><p className="font-semibold text-slate-900">{work.title}</p><p className="text-sm text-slate-500">#{work.workNumber}{work.workKey ? ` · ${work.workKey}` : ""}{work.address ? ` · ${work.address}` : ""}</p></div>
+                            <span className="rounded-full bg-slate-100 px-2.5 py-1 text-xs font-medium text-slate-600">{work10StatusText(work.status, data.language)}</span>
+                          </Link>
+                        ))}
+                      </div>
+                    </div>
+                    {completedWorkOrders.length > 0 ? (
+                      <details className="rounded-xl border bg-white">
+                        <summary className="cursor-pointer px-4 py-3 text-sm font-bold text-slate-700">{t.completedArchive} ({completedWorkOrders.length})</summary>
+                        <div className="divide-y border-t">
+                          {completedWorkOrders.map((work) => (
+                            <Link key={work.id} href={`/verk/${work.id}`} className="flex w-full items-center justify-between gap-4 p-4 text-left hover:bg-slate-50">
+                              <div><p className="font-semibold text-slate-800">{work.title}</p><p className="text-sm text-slate-500">#{work.workNumber}{work.workKey ? ` · ${work.workKey}` : ""}</p></div>
+                              <span className="rounded-full bg-slate-100 px-2.5 py-1 text-xs font-medium text-slate-600">{work10StatusText(work.status, data.language)}</span>
+                            </Link>
+                          ))}
+                        </div>
+                      </details>
+                    ) : null}
                   </div>
                 )}
                 {mainTab === "machines" && (
@@ -640,14 +668,14 @@ export default function Work10Dashboard({ data }: { data: Work10DashboardData })
           <div className="rounded-2xl border bg-white p-4 shadow-sm">
             <div className="flex items-center justify-between"><h2 className="font-bold text-slate-950">{t.tabs.queue}</h2><span className="text-xs text-slate-400">{completedCount} {t.completedSuffix}</span></div>
             <div className="mt-3 space-y-2">
-              {data.workOrders.slice(0, 6).map((work, index) => (
+              {activeWorkOrders.slice(0, 6).map((work, index) => (
                 <Link key={work.id} href={`/verk/${work.id}`} className="flex w-full items-center gap-3 rounded-lg px-2 py-2 text-left hover:bg-slate-50">
                   <span className={`flex h-6 w-6 items-center justify-center rounded-md text-xs font-bold ${work.status === "COMPLETED" ? "bg-emerald-100 text-emerald-700" : work.status === "IN_PROGRESS" ? "bg-blue-100 text-blue-700" : "bg-slate-100 text-slate-600"}`}>{work.status === "COMPLETED" ? "✓" : index + 1}</span>
                   <span className="min-w-0 flex-1 truncate text-sm font-medium text-slate-800">{work.title}</span>
                   <span className="text-[11px] text-slate-400">{work10StatusText(work.status, data.language)}</span>
                 </Link>
               ))}
-              {data.workOrders.length === 0 && <p className="rounded-xl border border-dashed p-4 text-sm text-slate-500">{t.noWorkToShow}</p>}
+              {activeWorkOrders.length === 0 && <p className="rounded-xl border border-dashed p-4 text-sm text-slate-500">{t.noWorkToShow}</p>}
             </div>
           </div>
 

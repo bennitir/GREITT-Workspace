@@ -57,7 +57,7 @@ export default async function WorkResourceQrPage({ params }: Props) {
         style={{
           width: "var(--gloggt-work-resource-label-width, 6.5cm)",
           height: "var(--gloggt-work-resource-label-height, 7cm)",
-          padding: "var(--gloggt-work-resource-label-padding, 0.2cm)",
+          padding: "var(--gloggt-work-resource-label-padding-y, 0.2cm) var(--gloggt-work-resource-label-padding-x, 0.2cm)",
           borderRadius: "var(--gloggt-work-resource-label-radius, 0.16cm)",
         }}
       >
@@ -99,7 +99,7 @@ export default async function WorkResourceQrPage({ params }: Props) {
 
         <div
           style={{ display: "var(--gloggt-work-resource-compact-label-display, none)" }}
-          className="h-full w-full flex-row items-center justify-center gap-[0.025cm] leading-none"
+          className="h-full w-full flex-row items-center justify-center gap-[0.04cm] leading-none"
         >
           <div
             className="shrink-0 whitespace-nowrap font-black uppercase text-slate-950"

@@ -54,16 +54,17 @@ export default function PrintQrButton({
       : qrSizeCm <= 1;
 
     const automaticWidth = compactLabel
-      ? Math.max(1.15, qrSizeCm + 0.62)
+      ? Math.max(1.25, qrSizeCm + 0.72)
       : Math.max(3, qrSizeCm + 1.5);
     const automaticHeight = compactLabel
-      ? Math.max(0.62, qrSizeCm + 0.08)
+      ? Math.max(0.65, qrSizeCm + 0.12)
       : Math.max(3.2, qrSizeCm + 2);
 
     const effectiveWidth = selected?.width ?? automaticWidth;
     const effectiveHeight = selected?.height ?? automaticHeight;
-    const labelPadding = compactLabel ? 0.02 : 0.2;
-    const labelRadius = compactLabel ? 0.03 : 0.16;
+    const labelPaddingX = compactLabel ? 0.05 : 0.2;
+    const labelPaddingY = compactLabel ? 0.025 : 0.2;
+    const labelRadius = compactLabel ? 0.04 : 0.16;
 
     document.documentElement.style.setProperty(
       "--gloggt-work-resource-label-width",
@@ -74,8 +75,12 @@ export default function PrintQrButton({
       `${effectiveHeight}cm`,
     );
     document.documentElement.style.setProperty(
-      "--gloggt-work-resource-label-padding",
-      `${labelPadding}cm`,
+      "--gloggt-work-resource-label-padding-x",
+      `${labelPaddingX}cm`,
+    );
+    document.documentElement.style.setProperty(
+      "--gloggt-work-resource-label-padding-y",
+      `${labelPaddingY}cm`,
     );
     document.documentElement.style.setProperty(
       "--gloggt-work-resource-label-radius",
@@ -108,7 +113,8 @@ export default function PrintQrButton({
     return () => {
       document.documentElement.style.removeProperty("--gloggt-work-resource-label-width");
       document.documentElement.style.removeProperty("--gloggt-work-resource-label-height");
-      document.documentElement.style.removeProperty("--gloggt-work-resource-label-padding");
+      document.documentElement.style.removeProperty("--gloggt-work-resource-label-padding-x");
+      document.documentElement.style.removeProperty("--gloggt-work-resource-label-padding-y");
       document.documentElement.style.removeProperty("--gloggt-work-resource-label-radius");
       document.documentElement.style.removeProperty("--gloggt-work-resource-full-label-display");
       document.documentElement.style.removeProperty("--gloggt-work-resource-compact-label-display");

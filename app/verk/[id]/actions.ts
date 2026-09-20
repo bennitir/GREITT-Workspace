@@ -1,6 +1,7 @@
 "use server";
 
 import { revalidatePath } from "next/cache";
+import { redirect } from "next/navigation";
 
 import {
   getEffectiveUser,
@@ -10,6 +11,7 @@ import { inventoryText } from "@/lib/i18n/inventory";
 import { workResourceText } from "@/lib/i18n/work-resources";
 import { normalizeUiLanguage } from "@/lib/i18n/ui";
 import { prisma } from "@/lib/prisma";
+import { notifyPriorityWork, priorityRecipientUserIdsForTeam } from "@/lib/push/priority-work";
 import { projectLegacyOperationalText } from "@/lib/work10/legacy-operational-text";
 import { projectPersistedWorkOrderText } from "@/lib/work10/work-order-text";
 import { deriveWork10Status, isWork10EffectivelyCompleted } from "@/lib/work10/status";
@@ -74,73 +76,146 @@ function translationRows(
  */
 export async function persistLegacyFirstWorkPart(formData: FormData) {
   const workOrderId = Number(formData.get("workOrderId"));
+  const employeeValue = formData.get("employeeId");
+  const employeeId = employeeValue && String(employeeValue) !== "" ? Number(employeeValue) : null;
   if (!Number.isInteger(workOrderId)) {
     throw new Error("Ógilt verknúmer.");
+  }
+  if (employeeId !== null && !Number.isInteger(employeeId)) {
+    throw new Error("Ógild úthlutun.");
   }
 
   const companyId = await requireActiveCompanyWriteAccess();
   const effectiveUser = await getEffectiveUser();
 
-  const work = await prisma.workOrder.findFirst({
-    where: { id: workOrderId, companyId },
-    include: {
-      translations: true,
-      workParts: {
-        select: { id: true },
-        take: 1,
+  const [work, employee] = await Promise.all([
+    prisma.workOrder.findFirst({
+      where: { id: workOrderId, companyId },
+      include: {
+        translations: true,
+        workParts: {
+          select: { id: true },
+          orderBy: { sequence: "asc" },
+          take: 1,
+        },
       },
-    },
-  });
+    }),
+    employeeId === null
+      ? Promise.resolve(null)
+      : prisma.employee.findFirst({
+          where: { id: employeeId, companyId, isActive: true },
+          select: { id: true, fullName: true, userId: true },
+        }),
+  ]);
 
   if (!work) {
     throw new Error("Verkið fannst ekki.");
   }
-
-  // Idempotent: endurtekin smellun býr ekki til tvöfaldan fyrsta verkþátt.
-  if (work.workParts.length > 0) {
-    revalidatePath("/verk");
-    revalidatePath(`/verk/${workOrderId}`);
-    return;
+  if (employeeId !== null && !employee) {
+    throw new Error("Starfsmaðurinn fannst ekki eða er óvirkur.");
+  }
+  if (employee && work.status === "COMPLETED") {
+    throw new Error("Ekki er hægt að úthluta starfsmanni á lokið Verk. Enduropna þarf Verkið fyrst.");
   }
 
-  const operationalText =
-    work.translations.length > 0
-      ? projectPersistedWorkOrderText(work)
-      : projectLegacyOperationalText({
-          id: work.id,
-          title: work.title,
-          description: work.description,
-        });
+  let workPartId = work.workParts[0]?.id ?? null;
 
-  const createdById = effectiveUser?.id ?? null;
-  const translations = translationRows(
-    operationalText.title,
-    operationalText.description,
-    createdById,
-  );
+  if (!workPartId) {
+    const operationalText =
+      work.translations.length > 0
+        ? projectPersistedWorkOrderText(work)
+        : projectLegacyOperationalText({
+            id: work.id,
+            title: work.title,
+            description: work.description,
+          });
 
-  await prisma.workPart.create({
-    data: {
-      companyId,
-      workOrderId: work.id,
-      sequence: 1,
-      sourceLanguage: operationalText.title.sourceLanguage,
-      title: operationalText.title.sourceText,
-      description: operationalText.description?.sourceText ?? null,
-      status: workPartStatusFromLegacy(work.status),
+    const createdById = effectiveUser?.id ?? null;
+    const translations = translationRows(
+      operationalText.title,
+      operationalText.description,
       createdById,
-      updatedById: createdById,
-      translations:
-        translations.length > 0
-          ? {
-              create: translations,
-            }
-          : undefined,
-    },
-  });
+    );
+
+    const createdPart = await prisma.$transaction(async (tx) => {
+      const part = await tx.workPart.create({
+        data: {
+          companyId,
+          workOrderId: work.id,
+          sequence: 1,
+          sourceLanguage: operationalText.title.sourceLanguage,
+          title: operationalText.title.sourceText,
+          description: operationalText.description?.sourceText ?? null,
+          status: workPartStatusFromLegacy(work.status),
+          createdById,
+          updatedById: createdById,
+          translations:
+            translations.length > 0
+              ? {
+                  create: translations,
+                }
+              : undefined,
+        },
+      });
+
+      if (employee) {
+        await tx.workPartAssignment.create({
+          data: {
+            companyId,
+            workPartId: part.id,
+            resourceKind: "PERSON",
+            employeeId: employee.id,
+            userId: employee.userId,
+            resourceLabel: employee.fullName,
+            createdById,
+          },
+        });
+      }
+      return part;
+    });
+    workPartId = createdPart.id;
+  } else if (employee) {
+    const existing = await prisma.workPartAssignment.findFirst({
+      where: {
+        companyId,
+        workPartId,
+        resourceKind: "PERSON",
+        employeeId: employee.id,
+        removedAt: null,
+      },
+      select: { id: true },
+    });
+    if (!existing) {
+      await prisma.workPartAssignment.create({
+        data: {
+          companyId,
+          workPartId,
+          resourceKind: "PERSON",
+          employeeId: employee.id,
+          userId: employee.userId,
+          resourceLabel: employee.fullName,
+          createdById: effectiveUser?.id ?? null,
+        },
+      });
+    }
+  }
+
+  if (employee?.userId) {
+    try {
+      await notifyPriorityWork({
+        workOrderId,
+        companyId,
+        reason: "ASSIGNED_PRIORITY",
+        recipientUserIds: [employee.userId],
+      });
+    } catch (error) {
+      console.error("Priority notification failed after first work-part assignment", error);
+    }
+  }
 
   revalidatePath("/verk");
   revalidatePath(`/verk/${workOrderId}`);
+  redirect(`/verk/${workOrderId}#uthlutun`);
 }
 
 /**
@@ -272,7 +347,7 @@ export async function assignPersonToWorkPart(formData: FormData) {
       where: { id: workPartId, companyId, workOrderId },
       select: {
         id: true,
-        workOrder: { select: { status: true } },
+        workOrder: { select: { status: true, workParts: { select: { status: true } } } },
       },
     }),
     prisma.employee.findFirst({
@@ -282,6 +357,9 @@ export async function assignPersonToWorkPart(formData: FormData) {
   ]);
 
   if (!part) throw new Error("Verkþátturinn fannst ekki.");
+  if (isWork10EffectivelyCompleted(part.workOrder.status, part.workOrder.workParts)) {
+    throw new Error("Ekki er hægt að úthluta starfsmanni á lokið Verk. Enduropna þarf Verkið fyrst.");
+  }
   if (!employee) throw new Error("Starfsmaðurinn fannst ekki eða er óvirkur.");
 
   const existing = await prisma.workPartAssignment.findFirst({
@@ -307,6 +385,19 @@ export async function assignPersonToWorkPart(formData: FormData) {
         createdById: effectiveUser?.id ?? null,
       },
     });
+
+    if (employee.userId) {
+      try {
+        await notifyPriorityWork({
+          workOrderId,
+          companyId,
+          reason: "ASSIGNED_PRIORITY",
+          recipientUserIds: [employee.userId],
+        });
+      } catch (error) {
+        console.error("Priority notification failed after person assignment", error);
+      }
+    }
   }
 
   revalidatePath("/verk");
@@ -431,6 +522,22 @@ export async function assignWorkResourceToWorkPart(formData: FormData) {
         },
       });
     });
+
+    if (resource.kind === "TEAM") {
+      try {
+        const recipientUserIds = await priorityRecipientUserIdsForTeam(companyId, resource.id);
+        if (recipientUserIds.length > 0) {
+          await notifyPriorityWork({
+            workOrderId,
+            companyId,
+            reason: "ASSIGNED_PRIORITY",
+            recipientUserIds,
+          });
+        }
+      } catch (error) {
+        console.error("Priority notification failed after team assignment", error);
+      }
+    }
   }
 
   revalidatePath("/verk");
@@ -1282,6 +1389,62 @@ export async function voidPersonLaborFact(formData: FormData) {
 function revalidateWorkOrder(workOrderId: number) {
   revalidatePath("/verk");
   revalidatePath(`/verk/${workOrderId}`);
+}
+
+export async function updateWorkOrderPriority(formData: FormData) {
+  const workOrderId = Number(formData.get("workOrderId"));
+  const priority = String(formData.get("priority") ?? "").trim();
+  const allowed = new Set(["LOW", "NORMAL", "HIGH", "URGENT"]);
+  if (!Number.isInteger(workOrderId) || !allowed.has(priority)) {
+    throw new Error("Ógildur forgangur.");
+  }
+
+  const companyId = await requireActiveCompanyWriteAccess();
+  const effectiveUser = await getEffectiveUser();
+  const work = await prisma.workOrder.findFirst({
+    where: { id: workOrderId, companyId },
+    select: { id: true, priority: true },
+  });
+  if (!work) throw new Error("Verkið fannst ekki.");
+  if (work.priority === priority) return;
+
+  await prisma.$transaction(async (tx) => {
+    await tx.workOrder.update({
+      where: { id: work.id },
+      data: { priority },
+    });
+    await tx.auditEvent.create({
+      data: {
+        companyId,
+        userId: effectiveUser?.id ?? null,
+        entityType: "WORK_ORDER",
+        entityId: work.id,
+        action: "PRIORITY_CHANGED",
+        source: "USER",
+        description: "Forgangi Verks breytt.",
+        beforeData: { priority: work.priority },
+        afterData: { priority },
+      },
+    });
+  });
+
+  const alertRank = (value: string) => value === "URGENT" ? 2 : value === "HIGH" ? 1 : 0;
+  if (alertRank(priority) > alertRank(work.priority)) {
+    try {
+      await notifyPriorityWork({
+        workOrderId,
+        companyId,
+        reason: "PRIORITY_CHANGED",
+      });
+    } catch (error) {
+      console.error("Priority notification failed after priority change", error);
+    }
+  }
+
+  revalidatePath("/verk");
+  revalidatePath(`/verk/${workOrderId}`);
+  revalidatePath("/mobile");
+  revalidatePath("/mobile/verk");
 }
 
 /**
