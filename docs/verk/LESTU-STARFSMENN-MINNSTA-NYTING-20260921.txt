@@ -1,0 +1,17 @@
+GLÖGGT – Dagsmönnun: úthlutaðir starfsmenn og 10 minnst nýttu
+Dagsetning: 21. september 2026
+
+Markmið
+- Endurheimta sýnilega tölu yfir hversu margir starfsmenn fá að minnsta kosti eitt Verk í dagsáætlun.
+- Halda áfram að sýna óúthlutaða starfsmenn sér.
+- Sýna allt að 10 starfsmenn með lægstu nýtingu sem þó eru með minnst 1% nýtingu.
+- Starfsmenn með 0% eru útilokaðir úr lág-nýtingarlistanum og teljast áfram óúthlutaðir.
+
+Framsetning
+- Efsta yfirlit: Tillögur að úthlutunum / Verk með opna mönnun / Starfsmenn með Verk / Óúthlutaðir starfsmenn.
+- Greining: Topp 5 mest nýttu heldur sér.
+- Nýtt spjald: 10 minnst nýttu starfsmenn, raðað frá lægstu nýtingu upp.
+- Fyrir hvern: nýting %, vinna, akstur, svigrúm og fjöldi Verka.
+
+Athugið
+Þetta er greining og yfirlit. Það breytir ekki 85% markmiði, 93% harða hámarkinu, hæfnisreglum, svæðisklösun eða deadline-reglum.

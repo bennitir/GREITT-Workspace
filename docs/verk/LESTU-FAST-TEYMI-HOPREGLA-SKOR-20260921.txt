@@ -1,0 +1,54 @@
+GLÖGGT – Dagsmönnun: fast teymi sem hópregla + rúnnað vísbendingaskor
+Dagsetning: 21.09.2026
+
+Tilgangur
+---------
+Þessi breyting styrkir föst teymi í sjálfvirkri Dagsmönnun. Áður fékk einstaklingur punktabónus fyrir að passa við fast teymi, en það gat samt leitt til þess að fjölmennt Verk blandaði saman fólki úr tveimur föstum teymum þótt eitt heilt fast teymi gæti mannað Verkið.
+
+Ný regla
+--------
+Fyrir Verk sem þarf fleiri en einn starfsmann reynir GLÖGGT fyrst að finna heilt fast teymi sem getur fyllt öll opin mönnunarsæti.
+
+Heilt fast teymi telst aðeins gilt ef:
+- allir valdir starfsmenn eru lausir núna;
+- allir eru innan venjulegs starfssviðs (eða legacy án skilgreinds starfssviðs);
+- allar harðar hæfni-/réttindakvaðir standast;
+- mönnunarhlutverk passa;
+- ábyrgðardeild passar;
+- leiðargögn eru til þegar ferð milli rekstrarstaða þarf að fara fram;
+- enginn starfsmaður er þegar frátekinn í annarri tillögu á sama tíma.
+
+Ef fleiri en eitt fast teymi getur mannað allt Verkið er valið besta heila teymið með tilliti til fyrirliggjandi hæfni-/mönnunarskors, núverandi staðsetningar/ferðatíma og aðal-teymistengingar.
+
+Ef ekkert heilt fast teymi getur mannað Verkið heldur eldri einstaklingsröðun áfram að gilda. Reglan læsir því ekki dagskipulaginu og kemur ekki í veg fyrir að blanda teymum þegar það er raunverulega nauðsynlegt.
+
+Tilfallandi störf
+-----------------
+Heilt fast teymi fær ekki hópforskot með því að fara utan venjulegs starfssviðs. AUTO_IF_NEEDED og 30 mínútna biðreglan halda áfram að vera varaleiðir eftir sömu reglum og áður. MANUAL_ONLY er áfram aldrei valið sjálfvirkt.
+
+Vísbendingaskor
+---------------
+Vísbendingaskor í Dagsmönnun er nú birt rúnnað í heiltölu. Reiknivélin má áfram nota nákvæmari aukastafi innbyrðis, t.d. vegna km- og ferðatímavigtar, en UI sýnir ekki lengur hrá floating-point gildi eins og 53.849999999999994.
+
+Prófun
+------
+Engin Prisma-breyting og engin migration fylgir þessari breytingu.
+
+Eftir afþjöppun yfir C:\GLÖGGT:
+
+  npx tsc --noEmit
+
+Síðan þarf ekki að seed-a 750 Verkin aftur. Núverandi prófunargögn duga.
+
+Endurgera Dagsmönnun frá 08:00 og skoða sérstaklega fjölmenn ræstingarverk. Dæmið sem kveikti breytinguna var að tveggja manna ræstingarverk blandaði saman Ræstingarteymi 1 og 2 þótt tveir lausir starfsmenn úr sama fasta teymi væru til staðar.
+
+Síðan búa til nýja Dagsmönnun frá 15:00 og staðfesta sérstaklega:
+- síðdegisálag á höfuðborgarsvæðinu;
+- stefnuvirkan A → B ferðatíma;
+- að sama fasta teymi haldist saman þegar það er raunhæft;
+- að staðsetning fyrra Verks verði upphaf næsta ferðaleggs.
+
+Breyttar skrár
+--------------
+app/verk/Work10Dashboard.tsx
+docs/verk/LESTU-FAST-TEYMI-HOPREGLA-SKOR-20260921.txt

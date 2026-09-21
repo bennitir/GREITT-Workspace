@@ -1,0 +1,18 @@
+GLÖGGT – TypeScript lagfæring á deilda-loadtesti
+21. september 2026
+
+Ástæða:
+- TypeScript gat ekki leitt örugga týpu fyrir departmentRows/parentId í seed-verk-load-test.ts og skilaði TS7022.
+
+Lagfæring:
+- departmentRows fær nú skýra structural týpu: id, code og name.
+- parentId er merkt sérstaklega sem number | null.
+- niðurstaða companyDepartment.upsert er þrengd að þeim sviðum sem scriptið notar.
+
+Engin Prisma schema-breyting og engin ný migration.
+
+Próf:
+  npx tsc --noEmit
+
+Ef TypeScript er hreint má síðan endurgera prófunarsafnið:
+  node --env-file=.env --import tsx scripts/seed-verk-load-test.ts --reset --apply

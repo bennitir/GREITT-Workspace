@@ -1,0 +1,18 @@
+GLÖGGT – lagfæring á configure-verk-workday-test.ts
+21. september 2026
+
+Ástæða:
+- tsx keyrir verkefnið í CJS-samhengi og top-level await í scriptinu olli TransformError.
+
+Lagfæring:
+- Allur async kóði er nú inni í async main().
+- Prisma disconnect er í finally.
+- Engin schema-breyting og engin ný migration.
+
+Setja yfir C:\GLÖGGT og yfirskrifa scripts/configure-verk-workday-test.ts.
+
+Próf:
+node --env-file=.env --import tsx scripts/configure-verk-workday-test.ts --company-id=1
+
+Ef dry-run er rétt:
+node --env-file=.env --import tsx scripts/configure-verk-workday-test.ts --company-id=1 --apply

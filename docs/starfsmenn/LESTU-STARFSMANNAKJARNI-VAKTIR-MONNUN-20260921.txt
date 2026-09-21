@@ -1,0 +1,104 @@
+GLÖGGT – starfsmannakjarni, vaktir og lágmarksmönnun
+21. september 2026
+
+Markmið
+- Starfsmannaspjaldið verður sjálfstæður sameiginlegur kjarni fyrir Verk, Vinnustund, Laun, Mobile og framtíðar vaktaplan.
+- Ekki afrita starfssvið eða ráðningargögn inn í hvert kerfi.
+- Gera frá byrjun ráð fyrir dagvinnu, dagvinnu með föstum yfirvinnutímum, vaktavinnu, rúllandi vöktum, sveigjanlegum tíma og öðrum vinnumynstrum.
+- Gera ráð fyrir mismunandi kjarasamningum á sama vinnustað.
+- Gera ráð fyrir starfslýsingu og ráðningarsamningssamhengi.
+- Gera ráð fyrir vinnustöðum/deildum þar sem krafist er lágmarksfjölda í mismunandi störfum samtímis, t.d. sjúkrahúsum.
+
+Mikilvæg aðgreining
+1. Starfsmaður segir:
+   - hver starfsmaðurinn er,
+   - starfssvið og starfslýsingu,
+   - menntun/réttindi,
+   - vinnufyrirkomulag,
+   - kjarasamningsprófíl,
+   - hvaða mönnunarhlutverk hann má telja upp í.
+
+2. Vaktamynstur segir:
+   - hvernig föst eða rúllandi lota er uppbyggð,
+   - hvaða dagar/tímar í lotu eru vinnuslot.
+
+3. Lágmarksmönnun segir:
+   - á hvaða vinnustað/deild reglan gildir,
+   - hvaða daga og tímabil,
+   - hvaða mönnunarhlutverk þarf,
+   - lágmarksfjölda hvers hlutverks.
+
+Lágmarksfjöldi er því EKKI geymdur á starfsmanninum. Starfsmannaspjaldið segir aðeins í hvaða hlutverk viðkomandi má telja. Þetta kemur í veg fyrir að einstaklingsgögn og rekstrarreglur blandist saman.
+
+Ný gögn á Employee
+- jobDescription
+- employmentContractReference
+- employmentContractNotes
+- workScheduleType
+- contractedWeeklyMinutes
+- fixedOvertimeMinutesPerWeek
+- workScheduleNotes
+- shiftPatternId
+
+Ný módel
+- StaffingRole
+- EmployeeStaffingRole
+- ShiftPattern
+- ShiftPatternSlot
+- StaffingCoverageProfile
+- StaffingCoverageRule
+
+Tenging við Verk
+WorkPartStaffingRequirement fær valfrjálst staffingRoleId. Þannig getur Verk síðar krafist sama mönnunarhlutverks og starfsmannaspjaldið skilgreinir, án þess að afrita starfsmannagögn inn í Verk.
+
+Ný síða
+/starfsmenn/monnun
+
+Þar er hægt að:
+- stofna mönnunarhlutverk,
+- stofna vaktamynstur,
+- bæta vöktum inn í rúllandi/fasta lotu,
+- stofna mönnunarprófíl fyrir vinnustað/deild,
+- skrá lágmarksmönnun eftir hlutverki, vikudögum og tíma.
+
+Dæmi um framtíðarnotkun
+Mönnunarprófíll: Bráðamóttaka – næturvakt
+22:00–08:00 alla daga:
+- 1 × læknir
+- 2 × hjúkrunarfræðingur
+- 1 × sjúkraliði
+
+Vaktaplanið getur þá borið raunverulega viðveru saman við lágmarkið áður en vakt er samþykkt eða þegar veikindi/frávik koma upp.
+
+Ráðningarsamningar
+Þessi breyting geymir textalegt samhengi/tilvísun en setur EKKI enn inn sjálfvirkt skjalaupload fyrir ráðningarsamninga. Frumskjal þarf síðar öruggt skjalalag og nákvæmar aðgangsheimildir vegna viðkvæmra starfsmannagagna.
+
+Uppsetning
+1. Afþjappa pakkanum yfir C:\GLÖGGT og leyfa yfirskrift.
+2. Keyra:
+   npx prisma validate
+   npx prisma generate
+   npx prisma migrate deploy
+   npx tsc --noEmit
+
+Migration:
+20260921103000_add_employee_schedule_staffing_core
+
+Eftir uppsetningu
+- Opna /starfsmenn/monnun og stofna a.m.k. þau mönnunarhlutverk sem fyrirtækið þarf.
+- Opna starfsmannaspjald og velja vinnufyrirkomulag, vinnustað, kjarasamning, vaktamynstur og mönnunarhlutverk eftir því sem við á.
+
+Ekki gert sjálfkrafa í þessari breytingu
+- Engin launatúlkun kjarasamninga.
+- Engin ágiskun á réttindum eða starfssviði.
+- Engin sjálfvirk úthlutun starfsmanna í mönnunarhlutverk út frá starfsheiti.
+- Engin sjálfvirk vaktagerð eða lágmarksmönnunarviðvörun enn; gagnagrunnurinn og stillingarnar eru grunnurinn fyrir það næsta lag.
+
+Valfrjáls prófunarhjálp
+scripts/configure-employee-staffing-test.ts getur stofnað mönnunarhlutverk úr núverandi starfsheitum í prófunarfélagi.
+Dry-run:
+  node --env-file=.env --import tsx scripts/configure-employee-staffing-test.ts --company-id=1
+Apply:
+  node --env-file=.env --import tsx scripts/configure-employee-staffing-test.ts --company-id=1 --apply
+
+Þetta er aðeins prófunarhjálp. Hún má ekki túlka starfsheiti sem fullnægjandi staðfestingu á raunverulegu starfssviði eða réttindum í production.

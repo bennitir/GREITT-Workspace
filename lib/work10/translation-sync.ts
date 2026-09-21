@@ -11,6 +11,20 @@ import {
 
 const TERMINAL_PART_STATUSES = ["COMPLETED", "CANCELLED"];
 
+function isUsableTranslation(language: string, value: string | null | undefined) {
+  const text = value?.trim();
+  if (!text) return false;
+  if (normalizeUiLanguage(language) !== "sr") return true;
+
+  // Serbian UI in GLÖGGT uses Cyrillic. Existing Latin-script prose is
+  // treated as missing so it can be regenerated without touching source text.
+  // Pure identifiers/codes (e.g. JL-564) are allowed to remain Latin.
+  if (/^[A-Z0-9._:/+\-\s]+$/u.test(text)) return true;
+  const hasLatinWord = /[A-Za-zČĆŽŠĐčćžšđ]{2,}/u.test(text);
+  if (!hasLatinWord) return true;
+  return /[А-Яа-яЉЊЂЋЏљњђћџ]/u.test(text);
+}
+
 function normalizeTargets(values: Array<string | null | undefined>) {
   return Array.from(
     new Set(
@@ -96,7 +110,7 @@ export async function ensureWork10OperationalTranslationsForWorkOrders(args: {
       sourceLanguage: work.sourceLanguage,
       existing: work.translations.map((translation) => ({
         language: translation.language,
-        hasText: Boolean(translation.title?.trim()),
+        hasText: isUsableTranslation(translation.language, translation.title),
       })),
       targets: targetLanguages,
     });
@@ -114,7 +128,7 @@ export async function ensureWork10OperationalTranslationsForWorkOrders(args: {
         sourceLanguage: work.sourceLanguage,
         existing: work.translations.map((translation) => ({
           language: translation.language,
-          hasText: Boolean(translation.description?.trim()),
+          hasText: isUsableTranslation(translation.language, translation.description),
         })),
         targets: targetLanguages,
       });
@@ -133,7 +147,7 @@ export async function ensureWork10OperationalTranslationsForWorkOrders(args: {
         sourceLanguage: part.sourceLanguage,
         existing: part.translations.map((translation) => ({
           language: translation.language,
-          hasText: Boolean(translation.title?.trim()),
+          hasText: isUsableTranslation(translation.language, translation.title),
         })),
         targets: targetLanguages,
       });
@@ -151,7 +165,7 @@ export async function ensureWork10OperationalTranslationsForWorkOrders(args: {
           sourceLanguage: part.sourceLanguage,
           existing: part.translations.map((translation) => ({
             language: translation.language,
-            hasText: Boolean(translation.description?.trim()),
+            hasText: isUsableTranslation(translation.language, translation.description),
           })),
           targets: targetLanguages,
         });
@@ -195,7 +209,7 @@ export async function ensureWork10OperationalTranslationsForWorkOrders(args: {
           select: { id: true, title: true, description: true },
         });
         const existingField = existing?.[field]?.trim();
-        if (existingField) continue;
+        if (isUsableTranslation(translation.language, existingField)) continue;
 
         if (existing) {
           await tx.workOrderTranslation.update({
@@ -230,7 +244,7 @@ export async function ensureWork10OperationalTranslationsForWorkOrders(args: {
           select: { id: true, title: true, description: true },
         });
         const existingField = existing?.[field]?.trim();
-        if (existingField) continue;
+        if (isUsableTranslation(translation.language, existingField)) continue;
 
         if (existing) {
           await tx.workPartTranslation.update({

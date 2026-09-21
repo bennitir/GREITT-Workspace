@@ -1,0 +1,119 @@
+GLÖGGT – Verk / Dagsmönnun
+Klárað fyrir, lifandi deadline-vægi, dagslok og heimferð
+21. september 2026
+
+MARKMIÐ
+
+Þessi breyting bætir formlegum lokatíma á Verk og tengir hann við Dagsmönnun.
+Hún festir einnig þá rekstrarreglu að starfsmaður eigi sjálfgefið að vera kominn
+aftur á sína starfstöð við lok vinnudags. Í núverandi prófunarumhverfi er það
+kl. 16:00, en skipuleggjandinn notar vinnudagsprófíl starfsmanns þegar hann er til.
+
+„Klárað fyrir“ er EKKI sami hlutur og plannedEndMinutes:
+
+- completionDeadlineDate + completionDeadlineMinutes = skuldbundinn/rekstrarlegur
+  lokatími sem Verkið þarf að vera búið fyrir.
+- plannedEndMinutes = reiknaður lokatími Verks í staðfestri dagsáætlun.
+
+NÝ GÖGN Á VERKI
+
+WorkOrder:
+- completionDeadlineDate
+- completionDeadlineMinutes
+- allowAfterWorkdayEnd
+- workdayEndExceptionReason
+
+Dagsloka-undantekning er meðvituð undantekning frá venjulegum vinnudegi.
+Ef hún er virk þarf ástæða að fylgja. Hún má ekki verða falin leið til að fylla
+hvern lausan tíma eftir dagslok.
+
+DAGSLOK OG HEIMFERÐ
+
+Dagsmönnun reiknar nú ekki aðeins hvort Verkið sjálft rúmist fyrir dagslok.
+Hún reiknar líka ferð frá síðasta Verki aftur á starfstöð starfsmanns.
+
+Sjálfgefin regla:
+  ferð á Verk + vinna/hlé + heimferð á starfstöð þarf að rúmast innan vinnudags.
+
+Þetta þýðir að óbrýnt Verk langt frá starfstöð má vera eftir í verkabankanum
+frekar en að senda starfsmann af stað seint á degi og missa heimkomumarkið.
+Eftir því sem líður á daginn fær styttri heimleið aukið vægi í röðuninni.
+
+Ef allowAfterWorkdayEnd er virkt og ástæða hefur verið skráð má áætlunin fara
+yfir venjuleg dagslok. Einnig þá er heimferð reiknuð og þarf að rúmast innan
+fráviksgluggans; undantekningin felur því ekki heimferðina.
+
+Síðasti ferðaleggur hvers starfsmanns birtist í tillögunni sem heimferð á
+starfstöð og er varðveittur í WorkTravelPlanLeg með:
+  legType = RETURN_BASE
+
+Ferð á Verk heldur:
+  legType = TO_WORK
+
+KLÁRAÐ FYRIR OG LIFANDI RÖÐUN
+
+Deadline má aðeins HÆKKA vægi Verks; það lækkar aldrei handvirkan forgang.
+Skipuleggjandinn reiknar svigrúm út frá:
+  tími til „Klárað fyrir“ - áætlaður vinnutími.
+
+Ferðatími, staðsetning, hæfni, deild, starfssvið og möguleg heimferð eru síðan
+notuð við raunhæfispróf og röðun frambjóðenda. Þannig má deadline aldrei setja
+óhæfan starfsmann á Verk.
+
+Núverandi stigvaxandi deadline-vægi:
+- mjög lítið svigrúm: getur orðið jafngildi Brýnt
+- innan vinnudags: getur orðið jafngildi Mikill
+- innan fárra daga: færist ofar innan/eða upp úr lágum forgangi
+- rúmt svigrúm: hefur lítil eða engin áhrif fyrst um sinn
+
+Innan sama virka forgangs fer styttra deadline-svigrúm ofar.
+
+MIKILVÆGT
+
+„Klárað fyrir“ brýtur ekki:
+- ábyrgðardeild
+- starfssvið
+- nauðsynlega hæfni/réttindi
+- teymisreglur
+- raunhæfan ferðatíma
+
+Ef Verkið er að verða tímanæmt en engin lögleg/raunhæf mönnun er til á kerfið
+að sýna áhættuna frekar en að finna óhæfan staðgengil.
+
+LOAD TEST
+
+scripts/seed-verk-load-test.ts býr nú til dreifð prófunar-deadline sem eru
+vísvitandi óháð handvirkum forgangi. Þannig má prófa að langt deadline hafi
+lítið vægi fyrst en fari ofar þegar svigrúmið minnkar.
+
+Hluti prófunar-Verka fær meðvitaða dagsloka-undantekningu með TEST_MARKER-ástæðu.
+Þetta eru eingöngu prófunargögn.
+
+MIGRATION
+
+20260921155000_add_work_completion_deadlines_and_return_travel
+
+PRÓFUN EFTIR YFIRLAGNINGU
+
+Keyra:
+  npx prisma validate
+  npx prisma generate
+  npx prisma migrate deploy
+  npx tsc --noEmit
+
+Til að fá deadline-dreifingu inn í 750-Verka prófunarbankann:
+  node --env-file=.env --import tsx scripts/seed-verk-load-test.ts --reset --apply
+
+Síðan er sérstaklega gagnlegt að prófa Dagsmönnun kl. 15:00 og staðfesta:
+- að Verk án nauðsynlegs lokatíma megi sitja eftir,
+- að deadline-Verk færist ofar þegar svigrúm minnkar,
+- að heimferð á starfstöð sé sýnileg,
+- að venjuleg Verk komi starfsmanni heim innan dagsloka,
+- að yfir-16:00 sé aðeins notað þegar undantekning er virk,
+- að umferðargluggi sé reiknaður bæði á Verk og á heimferð.
+
+STAÐFESTING Í ÞESSUM PAKKA
+
+Breyttar TS/TSX-skrár voru keyrðar í gegnum TypeScript transpile/syntax-próf hér.
+Fullt verkefnispróf með Prisma-generated types og npx tsc --noEmit þarf að fara
+fram í C:\GLÖGGT eftir npx prisma generate; það er endanleg staðfesting.

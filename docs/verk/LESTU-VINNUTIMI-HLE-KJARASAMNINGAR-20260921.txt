@@ -1,0 +1,69 @@
+GLÖGGT – Verk: vinnutími, neysluhlé og kjarasamningsprófílar
+21. september 2026
+
+Markmið
+- Aðskilja vinnustaðarreglur frá kjarasamningsreglum.
+- Vinnustaður skilgreinir venjulegan vinnudag, bækistöð og sveigjanleg neysluhlé.
+- Starfsmaður getur tengst sérstökum kjarasamningsprófíl óháð vinnustað.
+- Launaleg túlkun ótekins hlés er EKKI hardkóðuð; hún er REVIEW/UNVERIFIED þar til við staðfestum viðkomandi samning.
+- Dagskipulag getur nú reiknað áætlaðan lokatíma Verks með neysluhléum þegar vinnustaðarprófíll hefur verið skráður.
+- Ef aðeins lítið er eftir af Verki má reglulega klára það fyrst og taka hlé strax á eftir samkvæmt stillingu vinnustaðar.
+
+Ný gögn
+- WorkplaceScheduleProfile
+- WorkplaceBreakRule
+- LaborAgreementProfile
+- LaborAgreementBreakRule
+- EmployeeBreakEvent
+- Employee.workplaceScheduleProfileId
+- Employee.laborAgreementProfileId
+
+Ný síða
+/verk/vinnutimi
+
+Þar má:
+- stofna/uppfæra vinnustaðarprófíl,
+- skrá sveigjanleg neysluhlé,
+- stofna kjarasamningsprófíla án þess að giska á launareglur,
+- tengja starfsmenn við vinnustað og kjarasamning.
+
+Prófunarvinnustaður
+Nýtt script getur sett inn rekstrarlegu dæmaregluna sem við mótuðum:
+- vinnudagur hefst 08:00,
+- fyrra kaffihlé 09:40, 20 mín.,
+- hádegishlé 12:00, 30 mín.,
+- seinna kaffihlé 15:30, 15 mín.,
+- allt að 30 mín. sveigjanleiki síðar,
+- ef 15 mín. eða minna eru eftir af Verki má klára það fyrst.
+
+Scriptið setur ENGA kjarasamnings-/launatúlkun.
+
+Uppsetning
+Afþjappaðu yfir C:\GLÖGGT og leyfðu skrám að yfirskrifast.
+
+Keyrðu:
+  npx prisma validate
+  npx prisma generate
+  npx prisma migrate deploy
+  npx tsc --noEmit
+
+Síðan dry-run fyrir prófunarfyrirtæki #1:
+  node --env-file=.env --import tsx scripts/configure-verk-workday-test.ts --company-id=1
+
+Ef það lítur rétt út:
+  node --env-file=.env --import tsx scripts/configure-verk-workday-test.ts --company-id=1 --apply
+
+Próf
+1. Opna /verk/vinnutimi og staðfesta vinnustaðarprófíl + 3 hlé.
+2. Opna /verk og Morgunmönnun 08:00.
+3. Verk sem spannar 09:40 á að sýna hlé inn í áætluðum lokatíma.
+4. Ef lítið er eftir (<= 15 mín.) má lokatími Verks koma fyrst og hlé birtast strax á eftir.
+5. Engin regla um yfirvinnu/næturvinnu vegna ótekins hlés er virkjuð enn.
+
+Ekki komið í þessum pakka
+- raunveruleg leiðar-/km reiknivél milli staða,
+- GPS-vöktun,
+- full sjálfvirk 10:30/13:00/15:00 endurröðun dagsins,
+- staðfest launatúlkun ótekins hlés eftir einstökum kjarasamningum.
+
+Þetta eru næstu lög ofan á grunninn.

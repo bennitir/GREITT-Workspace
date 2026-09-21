@@ -1,0 +1,78 @@
+GLÖGGT – starfsmannakjarni: starfssvið, tilfallandi störf og mönnun
+21. september 2026
+
+MARKMIÐ
+- Starfsheiti og hæfni ein og sér mega ekki ráða sjálfvirkri úthlutun.
+- Starfsmannaspjaldið verður sannleiksgjafi um venjulegt starfssvið samkvæmt ráðningu/starfslýsingu.
+- Verkþáttur getur vísað í starfssvið og sjálfvirk mönnun útilokar starfsfólk utan þess áður en hæfni/tími eru metin.
+- Sérstök heimild fyrir „önnur tilfallandi störf“ er varðveitt sem undantekning en fer aldrei fram hjá skyldum fag-/réttindakröfum.
+
+NÝTT GAGNALAG
+- WorkScope
+- EmployeeWorkScope
+- Employee.incidentalWorkMode
+  * NEVER
+  * MANUAL_ONLY
+  * AUTO_IF_NEEDED
+- Employee.incidentalWorkNotes
+- WorkPart.workScopeId
+- WorkPartStaffingRequirement.workScopeId (valfrjáls yfirskrift á starfssviði fyrir einstakt mönnunarsæti)
+
+HEGÐUN MÖNNUNAR
+1. Venjulegt starfssvið: starfsmaður kemur eðlilega til greina.
+2. MANUAL_ONLY: starfsmaður má sjást sem handvirk undanþága en er ekki valinn sjálfkrafa í dagsplan.
+3. AUTO_IF_NEEDED: má koma til greina sem varaleið með verulegu frádráttarskori ef enginn innan venjulegs starfssviðs er hentugur.
+4. NEVER: starfsmaður kemur ekki til greina utan skráðs starfssviðs.
+5. Skyld hæfni/réttindi eru áfram hörð krafa í öllum tilfellum.
+6. Eldri Verk án workScopeId halda afturvirkri hegðun þar til þau fá starfssvið.
+
+STARFSMANNASPJALD
+- Nýr hluti „Starfssvið samkvæmt ráðningu“.
+- Velja má eitt eða fleiri venjuleg starfssvið og aðalstarfssvið.
+- Sérstök stilling fyrir önnur tilfallandi störf + athugasemd/ákvæði úr ráðningarsamningi.
+- Mönnun og vaktir fær stjórnun á starfssviðum fyrirtækisins.
+
+LOAD-TEST
+- 750-verka prófunarscriptið stofnar stöðluð prófunarstarfssvið.
+- Starfsmenn fá starfssvið eftir ráðningarhlutverki.
+- Verkþættir fá starfssvið eftir eðli Verks, t.d. CLEANING, WAREHOUSE, ELECTRICAL_WORK, MACHINE_OPERATION, LOGISTICS o.fl.
+- Einstök mönnunarsæti geta haft annað starfssvið en Verkþátturinn; prófunarsafnið notar t.d. FIELD_ASSISTANCE fyrir aðstoðarmann með fagmanni.
+- Fagfólk á því ekki lengur sjálfkrafa að fara í Þrif/Lager/almenn verk nema starfssvið eða tilfallandi heimild leyfi það.
+
+NÝ MIGRATION
+20260921120000_add_employee_work_scopes
+
+UPPSETNING
+Afþjappa pakkanum yfir C:\GLÖGGT og leyfa yfirskrift.
+
+Keyra síðan:
+  npx prisma validate
+  npx prisma generate
+  npx prisma migrate deploy
+  npx tsc --noEmit
+
+Endurgera síðan 750-verka prófunarsafnið svo starfssvið komi inn á starfsfólk og Verk:
+  node --env-file=.env --import tsx scripts/seed-verk-load-test.ts --reset --apply
+
+PRÓFUN
+1. Opna /starfsmenn/monnun og staðfesta starfssviðin.
+2. Opna nokkur starfsmannaspjöld og staðfesta venjulegt starfssvið + tilfallandi stillingu.
+3. Opna /verk -> Verkalisti -> Morgunmönnun/Dagsmönnun 08:00.
+4. Tæknimenn eiga ekki að fara sjálfvirkt í Þrif á sameign.
+5. Lagerstarfsmenn eiga að nýtast í lager/flutninga en ekki sjálfkrafa í óskylt fagverk.
+6. Rafmagns-/öryggis-/viðhaldsverk þurfa bæði rétt starfssvið og skyld hæfniskilyrði.
+7. Starfsmaður með MANUAL_ONLY má ekki koma inn í sjálfvirkt dagsplan utan starfssviðs.
+
+SKRÁR
+- prisma/schema.prisma
+- prisma/migrations/20260921120000_add_employee_work_scopes/migration.sql
+- app/starfsmenn/[id]/page.tsx
+- app/starfsmenn/actions.ts
+- app/starfsmenn/monnun/page.tsx
+- app/starfsmenn/monnun/actions.ts
+- app/verk/page.tsx
+- app/verk/Work10Dashboard.tsx
+- lib/i18n/employees.ts
+- lib/i18n/employee-staffing.ts
+- lib/i18n/work10.ts
+- scripts/seed-verk-load-test.ts

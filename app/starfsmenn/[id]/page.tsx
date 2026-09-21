@@ -39,11 +39,40 @@ export default async function EmployeeDetailPage({ params }: Props) {
       },
       compensations: { orderBy: { validFrom: "desc" } },
       qualifications: { orderBy: [{ validUntil: "asc" }, { title: "asc" }] },
+      staffingRoles: {
+        where: { isActive: true },
+        include: { staffingRole: true },
+      },
+      workScopes: {
+        where: { isActive: true },
+        include: { workScope: true },
+      },
+      departmentUnit: true,
+      teamMemberships: {
+        where: { isActive: true },
+        include: { team: { include: { department: true } } },
+      },
       workPartAssignments: { where: { removedAt: null, resourceKind: "PERSON" }, select: { id: true } },
       workPartLaborFacts: { where: { voidedAt: null }, select: { durationMinutes: true } },
     },
   });
   if (!employee) notFound();
+
+  const [workplaceProfiles, laborAgreementProfiles, shiftPatterns, staffingRoleOptions, workScopeOptions, departmentOptions, teamOptions] = await Promise.all([
+    prisma.workplaceScheduleProfile.findMany({ where: { companyId, isActive: true }, orderBy: [{ isDefault: "desc" }, { name: "asc" }] }),
+    prisma.laborAgreementProfile.findMany({ where: { companyId, isActive: true }, orderBy: { name: "asc" } }),
+    prisma.shiftPattern.findMany({ where: { companyId, isActive: true }, orderBy: { name: "asc" } }),
+    prisma.staffingRole.findMany({ where: { companyId, isActive: true }, orderBy: { name: "asc" } }),
+    prisma.workScope.findMany({ where: { companyId, isActive: true }, orderBy: { name: "asc" } }),
+    prisma.companyDepartment.findMany({ where: { companyId, isActive: true }, orderBy: [{ sortOrder: "asc" }, { name: "asc" }] }),
+    prisma.employeeTeam.findMany({ where: { companyId, isActive: true }, include: { department: true }, orderBy: [{ department: { name: "asc" } }, { name: "asc" }] }),
+  ]);
+  const selectedStaffingRoleIds = new Set(employee.staffingRoles.map((row) => row.staffingRoleId));
+  const primaryStaffingRoleId = employee.staffingRoles.find((row) => row.isPrimary)?.staffingRoleId ?? null;
+  const selectedWorkScopeIds = new Set(employee.workScopes.map((row) => row.workScopeId));
+  const primaryWorkScopeId = employee.workScopes.find((row) => row.isPrimary)?.workScopeId ?? null;
+  const selectedTeamIds = new Set(employee.teamMemberships.map((row) => row.teamId));
+  const primaryTeamId = employee.teamMemberships.find((row) => row.isPrimary)?.teamId ?? null;
 
   const now = new Date();
   const currentCompensation = employee.compensations.find((row) => row.validFrom <= now && (!row.validTo || row.validTo >= now)) ?? employee.compensations[0] ?? null;
@@ -57,7 +86,7 @@ export default async function EmployeeDetailPage({ params }: Props) {
   return (
     <main className="space-y-6">
       <div><Link href="/starfsmenn" className="text-sm font-semibold text-blue-700">← {t.back}</Link></div>
-      <PageHeader title={employee.fullName} description={[employee.jobTitle, employee.department, employee.employeeNumber].filter(Boolean).join(" · ") || t.title} />
+      <PageHeader title={employee.fullName} description={[employee.jobTitle, employee.departmentUnit?.name ?? employee.department, employee.employeeNumber].filter(Boolean).join(" · ") || t.title} />
 
       <div className="grid gap-4 md:grid-cols-3">
         <Card><p className="text-sm text-slate-500">{t.assignments}</p><p className="mt-2 text-3xl font-bold">{employee.workPartAssignments.length}</p></Card>
@@ -86,11 +115,16 @@ export default async function EmployeeDetailPage({ params }: Props) {
           <h2 className="text-xl font-bold">{t.employment}</h2>
           <div className="mt-4 grid gap-3 sm:grid-cols-2">
             <label className="grid gap-1 text-sm"><span>{t.jobTitle}</span><input name="jobTitle" defaultValue={employee.jobTitle ?? ""} className="rounded-lg border px-3 py-2" /></label>
-            <label className="grid gap-1 text-sm"><span>{t.department}</span><input name="department" defaultValue={employee.department ?? ""} className="rounded-lg border px-3 py-2" /></label>
+            <label className="grid gap-1 text-sm"><span>{t.department}</span><select name="departmentId" defaultValue={employee.departmentId ?? ""} className="rounded-lg border px-3 py-2"><option value="">{t.noDepartment}</option>{departmentOptions.filter((department) => department.unitType !== "DIVISION").map((department) => <option key={department.id} value={department.id}>{department.name}</option>)}</select><input type="hidden" name="department" value={employee.department ?? ""} /></label>
             <label className="grid gap-1 text-sm"><span>{t.employmentKind}</span><select name="employmentKind" defaultValue={employee.employmentKind} className="rounded-lg border px-3 py-2"><option value="EMPLOYEE">{t.kinds.EMPLOYEE}</option><option value="TEMPORARY">{t.kinds.TEMPORARY}</option><option value="APPRENTICE">{t.kinds.APPRENTICE}</option><option value="OTHER">{t.kinds.OTHER}</option></select></label>
             <label className="grid gap-1 text-sm"><span>{t.employmentPercent}</span><input name="employmentPercent" type="number" min="0" max="100" step="0.01" defaultValue={employee.employmentPercent ?? ""} className="rounded-lg border px-3 py-2" /></label>
             <label className="grid gap-1 text-sm"><span>{t.employmentStart}</span><LocalDateInput name="employmentStartDate" defaultValue={inputDate(employee.employmentStartDate)} placeholder={t.datePlaceholder} calendarLabel={t.openCalendar} /></label>
             <label className="grid gap-1 text-sm"><span>{t.employmentEnd}</span><LocalDateInput name="employmentEndDate" defaultValue={inputDate(employee.employmentEndDate)} placeholder={t.datePlaceholder} calendarLabel={t.openCalendar} /></label>
+            <div className="sm:col-span-2 rounded-xl border bg-slate-50 p-3">
+              <p className="text-sm font-semibold">{t.fixedTeams}</p><p className="mt-1 text-xs text-slate-500">{t.fixedTeamsHelp}</p>
+              <div className="mt-3 grid gap-2 sm:grid-cols-2">{teamOptions.map((team) => <label key={team.id} className="flex items-start gap-2 rounded-lg border bg-white px-3 py-2 text-sm"><input type="checkbox" name="teamIds" value={team.id} defaultChecked={selectedTeamIds.has(team.id)} className="mt-1" /><span><strong>{team.name}</strong><span className="block text-xs text-slate-500">{team.department.name}</span></span></label>)}</div>
+              <label className="mt-3 grid gap-1 text-sm"><span>{t.primaryFixedTeam}</span><select name="primaryTeamId" defaultValue={primaryTeamId ?? ""} className="rounded-lg border bg-white px-3 py-2"><option value="">{t.noProfile}</option>{teamOptions.map((team) => <option key={team.id} value={team.id}>{team.name} · {team.department.name}</option>)}</select></label>
+            </div>
             <label className="grid gap-1 text-sm sm:col-span-2"><span>{t.notes}</span><textarea name="notes" defaultValue={employee.notes ?? ""} rows={4} className="rounded-lg border px-3 py-2" /></label>
             <div className="sm:col-span-2 rounded-xl border bg-slate-50 p-3">
               <div className="flex flex-wrap items-center justify-between gap-3">
@@ -105,6 +139,153 @@ export default async function EmployeeDetailPage({ params }: Props) {
             </div>
           </div>
         </Card>
+
+        <Card>
+          <h2 className="text-xl font-bold">{t.jobDescriptionTitle}</h2>
+          <div className="mt-4 grid gap-3">
+            <label className="grid gap-1 text-sm">
+              <span>{t.jobDescription}</span>
+              <textarea name="jobDescription" defaultValue={employee.jobDescription ?? ""} rows={6} className="rounded-lg border px-3 py-2" />
+            </label>
+            <label className="grid gap-1 text-sm">
+              <span>{t.employmentContractReference}</span>
+              <input name="employmentContractReference" defaultValue={employee.employmentContractReference ?? ""} className="rounded-lg border px-3 py-2" />
+              <span className="text-xs leading-5 text-slate-500">{t.employmentContractReferenceHelp}</span>
+            </label>
+            <label className="grid gap-1 text-sm">
+              <span>{t.employmentContractNotes}</span>
+              <textarea name="employmentContractNotes" defaultValue={employee.employmentContractNotes ?? ""} rows={4} className="rounded-lg border px-3 py-2" />
+            </label>
+          </div>
+        </Card>
+
+        <Card>
+          <h2 className="text-xl font-bold">{t.workSchedule}</h2>
+          <p className="mt-1 text-sm text-slate-600">{t.workScheduleHelp}</p>
+          <div className="mt-4 grid gap-3 sm:grid-cols-2">
+            <label className="grid gap-1 text-sm">
+              <span>{t.workScheduleType}</span>
+              <select name="workScheduleType" defaultValue={employee.workScheduleType} className="rounded-lg border px-3 py-2">
+                <option value="DAY">{t.workScheduleTypes.DAY}</option>
+                <option value="DAY_FIXED_OVERTIME">{t.workScheduleTypes.DAY_FIXED_OVERTIME}</option>
+                <option value="SHIFT">{t.workScheduleTypes.SHIFT}</option>
+                <option value="ROLLING_SHIFT">{t.workScheduleTypes.ROLLING_SHIFT}</option>
+                <option value="FLEXIBLE">{t.workScheduleTypes.FLEXIBLE}</option>
+                <option value="OTHER">{t.workScheduleTypes.OTHER}</option>
+              </select>
+            </label>
+            <label className="grid gap-1 text-sm">
+              <span>{t.workplaceProfile}</span>
+              <select name="workplaceScheduleProfileId" defaultValue={employee.workplaceScheduleProfileId ?? ""} className="rounded-lg border px-3 py-2">
+                <option value="">{t.noProfile}</option>
+                {workplaceProfiles.map((profile) => <option key={profile.id} value={profile.id}>{profile.name}</option>)}
+              </select>
+            </label>
+            <label className="grid gap-1 text-sm">
+              <span>{t.laborAgreement}</span>
+              <select name="laborAgreementProfileId" defaultValue={employee.laborAgreementProfileId ?? ""} className="rounded-lg border px-3 py-2">
+                <option value="">{t.noProfile}</option>
+                {laborAgreementProfiles.map((profile) => <option key={profile.id} value={profile.id}>{profile.name}</option>)}
+              </select>
+            </label>
+            <label className="grid gap-1 text-sm">
+              <span>{t.shiftPattern}</span>
+              <select name="shiftPatternId" defaultValue={employee.shiftPatternId ?? ""} className="rounded-lg border px-3 py-2">
+                <option value="">{t.noProfile}</option>
+                {shiftPatterns.map((pattern) => <option key={pattern.id} value={pattern.id}>{pattern.name}</option>)}
+              </select>
+            </label>
+            <label className="grid gap-1 text-sm">
+              <span>{t.contractedWeeklyMinutes}</span>
+              <input name="contractedWeeklyHours" type="number" min="0" max="168" step="0.25" defaultValue={employee.contractedWeeklyMinutes === null ? "" : employee.contractedWeeklyMinutes / 60} className="rounded-lg border px-3 py-2" />
+            </label>
+            <label className="grid gap-1 text-sm">
+              <span>{t.fixedOvertimeMinutesPerWeek}</span>
+              <input name="fixedOvertimeHoursPerWeek" type="number" min="0" max="168" step="0.25" defaultValue={employee.fixedOvertimeMinutesPerWeek === null ? "" : employee.fixedOvertimeMinutesPerWeek / 60} className="rounded-lg border px-3 py-2" />
+            </label>
+            <label className="grid gap-1 text-sm sm:col-span-2">
+              <span>{t.workScheduleNotes}</span>
+              <textarea name="workScheduleNotes" defaultValue={employee.workScheduleNotes ?? ""} rows={3} className="rounded-lg border px-3 py-2" />
+            </label>
+          </div>
+        </Card>
+
+
+        <Card>
+          <h2 className="text-xl font-bold">{t.workScopeTitle}</h2>
+          <p className="mt-1 text-sm text-slate-600">{t.workScopeHelp}</p>
+          {workScopeOptions.length === 0 ? (
+            <p className="mt-4 rounded-xl border border-dashed bg-slate-50 p-3 text-sm text-slate-500">{t.noWorkScopes}</p>
+          ) : (
+            <div className="mt-4 space-y-3">
+              <div className="grid gap-2 sm:grid-cols-2">
+                {workScopeOptions.map((scope) => (
+                  <label key={scope.id} className="flex items-start gap-2 rounded-lg border bg-white px-3 py-2 text-sm">
+                    <input type="checkbox" name="workScopeIds" value={scope.id} defaultChecked={selectedWorkScopeIds.has(scope.id)} className="mt-1" />
+                    <span><strong>{scope.name}</strong><span className="mt-0.5 block text-xs font-mono text-slate-500">{scope.code}</span>{scope.description ? <span className="mt-0.5 block text-xs text-slate-500">{scope.description}</span> : null}</span>
+                  </label>
+                ))}
+              </div>
+              <label className="grid gap-1 text-sm">
+                <span>{t.primaryWorkScope}</span>
+                <select name="primaryWorkScopeId" defaultValue={primaryWorkScopeId ?? ""} className="rounded-lg border px-3 py-2">
+                  <option value="">{t.noProfile}</option>
+                  {workScopeOptions.map((scope) => <option key={scope.id} value={scope.id}>{scope.name}</option>)}
+                </select>
+              </label>
+              <div className="rounded-xl border bg-amber-50 p-3">
+                <label className="grid gap-1 text-sm">
+                  <span className="font-semibold text-amber-950">{t.incidentalWorkMode}</span>
+                  <select name="incidentalWorkMode" defaultValue={employee.incidentalWorkMode} className="rounded-lg border bg-white px-3 py-2">
+                    <option value="NEVER">{t.incidentalWorkModes.NEVER}</option>
+                    <option value="MANUAL_ONLY">{t.incidentalWorkModes.MANUAL_ONLY}</option>
+                    <option value="AUTO_IF_NEEDED">{t.incidentalWorkModes.AUTO_IF_NEEDED}</option>
+                  </select>
+                  <span className="text-xs leading-5 text-amber-900">{t.incidentalWorkHelp}</span>
+                </label>
+                <label className="mt-3 grid gap-1 text-sm">
+                  <span>{t.incidentalWorkNotes}</span>
+                  <textarea name="incidentalWorkNotes" defaultValue={employee.incidentalWorkNotes ?? ""} rows={3} className="rounded-lg border bg-white px-3 py-2" />
+                </label>
+              </div>
+              <p className="rounded-xl bg-blue-50 p-3 text-xs leading-5 text-blue-900">{t.workScopeRightsHelp}</p>
+            </div>
+          )}
+        </Card>
+
+        <Card>
+          <div className="flex flex-wrap items-start justify-between gap-3">
+            <div><h2 className="text-xl font-bold">{t.staffingAndCoverage}</h2><p className="mt-1 text-sm text-slate-600">{t.staffingAndCoverageHelp}</p></div>
+            <Link href="/starfsmenn/monnun" className="rounded-lg border px-3 py-2 text-sm font-semibold hover:bg-slate-50">{t.manageStaffing}</Link>
+          </div>
+          {staffingRoleOptions.length === 0 ? (
+            <p className="mt-4 rounded-xl border border-dashed bg-slate-50 p-3 text-sm text-slate-500">{t.noStaffingRoles}</p>
+          ) : (
+            <div className="mt-4 space-y-3">
+              <div>
+                <p className="text-sm font-semibold">{t.staffingRoles}</p>
+                <p className="mt-1 text-xs leading-5 text-slate-500">{t.staffingRolesHelp}</p>
+                <div className="mt-3 grid gap-2 sm:grid-cols-2">
+                  {staffingRoleOptions.map((role) => (
+                    <label key={role.id} className="flex items-start gap-2 rounded-lg border bg-white px-3 py-2 text-sm">
+                      <input type="checkbox" name="staffingRoleIds" value={role.id} defaultChecked={selectedStaffingRoleIds.has(role.id)} className="mt-1" />
+                      <span><strong>{role.name}</strong>{role.description ? <span className="mt-0.5 block text-xs text-slate-500">{role.description}</span> : null}</span>
+                    </label>
+                  ))}
+                </div>
+              </div>
+              <label className="grid gap-1 text-sm">
+                <span>{t.primaryStaffingRole}</span>
+                <select name="primaryStaffingRoleId" defaultValue={primaryStaffingRoleId ?? ""} className="rounded-lg border px-3 py-2">
+                  <option value="">{t.noProfile}</option>
+                  {staffingRoleOptions.map((role) => <option key={role.id} value={role.id}>{role.name}</option>)}
+                </select>
+              </label>
+              <p className="rounded-xl bg-violet-50 p-3 text-xs leading-5 text-violet-900">{t.minimumCoverageHelp}</p>
+            </div>
+          )}
+        </Card>
+
         <div className="xl:col-span-2"><button type="submit" className="rounded-lg bg-slate-900 px-5 py-2.5 font-semibold text-white">{t.save}</button></div>
       </form>
 
@@ -263,7 +444,7 @@ export default async function EmployeeDetailPage({ params }: Props) {
                       <label className="grid gap-1 text-sm">
                         <span>{t.qualificationType}</span>
                         <select name="qualificationType" defaultValue={item.qualificationType} className="rounded-lg border bg-white px-3 py-2">
-                          <option value="DRIVING_LICENSE">{t.qualificationTypes.DRIVING_LICENSE}</option>
+                          <option value="EDUCATION">{t.qualificationTypes.EDUCATION}</option><option value="DRIVING_LICENSE">{t.qualificationTypes.DRIVING_LICENSE}</option>
                           <option value="MACHINE">{t.qualificationTypes.MACHINE}</option>
                           <option value="CERTIFICATION">{t.qualificationTypes.CERTIFICATION}</option>
                           <option value="TRAINING">{t.qualificationTypes.TRAINING}</option>
@@ -314,7 +495,7 @@ export default async function EmployeeDetailPage({ params }: Props) {
               <label className="grid gap-1 text-sm">
                 <span>{t.qualificationType}</span>
                 <select name="qualificationType" className="rounded-lg border bg-white px-3 py-2">
-                  <option value="DRIVING_LICENSE">{t.qualificationTypes.DRIVING_LICENSE}</option>
+                  <option value="EDUCATION">{t.qualificationTypes.EDUCATION}</option><option value="DRIVING_LICENSE">{t.qualificationTypes.DRIVING_LICENSE}</option>
                   <option value="MACHINE">{t.qualificationTypes.MACHINE}</option>
                   <option value="CERTIFICATION">{t.qualificationTypes.CERTIFICATION}</option>
                   <option value="TRAINING">{t.qualificationTypes.TRAINING}</option>

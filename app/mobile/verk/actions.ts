@@ -7,6 +7,7 @@ import { workResourceOperationsText } from "@/lib/i18n/work-resource-operations"
 import { prisma } from "@/lib/prisma";
 import { nextMaintenanceDueValue } from "@/lib/work10/maintenance";
 import { removeWorkResourceMedia, saveWorkResourceMeterPhoto } from "@/lib/work10/resource-media";
+import { removeWorkEvidenceMedia, saveWorkEvidencePhoto } from "@/lib/work10/work-evidence-media";
 import { requireMobileWorkEmployee } from "@/lib/work10/mobile-access";
 import {
   defaultResourceUnit,
@@ -42,6 +43,17 @@ function workDateFromNow(now: Date) {
   return new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate(), 12));
 }
 
+function effectivePhotoRequirement(partRequirement: string, workRequirement: string) {
+  return partRequirement === "INHERIT" ? workRequirement : partRequirement;
+}
+
+function requiredEvidenceStage(requirement: string) {
+  if (requirement === "START") return "START";
+  if (requirement === "PROGRESS") return "PROGRESS";
+  if (requirement === "PART_COMPLETE") return "PART_COMPLETE";
+  return null;
+}
+
 function revalidateMobileWork(workOrderId: number) {
   revalidatePath("/mobile/verk");
   revalidatePath(`/mobile/verk/${workOrderId}`);
@@ -61,9 +73,10 @@ async function loadWorkPartForMobile(
       status: true,
       startedAt: true,
       completedAt: true,
+      photoRequirement: true,
       workParts: {
         orderBy: { sequence: "asc" },
-        select: { id: true, status: true, sequence: true, title: true },
+        select: { id: true, status: true, sequence: true, title: true, photoRequirement: true },
       },
     },
   }).then(async (work) => {
@@ -88,6 +101,9 @@ async function updateWorkAndPartStatus(params: {
   const { companyId, userId, workOrderId, workPartId, requestedStatus, auditDescription } = params;
   const loaded = await loadWorkPartForMobile(companyId, workOrderId, workPartId);
   if (!loaded?.part) return false;
+  if (loaded.work.status === "COMPLETED" || loaded.work.status === "CANCELLED") {
+    return false;
+  }
 
   const nextParts = loaded.work.workParts.map((item) =>
     item.id === workPartId ? { ...item, status: requestedStatus } : item,
@@ -168,6 +184,15 @@ export async function startMobileWorkPart(formData: FormData) {
     loaded.dependencies,
   );
   if (blockers.length > 0) throw new Error(t.errors.dependencyBlocked);
+
+  const startRequirement = effectivePhotoRequirement(loaded.part.photoRequirement, loaded.work.photoRequirement);
+  if (startRequirement === "START") {
+    const startPhoto = await prisma.workEvidencePhoto.findFirst({
+      where: { companyId: actor.companyId, workOrderId, workPartId, stage: "START" },
+      select: { id: true },
+    });
+    if (!startPhoto) throw new Error(t.errors.requiredPhotoMissing);
+  }
 
   const active = await prisma.workPartLaborFact.findFirst({
     where: {
@@ -257,6 +282,26 @@ async function closeActiveMobileFact(params: {
   if (!loaded?.part) throw new Error(t.errors.workNotFound);
 
   if (setStatus === "COMPLETED") {
+    const requirement = effectivePhotoRequirement(loaded.part.photoRequirement, loaded.work.photoRequirement);
+    const evidenceStage = requiredEvidenceStage(requirement);
+    if (evidenceStage) {
+      const evidence = await prisma.workEvidencePhoto.findFirst({
+        where: { companyId: actor.companyId, workOrderId, workPartId, stage: evidenceStage },
+        select: { id: true },
+      });
+      if (!evidence) throw new Error(t.errors.requiredPhotoMissing);
+    }
+    const completingLastOpenPart = loaded.work.workParts
+      .map((part) => part.id === workPartId ? { ...part, status: "COMPLETED" } : part)
+      .every((part) => isWork10PartTerminalStatus(part.status));
+    if (requirement === "WORK_COMPLETE" && completingLastOpenPart) {
+      const evidence = await prisma.workEvidencePhoto.findFirst({
+        where: { companyId: actor.companyId, workOrderId, stage: "WORK_COMPLETE" },
+        select: { id: true },
+      });
+      if (!evidence) throw new Error(t.errors.requiredPhotoMissing);
+    }
+
     const blockers = work10UnresolvedPredecessorIds(
       workPartId,
       loaded.work.workParts,
@@ -358,6 +403,72 @@ export async function completeMobileWorkPart(formData: FormData) {
   const t = workMobileText(actor.language);
   if (!workOrderId || !workPartId) throw new Error(t.errors.invalidWork);
   await closeActiveMobileFact({ workOrderId, workPartId, setStatus: "COMPLETED" });
+}
+
+export async function recordMobileWorkEvidencePhoto(formData: FormData) {
+  const workOrderId = numberField(formData, "workOrderId");
+  const workPartId = numberField(formData, "workPartId");
+  const stage = String(formData.get("stage") ?? "").trim();
+  const photo = formData.get("photo");
+
+  const actor = await requireMobileWorkEmployee();
+  const t = workMobileText(actor.language);
+  const allowedStages = new Set(["START", "PROGRESS", "PART_COMPLETE", "WORK_COMPLETE", "OPTIONAL"]);
+
+  if (!workOrderId || !workPartId || !allowedStages.has(stage)) throw new Error(t.errors.invalidWork);
+  if (!(photo instanceof File) || photo.size === 0) throw new Error(t.errors.photoRequired);
+
+  const loaded = await loadWorkPartForMobile(actor.companyId, workOrderId, workPartId);
+  if (!loaded?.part) throw new Error(t.errors.workNotFound);
+  if (loaded.work.status === "COMPLETED" || loaded.work.status === "CANCELLED") {
+    throw new Error(t.errors.workClosed);
+  }
+
+  const storagePath = await saveWorkEvidencePhoto(
+    photo,
+    actor.companyId,
+    workOrderId,
+    workPartId,
+    stage,
+  );
+
+  if (!storagePath) throw new Error(t.errors.photoRequired);
+
+  try {
+    await prisma.$transaction(async (tx) => {
+      const evidence = await tx.workEvidencePhoto.create({
+        data: {
+          companyId: actor.companyId,
+          workOrderId,
+          workPartId,
+          stage,
+          storagePath,
+          fileName: photo.name || null,
+          mimeType: photo.type || null,
+          createdById: actor.user.id,
+        },
+      });
+      await tx.auditEvent.create({
+        data: {
+          companyId: actor.companyId,
+          userId: actor.user.id,
+          entityType: "WORK_EVIDENCE_PHOTO",
+          entityId: evidence.id,
+          parentEntityType: "WORK_ORDER",
+          parentEntityId: workOrderId,
+          action: "CREATED",
+          source: "MOBILE",
+          description: t.audit.photoAdded,
+          afterData: { workPartId, stage, storagePath },
+        },
+      });
+    });
+  } catch (error) {
+    await removeWorkEvidenceMedia(storagePath);
+    throw error;
+  }
+
+  revalidateMobileWork(workOrderId);
 }
 
 export async function recordMobileMaterialUsage(formData: FormData) {

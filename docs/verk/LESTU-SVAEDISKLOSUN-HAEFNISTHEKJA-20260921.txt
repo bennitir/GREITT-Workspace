@@ -1,0 +1,100 @@
+GLÖGGT – Dagsmönnun: svæðisklösun og hæfnisþekja
+Dagsetning: 21.09.2026
+
+Markmið
+-------
+Minnka óþarfa langar ferðir og koma í veg fyrir að mörg teymi/bílar séu send á sama rekstrarsvæði þegar einn starfsmaður eða eitt hæft teymi getur leyst stærri pakka af Verkefnum þar.
+
+Grunnregla
+----------
+GLÖGGT á ekki lengur aðeins að hugsa:
+  Verk -> besti starfsmaður núna -> ferð.
+
+Heldur einnig:
+  Rekstrarstaður/svæði -> Verkpakki -> minnsta hæfa manning/teymi sem nær yfir sem mest -> sem fæstar nýjar ferðir.
+
+Hvað þessi breyting gerir
+-------------------------
+1. Hæfnisþekja á rekstrarstað
+   - Fyrir öll ómönnuð Verk með áætlaðan tíma er reiknað hvaða Verk á sama rekstrarstað hver starfsmaður getur leyst innan venjulegs starfssviðs og harðra hæfniskrafna.
+   - Starfsmaður sem getur leyst fleiri Verk og nær yfir fleiri nauðsynleg hæfnikóðasvið fær svæðisforskot við fyrstu ferð inn á svæðið.
+   - Þetta styður markmiðið „einn starfsmaður sem nær yfir alla kunnáttuna“ þegar gögnin leyfa það.
+
+2. Fólk sem er þegar á svæðinu fær raunverulegt forskot
+   - Ef full mönnun næsta Verks fæst með fólki sem er þegar á sama rekstrarstað er sú lausn reynd fyrst.
+   - Þetta er sterkari regla en fyrra almenna sama-staðar stigavægi.
+
+3. Bið eftir svæðisteymi frekar en ný langferð
+   - Ef ný tillaga myndi kalla á >= 20 mín. nýjan akstur inn á svæði þar sem hæft fólk er þegar statt, reynir skipuleggjandinn fyrst að bíða eftir því fólki í allt að 180 mín. ef Verkið, hlé, heimferð og deadline passa enn.
+   - Neysluhlé á svæðinu eru eðlilegur hluti dagsins og eru tekin með í reikninginn. Annað teymi er því ekki sent aðeins vegna kaffis/hádegis.
+
+4. Verk má bíða ef deadline leyfir
+   - Ef fólk á svæðinu hefur rétta venjulega hæfni en kemst ekki yfir Verkið í dag og deadline krefst þess ekki í dag, má Verkið bíða frekar en að stofna nýja langferð.
+   - Brýnt Verk (URGENT) fær áfram að reyna að stofna nýja ferð.
+
+5. Ekki rífa starfsmann úr virkum svæðispakka að óþörfu
+   - Þegar starfsmaður er á rekstrarstað sem er ekki hans starfstöð og hann getur enn leyst ókláruð Verk þar, fær hann refsivægi ef annað Verk myndi senda hann af svæðinu.
+   - Þetta á að halda svæðislotu saman, nema annað Verk sé raunverulega þannig að kerfið þurfi að velja hann þrátt fyrir refsivægið.
+
+Hörð mörk sem breytast ekki
+----------------------------
+- Ábyrgðardeild.
+- Starfssvið/ráðningarsvið.
+- Nauðsynleg réttindi og hæfni.
+- Föstu teymi þegar heilt teymi getur mannað Verkið.
+- Deadline.
+- Neysluhlé.
+- Heimferð og venjuleg dagslok nema skýr dagsloka-undantekning sé virk.
+
+Mikilvæg takmörkun í þessari lotu
+---------------------------------
+Svæðisklösunin vinnur nú á sama operationalLocationId. Hún sameinar því t.d. Verk á „Grindavík – þjónustusvæði“ mjög markvisst. Hún myndar ekki enn sjálfkrafa landfræðilegt hverfi úr mörgum ólíkum location-id sem eru nálægt hvert öðru. Það getur komið síðar með raunleiðagögnum/kortaveitu.
+
+Bílar
+-----
+Kerfið úthlutar ekki enn sérstöku ökutæki sem resource í þessari reglu. „Einn bíll“ er því nú rekstrarlegt markmið sem næst með því að halda einum starfsmanni/minnsta teymi saman í sömu svæðisferð. Ferðamínútur eru áfram person-minutes í núverandi mælikvarða; tveir starfsmenn í sama bíl teljast því báðir með ferðatíma þótt aðeins einn bíll fari.
+
+Samanburðarpunktur fyrir próf
+-----------------------------
+Fyrri 08:00 keyrsla fyrir þessa breytingu:
+- Tillögur að úthlutunum: 165
+- Nýting lauss vinnutíma: 85%
+- Áætluð virk vinna: 227 klst. 20 mín.
+- Ferðatími innan dags: 67 klst. 56 mín.
+- Ónýtt laust rými: 50 klst. 34 mín.
+- Óúthlutaðir starfsmenn: 4
+
+Sérstakt gæðapróf:
+- Fyrri áætlun sendi fleiri en einn Eftirlits-aðila/teymi til Grindavíkur í sambærileg Verk yfir daginn.
+- Eftir breytingu á að skoða hvort færri sjálfstæðar langferðir fari inn á Grindavík og hvort sami hæfi starfsmaður/teymi taki fleiri Verk þar áður en heimferð eða svæðisskipti eiga sér stað.
+
+Hvað á að bera saman eftir uppsetningu
+--------------------------------------
+1. Fjölda tillagna að úthlutunum (grunnur 165).
+2. Ferðatíma innan dags (grunnur 67:56) – ætti helst að lækka.
+3. Virka vinnu (grunnur 227:20) – ætti helst að hækka eða haldast sterk.
+4. Ónýtt laust rými (grunnur 50:34).
+5. Fjölda sjálfstæðra innferða á Grindavík/Voga/önnur fjarlæg svæði.
+6. Hvort sami starfsmaður/minnsta teymi haldist á svæðinu í fleiri Verk.
+7. Hvort deadline, hlé og heimferð haldist rétt.
+
+Skrár breyttar
+--------------
+- app/verk/Work10Dashboard.tsx
+- lib/i18n/work10.ts
+- docs/verk/LESTU-SVAEDISKLOSUN-HAEFNISTHEKJA-20260921.txt
+
+Gagnagrunnur
+------------
+Engin Prisma-breyting og engin migration í þessari lotu.
+
+Prófun
+------
+Keyra á verkefninu:
+  npx tsc --noEmit
+
+Síðan búa til nýja Dagsmönnun kl. 08:00 á sömu 750-Verka prófunargögnum og bera niðurstöðuna saman við grunninn hér að ofan.
+
+Athugun á pakkanum
+------------------
+TS/TSX var syntax-transpilað með TypeScript 5.8.3 í vinnuumhverfi pakkagerðar án syntax-villu. Fullt project `npx tsc --noEmit` þarf samt að keyra í C:\GLÖGGT þar sem full node_modules/project config er til staðar.

@@ -1,0 +1,16 @@
+GLÖGGT – Mobile rekstrartexti / sjálfvirkar þýðingar
+
+Engin Prisma migration.
+
+Eftir afþjöppun yfir C:\GLÖGGT:
+  npx tsc --noEmit
+
+Prófun:
+1. Veldu English/Polski/Srpski í Mobile-stillingum.
+2. Opnaðu /mobile/verk og síðan úthlutað Verk.
+3. Við fyrstu opnun getur frumtextinn sést stutt meðan vantar þýðing er búin til.
+4. Síðan á að refreshast sjálfkrafa og sýna Verkheiti, Verklýsingu, Verkþáttaheiti og leiðbeiningar á valda tungumálinu.
+5. Frumtextinn í gagnagrunni á að vera óbreyttur.
+6. Breyttu forgangi í Hátt/Brýnt og staðfestu að push-heitið noti sama tungumál þegar þýðing vantar áður.
+
+Ath.: Þýðingar eru aðeins búnar til þegar þær vantar. Fyrirliggjandi þýðingar eru notaðar fyrst.

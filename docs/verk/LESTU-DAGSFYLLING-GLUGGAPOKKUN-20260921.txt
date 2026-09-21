@@ -1,0 +1,55 @@
+GLÖGGT – Dagsfylling og gluggapökkun
+21. september 2026
+
+Markmið
+- Bæta nýtingu dagsins án þess að fórna deild, starfssviði, hæfni, föstum teymum, deadline, hléum, ferðatíma eða heimkomu innan venjulegra dagsloka.
+- Lengri Verk eiga að fá raunhæft forskot meðan stórir samfelldir gluggar eru enn lausir.
+- Styttri Verk eiga að fylla minni glugga og síðasta hluta dagsins þegar lengri Verk passa ekki lengur.
+- Akstur á ekki að teljast góð dagsfylling í sjálfu sér; gluggapökkun refsar ferðatíma svo raunvinna fái vægi.
+
+Mikilvæg lagfæring við endurskipulagningu
+Við 10:30 / 13:00 / 15:00 endurskipulagningu má ekki endurspila neysluhlé sem áttu að vera tekin fyrr um daginn.
+Áður byrjaði 15:00 tillaga stundum ekki fyrr en um 15:45 vegna þess að morgunkaffi og hádegishlé voru ranglega sett aftur inn frá 15:00.
+Nú eru reglubundin hlé með markmiðsupphaf fyrir upphafspunkt endurskipulagningar talin þegar afgreidd þar til raunveruleg EmployeeBreakEvent-gögn eru tengd inn í þessa ákvörðun.
+
+Dagsfylling / gluggapökkun
+Röðunin notar áfram harðar reglur fyrst. Innan raunhæfra kosta er bætt við pakkningarmati:
+- Verk sem rúmast ásamt ferð á Verk, hléum, vinnu og heimferð innan venjulegs dags fær pakkningargildi.
+- Minna ónotað rými eftir heimkomu er betra.
+- Ferðamínútur fá refsivægi svo kerfið velji ekki langan akstur bara til að fylla klukkuna.
+- Verk með skráða dagsloka-undantekningu geta komið til greina eftir venjuleg dagslok, en fá sérstakt refsivægi. Deadline eitt og sér veitir ekki slíka heimild.
+- Mjög þröng deadline halda áfram að fara fram fyrir dagsfyllingu.
+
+Deadline og dagsloka-undantekning
+- Klárað fyrir hækkar vægi þegar svigrúmið minnkar.
+- Klárað fyrir er EKKI sjálfkrafa heimild til að fara yfir venjuleg dagslok.
+- Aðeins allowAfterWorkdayEnd + skráð ástæða opnar þá undantekningu.
+- Dagsmönnunarspjaldið sýnir nú sérstaklega þegar Verk hefur dagsloka-undantekningu og birtir ástæðuna.
+
+Prófunargögn
+Load-test deadline-dreifingin er breytt svo flest Verk með Klárað fyrir 17:30 hafi EKKI dagsloka-undantekningu.
+Örfá Verk fá meðvitaða undantekningu svo bæði tilvik séu prófuð.
+Þetta krefst endurseed ef óskað er eftir nýju prófunarmynstri.
+
+Nýtingarmælikvarðar í Dagsmönnun
+Tillöguspjaldið sýnir nú:
+- Nýting lauss vinnutíma
+- Áætlaða virka vinnu
+- Ferðatíma innan venjulegs dags
+- Ónýtt laust rými
+
+Mælikvarðarnir eru rekstrarleg prófunarmæling á tillögunni, ekki launa-/kjaratúlkun.
+
+Engin Prisma-breyting
+Þessi pakki bætir ekki við migration og breytir ekki schema.
+
+Prófun
+1. npx tsc --noEmit
+2. Endurseed er valfrjálst fyrir nýja deadline/exception dreifingu:
+   node --env-file=.env --import tsx scripts/seed-verk-load-test.ts --reset --apply
+3. Búa til Dagsmönnun kl. 08:00 og bera saman nýtingu/löng Verk við fyrri tillögu.
+4. Búa til Dagsmönnun kl. 15:00.
+   - Tillagan á að byrja frá 15:00 þegar fólk er laust, ekki endurspila morgunkaffi/hádegishlé.
+   - Seinna kaffihlé kl. 15:30 á áfram að virka samkvæmt reglum.
+   - Stutt Verk eiga að fylla glugga þar sem lengri Verk passa ekki.
+   - Heimferð innan dagsloka heldur áfram að vera krafa nema sýnileg dagsloka-undantekning sé virk.

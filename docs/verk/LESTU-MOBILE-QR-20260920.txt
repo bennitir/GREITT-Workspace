@@ -1,0 +1,33 @@
+GLÖGGT – Mobile stillingar + QR smámerki
+20. september 2026
+
+Breytingar
+1. Mobile
+- Stóra Stillingar-flísin sést þar til notandinn opnar /mobile/stillingar í fyrsta sinn í viðkomandi vafra/tæki.
+- Eftir það hverfur stóra flísin og lítill tannhjólstakki birtist í haus Mobile.
+- Staðan er merkt með notandasértæku cookie sem gildir í eitt ár og er bundið við /mobile.
+- Engin gagnagrunnsmigration fylgir þessari breytingu.
+
+2. QR-merki tækis
+- QR stærð má nú fara niður í 0,5 cm × 0,5 cm.
+- Við stærðarval birtist viðvörun um að lesgæði geti minnkað við minni kóða og ráðist af prentara, merkimiða og myndavél/skanna.
+- Sjálfvirk merkisstærð fylgir QR-stærðinni og ramminn verður aðeins stærri en kóðinn.
+- Nýjar litlar merkisstærðir: 1.5 × 2 cm, 2 × 2.5 cm og 3 × 4 cm.
+- Prentframsetning er þéttari svo mjög lítil merki nýtist betur.
+- 0,5 cm er prófunarstærð; sjálfgefin QR-stærð er enn 5 cm þar til raunprófun staðfestir minni stærð.
+
+Skrár í pakka
+app/mobile/page.tsx
+app/mobile/stillingar/page.tsx
+app/verk/tilfong/[id]/qr/page.tsx
+app/verk/tilfong/[id]/qr/PrintQrButton.tsx
+components/MobileSettingsVisitedMarker.tsx
+lib/core/mobile-settings-visit.ts
+lib/i18n/work-resource-operations.ts
+
+Setjið pakkann yfir rót C:\GLÖGGT og leyfið skrám að yfirskrifast.
+
+Próf eftir uppsetningu
+npx tsc --noEmit
+
+Engin Prisma generate/migrate skipun er nauðsynleg fyrir þennan pakka.

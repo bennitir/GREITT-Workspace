@@ -31,6 +31,7 @@ import {
   recordMobileMaterialUsage,
   recordMobileMeterReading,
   recordMobileResourceUsage,
+  recordMobileWorkEvidencePhoto,
   startMobileWorkPart,
   stopMobileWorkPart,
 } from "../actions";
@@ -70,6 +71,10 @@ export default async function MobileWorkDetailPage({ params }: Props) {
       where: { id: workOrderId, companyId: actor.companyId },
       include: {
         translations: true,
+        evidencePhotos: {
+          orderBy: { createdAt: "desc" },
+          take: 40,
+        },
         workParts: {
           include: {
             translations: true,
@@ -78,6 +83,10 @@ export default async function MobileWorkDetailPage({ params }: Props) {
             },
             successorDependencies: {
               select: { predecessorPartId: true, successorPartId: true },
+            },
+            evidencePhotos: {
+              orderBy: { createdAt: "desc" },
+              take: 20,
             },
             assignments: {
               where: { removedAt: null },
@@ -200,10 +209,23 @@ export default async function MobileWorkDetailPage({ params }: Props) {
               <div className="mt-1 font-semibold text-slate-900">{work10PriorityText(work.priority, actor.language)}</div>
             </div>
             <div className="rounded-xl bg-slate-50 p-3 text-slate-600">
+              <div>{t.requiredPeople}</div>
+              <div className="mt-1 font-semibold text-slate-900">{work.requiredPeople}</div>
+            </div>
+            <div className="rounded-xl bg-slate-50 p-3 text-slate-600">
+              <div>{t.estimatedTime}</div>
+              <div className="mt-1 font-semibold text-slate-900">{work.estimatedMinutes ? work10FormatDuration(work.estimatedMinutes, actor.language) : t.notRegistered}</div>
+            </div>
+            <div className="rounded-xl bg-slate-50 p-3 text-slate-600">
               <div>{t.address}</div>
               <div className="mt-1 font-semibold text-slate-900">{work.address || "—"}</div>
             </div>
           </div>
+          {work.address ? (
+            <a href={`https://www.google.com/maps/dir/?api=1&destination=${encodeURIComponent(work.address)}`} target="_blank" rel="noreferrer" className="mt-2 flex min-h-11 items-center justify-center rounded-xl border border-blue-200 bg-blue-50 px-4 text-sm font-bold text-blue-800">
+              ⌖ {t.openDirections}
+            </a>
+          ) : null}
         </header>
 
         {work.workParts.length === 0 ? (
@@ -240,6 +262,33 @@ export default async function MobileWorkDetailPage({ params }: Props) {
               const measurableResources = assignedResources.filter((resource) => resource.kind !== "TEAM");
               const meterResources = assignedResources.filter((resource) => ["MACHINE", "VEHICLE", "TOOL"].includes(resource.kind));
               const terminal = isWork10PartTerminalStatus(part.status);
+              const openPartIds = work.workParts.filter((item) => !isWork10PartTerminalStatus(item.status)).map((item) => item.id);
+              const isLastOpenPart = openPartIds.length === 1 && openPartIds[0] === part.id;
+              const effectivePhotoRequirement = part.photoRequirement === "INHERIT" ? work.photoRequirement : part.photoRequirement;
+              const requiredPhotoStage =
+                effectivePhotoRequirement === "START" ? "START" :
+                effectivePhotoRequirement === "PROGRESS" ? "PROGRESS" :
+                effectivePhotoRequirement === "PART_COMPLETE" ? "PART_COMPLETE" :
+                effectivePhotoRequirement === "WORK_COMPLETE" ? "WORK_COMPLETE" :
+                null;
+              const requiredPhotoExists = requiredPhotoStage === "WORK_COMPLETE"
+                ? work.evidencePhotos.some((photo) => photo.stage === "WORK_COMPLETE")
+                : requiredPhotoStage
+                  ? part.evidencePhotos.some((photo) => photo.stage === requiredPhotoStage)
+                  : true;
+              const photoStageLabel =
+                requiredPhotoStage === "START" ? t.photoStageStart :
+                requiredPhotoStage === "PROGRESS" ? t.photoStageProgress :
+                requiredPhotoStage === "PART_COMPLETE" ? t.photoStagePartComplete :
+                requiredPhotoStage === "WORK_COMPLETE" ? t.photoStageWorkComplete :
+                null;
+              const startPhotoBlocks = requiredPhotoStage === "START" && !requiredPhotoExists;
+              const completionPhotoBlocks =
+                (["START", "PROGRESS", "PART_COMPLETE"].includes(requiredPhotoStage ?? "") ||
+                  (requiredPhotoStage === "WORK_COMPLETE" && isLastOpenPart)) &&
+                !requiredPhotoExists;
+              const showPhotoRequirementCard = requiredPhotoStage !== null &&
+                (requiredPhotoStage !== "WORK_COMPLETE" || isLastOpenPart);
 
               return (
                 <article key={part.id} className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm">
@@ -257,6 +306,35 @@ export default async function MobileWorkDetailPage({ params }: Props) {
                     <div className="mt-3 flex flex-wrap gap-2 text-xs font-semibold">
                       {directAssigned ? <span className="rounded-full bg-blue-50 px-2.5 py-1 text-blue-700">{t.assignedToYou}</span> : null}
                       {teamAssigned ? <span className="rounded-full bg-emerald-50 px-2.5 py-1 text-emerald-700">{t.assignedToTeam}</span> : null}
+                    </div>
+                  ) : null}
+
+                  <div className="mt-3 grid grid-cols-2 gap-2 text-xs">
+                    <div className="rounded-xl bg-slate-50 p-3"><span className="text-slate-500">{t.requiredPeople}</span><strong className="mt-1 block text-slate-900">{part.requiredPeople}</strong></div>
+                    <div className="rounded-xl bg-slate-50 p-3"><span className="text-slate-500">{t.estimatedTime}</span><strong className="mt-1 block text-slate-900">{part.estimatedMinutes ? work10FormatDuration(part.estimatedMinutes, actor.language) : t.notRegistered}</strong></div>
+                  </div>
+
+                  {showPhotoRequirementCard ? (
+                    <div className={`mt-3 rounded-xl border p-3 ${requiredPhotoExists ? "border-emerald-200 bg-emerald-50" : "border-amber-200 bg-amber-50"}`}>
+                      <div className="flex items-start justify-between gap-3">
+                        <div>
+                          <p className={`text-sm font-bold ${requiredPhotoExists ? "text-emerald-900" : "text-amber-900"}`}>{requiredPhotoExists ? t.photoRequirementMet : t.requiredPhoto}</p>
+                          <p className={`mt-1 text-xs ${requiredPhotoExists ? "text-emerald-800" : "text-amber-800"}`}>{photoStageLabel}</p>
+                        </div>
+                        <span className="text-lg">{requiredPhotoExists ? "✓" : "📷"}</span>
+                      </div>
+                      {!requiredPhotoExists && actor.employee && !terminal ? (
+                        <form action={recordMobileWorkEvidencePhoto} className="mt-3 grid gap-2">
+                          <input type="hidden" name="workOrderId" value={work.id} />
+                          <input type="hidden" name="workPartId" value={part.id} />
+                          <input type="hidden" name="stage" value={requiredPhotoStage} />
+                          <label className="grid gap-1 text-xs font-semibold text-slate-700">
+                            <span>{t.takeRequiredPhoto}</span>
+                            <input type="file" name="photo" accept="image/*" capture="environment" required className="rounded-lg border bg-white px-3 py-2 text-sm" />
+                          </label>
+                          <button type="submit" className="rounded-lg bg-slate-900 px-3 py-2 text-sm font-bold text-white">{t.savePhoto}</button>
+                        </form>
+                      ) : null}
                     </div>
                   ) : null}
 
@@ -290,7 +368,7 @@ export default async function MobileWorkDetailPage({ params }: Props) {
                           <form action={completeMobileWorkPart} className="mt-2">
                             <input type="hidden" name="workOrderId" value={work.id} />
                             <input type="hidden" name="workPartId" value={part.id} />
-                            <button type="submit" disabled={blockers.length > 0} className="w-full rounded-xl bg-slate-900 px-3 py-3 text-sm font-bold text-white disabled:cursor-not-allowed disabled:opacity-40">{t.completePart}</button>
+                            <button type="submit" disabled={blockers.length > 0 || completionPhotoBlocks} className="w-full rounded-xl bg-slate-900 px-3 py-3 text-sm font-bold text-white disabled:cursor-not-allowed disabled:opacity-40">{t.completePart}</button>
                           </form>
                         </div>
                       ) : !terminal ? (
@@ -298,12 +376,12 @@ export default async function MobileWorkDetailPage({ params }: Props) {
                           <form action={startMobileWorkPart}>
                             <input type="hidden" name="workOrderId" value={work.id} />
                             <input type="hidden" name="workPartId" value={part.id} />
-                            <button type="submit" disabled={blockers.length > 0 || part.status === "BLOCKED"} className="w-full rounded-xl bg-blue-600 px-4 py-3 text-base font-bold text-white disabled:cursor-not-allowed disabled:opacity-40">{t.startWork}</button>
+                            <button type="submit" disabled={blockers.length > 0 || part.status === "BLOCKED" || startPhotoBlocks} className="w-full rounded-xl bg-blue-600 px-4 py-3 text-base font-bold text-white disabled:cursor-not-allowed disabled:opacity-40">{t.startWork}</button>
                           </form>
                           <form action={completeMobileWorkPart}>
                             <input type="hidden" name="workOrderId" value={work.id} />
                             <input type="hidden" name="workPartId" value={part.id} />
-                            <button type="submit" disabled={blockers.length > 0 || part.status === "BLOCKED"} className="w-full rounded-xl border border-slate-300 bg-white px-4 py-3 text-sm font-bold text-slate-800 disabled:cursor-not-allowed disabled:opacity-40">{t.completePart}</button>
+                            <button type="submit" disabled={blockers.length > 0 || part.status === "BLOCKED" || completionPhotoBlocks} className="w-full rounded-xl border border-slate-300 bg-white px-4 py-3 text-sm font-bold text-slate-800 disabled:cursor-not-allowed disabled:opacity-40">{t.completePart}</button>
                           </form>
                         </div>
                       ) : null}

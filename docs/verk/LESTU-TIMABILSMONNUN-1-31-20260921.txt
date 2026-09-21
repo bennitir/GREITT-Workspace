@@ -1,0 +1,53 @@
+GLÖGGT – Tímabilsmönnun Verka, 1–31 dagar
+21. september 2026
+
+Markmið
+-------
+Dagsmönnun er nú notuð sem sami rekstrarkjarni fyrir forskoðun á Verkaáætlun yfir 1–31 samfellda daga. Fyrsta raunprófið er 5 dagar með núverandi 750-Verka prófunarsafni.
+
+Mikilvæg aðgreining
+-------------------
+- Verkaáætlun: 1–31 dagar í þessari lotu.
+- Vaktaplan / viðvera: sérstakt lag og á að geta náð mun lengra fram í tímann, t.d. marga mánuði.
+- Vaktaplan segir hver er á vakt. Verkaáætlun raðar síðan Verkefnum á þá sem eru tiltækir samkvæmt viðveru þegar sú tenging er komin.
+
+Hvað var gert
+-------------
+1. Dagsmönnunarkjarninn getur nú verið keyrður fyrir aðra dagsetningu en þann dag sem er opinn í viðmótinu.
+2. Ferðatímareglur nota rétta dagsetningu fyrir hvern dag í tímabilinu.
+3. Hver dagur fær nýjan dagsramma: staðsetning byrjar á starfsstöð, hlé eru reiknuð fyrir þann dag og 85% markmið / 93% hart hámark gildir á einstakling á hverjum degi.
+4. Verk sem eru sett í fyrri dag tímabilstillögunnar eru tekin úr framboði síðari daga svo sama Verk birtist ekki tvívegis.
+5. Ábyrgðardeild, starfssvið, hæfni/réttindi, föst teymi, svæðisklösun, deadline, ferðatími, hlé, heimferð og dagslok eru áfram sömu reglur og í Dagsmönnun.
+6. Nýtt tímabilsyfirlit sýnir hvern dag sérstaklega: fjölda Verka, fjölda starfsmanna með Verk, nýtingu, virka vinnu, akstur og laust svigrúm. Hægt er að opna hvern dag og sjá úthlutanirnar.
+7. Yfirlitið sýnir einnig hversu mörg óskipulögð, ódagsett Verk eru eftir þegar tímabilinu lýkur. Það hjálpar okkur að sjá hvort 750 Verkin duga í fimm daga.
+
+Viðmót
+------
+Í Verk -> listi -> Dagsmönnun:
+- „Upphaf dags“ heldur áfram að gilda.
+- „Dagar í Verkaáætlun“ tekur heiltölu 1–31 og byrjar sjálfgefið á 5.
+- „Búa til tillögu“ býr áfram til einn dag.
+- „Búa til tímabilstillögu“ býr til forskoðun frá völdum degi yfir valinn fjölda samfelldra daga.
+
+Núverandi mörk þessarar lotu
+----------------------------
+- Tímabilstillagan er FORSKOÐUN og er ekki staðfest í gagnagrunn með einum smelli enn. Þetta er meðvitað í fyrstu 5 daga prófuninni svo við getum metið dreifingu áður en við bætum við lotustaðfestingu/rollback.
+- Tímabilið notar samfelldar dagsetningar. Það hardkóðar ekki mánudag–föstudag. Þegar vaktaplan er tengt verður það sannleiksgjafi um hverjir eru í vinnu á hverjum degi, líka helgar og vaktir.
+- Núverandi vinnudagsprófíll er notaður fyrir hvern dag þar til formleg vaktaviðvera er tengd inn.
+
+Prófun núna
+-----------
+1. Setja zip yfir C:\GLÖGGT.
+2. Keyra: npx tsc --noEmit
+3. Engin migration og ekkert reseed.
+4. Opna /verk -> Listi.
+5. Velja 21.09.2026 sem upphafsdag ef prófið á að vera mánudagur–föstudagur.
+6. Hafa 08:00 sem upphaf dags og 5 í „Dagar í Verkaáætlun“.
+7. Smella „Búa til tímabilstillögu“.
+8. Skoða sérstaklega:
+   - hvort 750 Verkin dugi alla fimm dagana,
+   - hversu mörg Verk eru eftir,
+   - hvort ákveðnar deildir tæmist fyrr en aðrar,
+   - hvort sömu starfsmenn séu endurtekið mjög lágt eða mjög hátt nýttir,
+   - hvort 93% hámarkið haldist á hverjum degi,
+   - hvort ferðatími/svæðisklösun verði eðlileg þegar horft er á fleiri daga.

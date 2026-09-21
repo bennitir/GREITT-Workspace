@@ -1,0 +1,11 @@
+GLÖGGT – leiðréttur pakki fyrir ársgreiningu 12.09.2026
+
+Afþjappaðu beint yfir C:\\GLÖGGT.
+Rétt möppubygging í pakkanum er:
+  app\\banki\\annual-analysis.ts
+  app\\banki\\annual-analysis-text.ts
+  app\\banki\\arsgreining\\page.tsx
+
+Engin migration. Ekkert AI-kall.
+Síðan:
+  npx tsc --noEmit

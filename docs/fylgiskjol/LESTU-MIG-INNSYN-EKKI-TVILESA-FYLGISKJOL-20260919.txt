@@ -1,0 +1,50 @@
+GLÖGGT – Fylgiskjöl/Innsýn: ekki tvílesa sama skjal sjálfkrafa
+Dagsetning: 19.09.2026
+
+Vandamál sem production-próf sýndi
+-----------------------------------
+Tvö ný fylgiskjöl bættu fjórum AI-aðgerðum við Kostnað. Fyrsta AI-kallið var
+venjuleg fylgiskjalagreining. Síðan flokkaði sjálfvirka Innsýn t.d.
+afborgunartilkynningu/lán sem dýpri Innsýn og kallaði aftur á AI.
+
+Þetta var sérstaklega óhagkvæmt fyrir myndir/skönnuð skjöl því seinna kallið
+ gat lesið sama frumskjalið sjónrænt aftur.
+
+Breytingin
+----------
+1. Fylgiskjalagreining varðveitir nú canonical sérgögn í extractionMetadata:
+   - loanInfo
+   - insuranceInfo / insurancePolicies
+   - purchaseLines
+   - bookingEntries
+   paymentSchedule er áfram á skjalinu sjálfu.
+
+2. shouldRunDeepInsight fylgir nú "gögn fyrst, AI síðan" strangar:
+   - PAYMENT_NOTICE og STATEMENT fara ekki sjálfkrafa í annað AI-kall þegar
+     fyrri lestur hefur þegar kjarnastaðreyndir / lán / tryggingu / greiðsluáætlun.
+   - lán/trygging í summary eitt og sér kveikir ekki aftur á AI þegar canonical
+     gögn liggja þegar fyrir.
+   - REVIEW með kjarnastaðreyndum bíður frekar mannlegrar yfirferðar en að
+     borga sjálfkrafa fyrir annað AI-kall.
+   - CONTRACT/OFFER/INFORMATION/UNKNOWN/INSIGHT_SOURCE geta enn fengið dýpri
+     Innsýn þar sem skjalið sjálft er fyrst og fremst merkingar-/skilmálagagn.
+
+3. RECEIPT_DERIVED Innsýn varðveitir fleiri staðreyndir úr fyrri lestri,
+   m.a. summary, lánaupplýsingar, tryggingaupplýsingar og greiðsluáætlun.
+
+4. Sjálfvirk Innsýn er idempotent gagnvart COMPLETED item fyrir sömu
+   processingVersion. Endurlestur fylgiskjals má því ekki sjálfkrafa stofna
+   annað dýrt Innsýn-kall sem þegar hefur lokið. Handvirkur notendabeiðinn
+   "Lesa með Innsýn" er áfram leyfður.
+
+Engin Prisma migration er í þessum pakka.
+
+Próf
+----
+1. npx tsc --noEmit
+2. Senda inn venjulegt/þekkt fylgiskjal: búast við einu AI-kalli.
+3. Senda inn afborgunartilkynningu/lán sem fyrri lestur greinir skýrt:
+   búast við einu AI-kalli; Innsýn á að verða RECEIPT_DERIVED.
+4. Endurlesa sama fylgiskjal: sjálfvirk Innsýn má ekki búa til annað COMPLETED
+   deep-AI job fyrir sömu vinnsluútgáfu.
+5. CONTRACT/OFFER eða handvirkt "Lesa með Innsýn" má enn fara í dýpri AI-vinnslu.

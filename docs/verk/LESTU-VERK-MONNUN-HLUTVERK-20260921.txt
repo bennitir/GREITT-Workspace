@@ -1,0 +1,72 @@
+GLÖGGT – Verk: mönnunarsamsetning, hæfni og raunhæf load-test gögn
+21. september 2026
+
+Markmið
+- Verk þarf ekki lengur aðeins að segja „þarf N starfsmenn“.
+- Verkþáttur getur nú lýst samsetningu mönnunar, t.d.:
+    1 x fagmaður með ELECTRICAL
+    1 x aðstoðarmaður án fagkröfu
+- Sameiginleg hæfnikrafa má gilda um alla á Verkþættinum, t.d. SITE_SAFETY.
+- Harðar hæfnikröfur útiloka óhæfan starfsmann úr sjálfvirkri tillögu.
+- Æskileg hæfni hækkar röðun en útilokar ekki.
+- Almenn og aðstoðarsæti reyna að varðveita fámenn fagúrræði í stað þess að nota fagmann að óþörfu.
+
+Nýtt gagnalag
+- WorkPart.requiredQualificationCodes
+- WorkPartStaffingRequirement
+  - roleCode: SPECIALIST | ASSISTANT | GENERAL | DRIVER | OPERATOR
+  - quantity
+  - requiredQualificationCodes
+  - preferredQualificationCodes
+
+Afturvirkni
+- Gömul Verk án WorkPartStaffingRequirement halda áfram að nota requiredPeople sem almenna mönnun.
+- Engin gömul gögn eru þvinguð yfir í nýja samsetningu með migration.
+
+Load-test
+- seed-verk-load-test.ts býr nú einnig til raunverulegar prófunarhæfnir fyrir 50 starfsmenn.
+- 750 Verk fá mismunandi mönnunarsamsetningu eftir eðli Verks.
+- Dæmi:
+  - Skipta um ljós: fagmaður með ELECTRICAL + aðstoð eftir þörfum.
+  - Yfirfara vél: OPERATOR með MACHINE + aðstoð.
+  - Athuga brunavarnir: fagmaður með FIRE_SAFETY + aðstoð.
+  - Sækja varahlut / flytja efni: DRIVER með DRIVING + aðstoð.
+  - Þrif: almenn mönnun.
+- Hluti Verka krefst SITE_SAFETY hjá öllum í teyminu til að prófa sameiginlega öryggiskröfu.
+
+Mikilvægt
+Nýja load-test gagnalagið þarf migration og síðan endurgerð 750-verka safnsins.
+
+Uppsetning yfir C:\GLÖGGT
+1. Afþjappa pakkanum yfir rót og leyfa yfirskrift.
+2. Keyra:
+
+   npx prisma validate
+   npx prisma generate
+   npx prisma migrate deploy
+   npx tsc --noEmit
+
+3. Dry-run á prófunargögnum:
+
+   node --env-file=.env --import tsx scripts/seed-verk-load-test.ts
+
+4. Endurgera 750-verka safnið með hæfni og mönnunarsamsetningu:
+
+   node --env-file=.env --import tsx scripts/seed-verk-load-test.ts --reset --apply
+
+5. Opna /verk → Verkalisti → Morgunmönnun → Búa til tillögu kl. 08:00.
+
+Hvað á að sjást
+- „Vísbendingar“ eiga ekki lengur allar að vera 130.
+- Sama Verk getur fengið fagaðila og aðstoðarmann með mismunandi rökum.
+- GLÖGGT á ekki að velja þjónustufulltrúa sem ELECTRICAL-fagmann nema viðkomandi hafi skráðan ELECTRICAL-kóða.
+- Ef harðri fagkröfu verður ekki mætt á GLÖGGT ekki að senda aðstoðarmenn eina á Verkið.
+- Almenn Verk eiga fremur að fá almenna starfsmenn þannig að sérhæfðir starfsmenn haldist lausir fyrir Verk sem þurfa þá.
+
+Skrár
+- prisma/schema.prisma
+- prisma/migrations/20260921083000_add_work_staffing_requirements/migration.sql
+- app/verk/page.tsx
+- app/verk/Work10Dashboard.tsx
+- lib/i18n/work10.ts
+- scripts/seed-verk-load-test.ts

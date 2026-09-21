@@ -1,0 +1,59 @@
+GLÖGGT – Dagsmönnun: tilfallandi störf og teymissamfella
+21. september 2026
+
+MARKMIÐ
+- Herða AUTO_IF_NEEDED svo „önnur tilfallandi störf“ verði raunveruleg varaleið en ekki venjuleg lágskoruð mönnun.
+- Halda sama fólki frekar saman yfir daginn þegar Verk þarf fleiri en einn, án þess að læsa teymi eða fara fram hjá starfssviði, réttindum eða hæfni.
+- Undirbúa dagsáætlunina fyrir næsta lag: staðsetningu, ferðatíma og km.
+
+TILFALLANDI STÖRF
+- NEVER: starfsmaður kemur ekki sjálfkrafa til greina utan venjulegs starfssviðs.
+- MANUAL_ONLY: starfsmaður sést áfram sem möguleg handvirk undanþága en er aldrei valinn af sjálfvirku dagsplani.
+- AUTO_IF_NEEDED: sjálfvirk varaleið er aðeins notuð þegar enginn harðhæfur starfsmaður innan venjulegs starfssviðs er laus núna eða losnar innan skilgreinds skamms tímaglugga.
+- Núverandi biðgluggi er 30 mínútur.
+- Ef hæfur starfsmaður innan venjulegs starfssviðs losnar innan 30 mínútna bíður dagsáætlunin frekar eftir honum en að senda starfsmann í tilfallandi starf.
+- Ef enginn slíkur starfsmaður er væntanlegur innan gluggans má AUTO_IF_NEEDED koma til greina.
+- Skyld starfs-/mönnunarhlutverk og hæfnikóðar eru áfram hörð skilyrði. Tilfallandi heimild fer aldrei fram hjá þeim.
+
+TEYMISSAMFELLA YFIR DAGINN
+- Þegar tveir eða fleiri eru settir saman á Verk man dagsáætlunin hverjir unnu saman fyrr sama dag.
+- Við næsta fjölmenna Verk fær sama teymi forskot ef allir passa áfram við starfssvið, mönnunarhlutverk, réttindi/hæfni, tíma og hlé.
+- Nýleg teymissamfella vegur meira en eldri lærð pörun, en er aðeins röðunarvísbending — ekki hörð regla.
+- Fyrri pörun úr sögulegum úthlutunum er áfram nýtt.
+- Eins manns Verk eyðir ekki teymisminninu; starfsmenn geta því sameinast aftur síðar sama dag.
+- Ef brýnt Verk, sérhæfð hæfni, tími eða önnur hörð skilyrði kalla á annað fólk má GLÖGGT brjóta teymið upp.
+
+SÝNILEIKI Í TILLÖGU
+- Dagsáætlun merkir „Sama dagsteymi“ þegar tillaga heldur nýlegum vinnufélögum saman.
+- Ef AUTO_IF_NEEDED er raunverulega notað sést einnig að um tilfallandi varaleið sé að ræða.
+- Þetta gerir stjórnanda kleift að sjá af hverju ákveðin mönnun var valin áður en dagsáætlun er staðfest.
+
+ENGIN GAGNALÍKANSBREYTING
+- Engin Prisma schema-breyting.
+- Engin migration.
+- Teymissamfellan er reiknuð innan dagsáætlunarinnar út frá þegar þekktum úthlutunum og tillögunni sem verið er að byggja.
+
+BREYTTAR SKRÁR
+- app/verk/Work10Dashboard.tsx
+- lib/i18n/work10.ts
+- docs/verk/LESTU-DAGSMONNUN-TILFALLANDI-TEYMISSAMFELLA-20260921.txt
+
+UPPSETNING / PRÓF
+Afþjappa yfir C:\GLÖGGT og keyra:
+  npx tsc --noEmit
+
+Engin prisma generate eða migrate deploy er nauðsynleg fyrir þessa breytingu.
+
+Raunpróf með núverandi 750-verka safni:
+1. Opna /verk → Dagsmönnun og búa til tillögu frá 08:00.
+2. Fylgjast sérstaklega með starfsmönnum með AUTO_IF_NEEDED, t.d. þjónustufulltrúa sem áður fór oft í aðstoðarverk utan venjulegs starfssviðs.
+3. Ef venjulegur hæfur aðstoðarmaður losnar innan 30 mín. á Verkið að bíða eftir honum frekar en nota tilfallandi varaleið.
+4. Ef enginn venjulegur starfsmaður er laus eða væntanlegur innan gluggans má tilfallandi varaleið enn koma fram og á þá að vera merkt sem slík.
+5. Skoða fjölmenn Verk í röð og staðfesta að sömu 2–4 starfsmenn haldist oft saman þegar þeir eru áfram hæfir og lausir.
+6. „Sama dagsteymi“ á að sjást í tillögunni þegar teymissamfella hafði áhrif.
+
+NÆSTA LAG
+- Staðsetning/bækistöð.
+- Ferðatími og km milli Verka.
+- Sama teymi + sama bíll + núverandi staðsetning sem sameiginleg rekstrarstaða.
+- Lifandi endurröðun þegar raunverulegur lokatími úr Mobile víkur frá áætlun.

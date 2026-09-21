@@ -1,0 +1,10 @@
+GLÖGGT – Verk tímasetning, Verkþáttur type hotfix 20.09.2026
+
+Lagar 3 TypeScript villur í app/verk/page.tsx.
+Verkþættir hafa ekki eigin plannedDate/plannedStartMinutes í núverandi schema; tímasetning er á WorkOrder.
+Því eru þessi tvö svið ekki lengur lesin af WorkPart né hluti af WorkPartData.
+
+Engin Prisma breyting og engin migration.
+
+Próf:
+npx tsc --noEmit

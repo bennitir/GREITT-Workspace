@@ -1,0 +1,46 @@
+GLÖGGT – Tímabilsmönnun: greining á óskipulögðum Verkefnum
+21.09.2026
+
+Markmið
+- Skýra hvers vegna Verk standa eftir eftir 1–31 daga tímabilsáætlun.
+- Fyrsta raunprófið er áfram 5 dagar.
+- Greiningin er sýnd beint í Tímabilsmönnun eftir að reikningi lýkur.
+
+Nýtt í viðmóti
+- „Greining óskipulagðra Verka“ undir samantekt tímabilsins.
+- Líkleg meginástæða fyrir eftirbunka, flokkuð í:
+  * Verkgögn vantar / ekki tilbúið til sjálfvirkrar mönnunar
+  * Búnaður eða auðlind hindrar
+  * Enginn starfsmaður í ábyrgðardeild
+  * Hæfni, hlutverk eða starfssvið vantar
+  * Ekki næg hæf samsetning í teymi
+  * Deadline / tímagluggi útilokar tímabilið
+  * Dagsgeta eða 93% hámark
+  * Ferðatími eða dagslok
+  * Virðist tæknilega mögulegt – þarf að skoða pökkun/forgang
+- Topplisti yfir ábyrgðardeildir í eftirbunka.
+- Topplisti yfir hæfnikröfur í eftirbunka.
+
+Reglur sem greiningin virðir
+- Starfsmaður verður að vera í réttri ábyrgðardeild.
+- Starfssvið, hlutverk og allar harðar hæfnikröfur þurfa að passa.
+- MANUAL_ONLY tilfallandi starf er ekki talið sjálfvirkt hæft.
+- Margra manna Verk þurfa nægilega marga ólíka hæfa starfsmenn.
+- 93% er áfram hart hámark sjálfvirkrar dagsáætlunar einstaklings.
+- Ferðatími, heimferð og dagslok eru tekin með þegar metið er hvort eftirverk virðist passa inn í dag.
+- Deadline takmarkar hvaða dagar í tímabilinu koma til greina.
+
+Mikilvægt
+Þetta er greining á lokaniðurstöðu tímabilsins, ekki full höfnunarsaga úr hverri 5 mínútna reiknilotu. Flokkurinn „Virðist tæknilega mögulegt – þarf að skoða pökkun/forgang“ er sérstaklega ætlaður til að finna Verk sem virðast eiga að komast fyrir en skipuleggjandinn valdi ekki. Sá flokkur er því góður vísir að næstu hagræðingu í reikniritinu.
+
+Engin Prisma migration.
+Ekkert reseed.
+
+Próf eftir yfirlagningu
+  npx tsc --noEmit
+
+Síðan:
+1. Opna /verk → Verkalisti.
+2. Búa til 5 daga tímabilstillögu kl. 08:00.
+3. Skoða „Greining óskipulagðra Verka“.
+4. Berið sérstaklega saman 253 eftirverkin úr fyrra prófi: hvaða deildir, hæfni og meginástæður mynda eftirbunkann.

@@ -1,0 +1,9 @@
+GLÖGGT – lagfæring á TypeScript-týpu í load-test rekstrarstöðum
+Dagsetning: 21.09.2026
+
+Lagfæring:
+- scripts/seed-verk-load-test.ts
+- Fjarlægður óþarfur fallback úr operationalLocation.address yfir í operationalLocation.name.
+- Allir rekstrarstaðir í prófunargögnunum hafa address, þannig að fallbackið var bæði óþarft og olli TS2339 („Property 'name' does not exist on type 'never'“) vegna TypeScript narrowing.
+
+Engin Prisma-breyting og engin migration fylgir þessari lagfæringu.

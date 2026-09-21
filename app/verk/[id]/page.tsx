@@ -11,6 +11,8 @@ import { inventoryText } from "@/lib/i18n/inventory";
 import { workResourceKindText, workResourceStatusText, workResourceText } from "@/lib/i18n/work-resources";
 import Card from "@/components/ui/Card";
 import PageHeader from "@/components/ui/PageHeader";
+import IcelandicDateInput from "@/components/ui/IcelandicDateInput";
+import IcelandicTimeInput from "@/components/ui/IcelandicTimeInput";
 import {
   work10FormatDate,
   work10FormatDuration,
@@ -28,7 +30,7 @@ import {
 } from "@/lib/work10/effects";
 import { projectLegacyOperationalText } from "@/lib/work10/legacy-operational-text";
 import { projectPersistedWorkOrderText } from "@/lib/work10/work-order-text";
-import { effectiveWork10Status, isWork10EffectivelyCompleted } from "@/lib/work10/status";
+import { effectiveWork10Status, isWork10EffectivelyCompleted, isWork10ReadyToClose } from "@/lib/work10/status";
 import {
   WORK10_PART_STATUSES,
   isWork10PartTerminalStatus,
@@ -36,8 +38,10 @@ import {
   work10StatusRequiresResolvedDependencies,
 } from "@/lib/work10/workflow";
 import { resolveLaborFactNote } from "@/lib/work10/labor-text";
+import { work10ClockFromMinutes, work10PlannedEndMinutes } from "@/lib/work10/scheduling";
 import { resolveWork10LocalizedText } from "@/lib/work10/operational-text";
 import MaterialUsageForm from "./MaterialUsageForm";
+import WorkOrderLifecycleControls from "./WorkOrderLifecycleControls";
 import {
   addWorkPartDependency,
   assignPersonToWorkPart,
@@ -51,6 +55,7 @@ import {
   removeWorkPartDependency,
   recordPersonLaborFact,
   recordWorkResourceUsageFact,
+  updateWorkOrderPlanning,
   updateWorkOrderPriority,
   updateWorkPartStatus,
   voidPersonLaborFact,
@@ -166,6 +171,15 @@ export default async function Verk10DetailPage({ params }: Props) {
   const t = work10Text(language);
   const effectiveWorkStatus = effectiveWork10Status(work.status, work.workParts);
   const workIsCompleted = isWork10EffectivelyCompleted(work.status, work.workParts);
+  const workReadyToClose = isWork10ReadyToClose(work.status, work.workParts);
+  const activeLaborCount = work.workParts.reduce(
+    (sum, part) =>
+      sum +
+      part.laborFacts.filter(
+        (fact) => fact.voidedAt === null && fact.startedAt !== null && fact.endedAt === null,
+      ).length,
+    0,
+  );
   const inventoryT = inventoryText(language);
   const resourceT = workResourceText(language);
   const persistedOperationalText = projectPersistedWorkOrderText(work);
@@ -265,6 +279,44 @@ export default async function Verk10DetailPage({ params }: Props) {
 
       <PageHeader title={localizedTitle.text} description={t.detailDescription} />
 
+      {(workReadyToClose || workIsCompleted) && (
+        <Card>
+          <div id="lifsferill" className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
+            <div className="min-w-0">
+              <p className="text-xs font-semibold uppercase tracking-wide text-slate-500">{t.workLifecycleTitle}</p>
+              <h2 className={`mt-1 text-lg font-bold ${workIsCompleted ? "text-emerald-900" : "text-amber-900"}`}>
+                {workIsCompleted ? t.completedWorkTitle : t.readyToCloseTitle}
+              </h2>
+              <p className="mt-1 max-w-3xl text-sm leading-6 text-slate-600">
+                {workIsCompleted ? t.completedWorkHelp : t.readyToCloseHelp}
+              </p>
+              {!workIsCompleted && activeLaborCount > 0 ? (
+                <p className="mt-2 text-sm font-semibold text-rose-700">{t.activeLaborBlocksClose}</p>
+              ) : null}
+            </div>
+
+            {companyAccess.canWrite ? (
+              workIsCompleted ? (
+                <WorkOrderLifecycleControls
+                  workOrderId={work.id}
+                  mode="reopen"
+                  actionLabel={t.reopenWorkAction}
+                  confirmText={t.reopenWorkConfirm}
+                />
+              ) : (
+                <WorkOrderLifecycleControls
+                  workOrderId={work.id}
+                  mode="complete"
+                  actionLabel={t.completeWorkAction}
+                  confirmText={t.completeWorkConfirm}
+                  disabled={activeLaborCount > 0}
+                />
+              )
+            ) : null}
+          </div>
+        </Card>
+      )}
+
       {companyAccess.canWrite && (
         <Card>
           <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
@@ -329,6 +381,53 @@ export default async function Verk10DetailPage({ params }: Props) {
               <dd className="mt-1 font-semibold">
                 {work.address || t.unknown}
               </dd>
+              {work.address ? (
+                <a
+                  href={`https://www.google.com/maps/dir/?api=1&destination=${encodeURIComponent(work.address)}`}
+                  target="_blank"
+                  rel="noreferrer"
+                  className="mt-2 inline-flex rounded-lg border border-blue-200 bg-blue-50 px-3 py-2 text-xs font-semibold text-blue-700 hover:bg-blue-100"
+                >
+                  ⌖ {t.openDirections}
+                </a>
+              ) : null}
+            </div>
+            <div>
+              <dt className="text-slate-500">{t.requiredPeople}</dt>
+              <dd className="mt-1 font-semibold">{work.requiredPeople}</dd>
+            </div>
+            <div>
+              <dt className="text-slate-500">{t.estimatedTime}</dt>
+              <dd className="mt-1 font-semibold">
+                {work.estimatedMinutes ? work10FormatDuration(work.estimatedMinutes, language) : t.notRegistered}
+              </dd>
+            </div>
+            <div>
+              <dt className="text-slate-500">{t.plannedDate}</dt>
+              <dd className="mt-1 font-semibold">{work.plannedDate ? work10FormatDate(work.plannedDate, language) : t.notRegistered}</dd>
+            </div>
+            <div>
+              <dt className="text-slate-500">{t.plannedStartTime}</dt>
+              <dd className="mt-1 font-semibold">
+                {work.plannedStartMinutes !== null
+                  ? (() => {
+                      const start = work10ClockFromMinutes(work.plannedStartMinutes);
+                      const end = work10ClockFromMinutes(work10PlannedEndMinutes(work.plannedStartMinutes, work.estimatedMinutes));
+                      return end ? `${start}–${end}` : start;
+                    })()
+                  : work.plannedDate ? t.timeNotDecided : t.notRegistered}
+              </dd>
+            </div>
+            <div>
+              <dt className="text-slate-500">{t.completionDeadline}</dt>
+              <dd className="mt-1 font-semibold">
+                {work.completionDeadlineDate && work.completionDeadlineMinutes !== null
+                  ? `${work10FormatDate(work.completionDeadlineDate, language)} · ${work10ClockFromMinutes(work.completionDeadlineMinutes)}`
+                  : t.notRegistered}
+              </dd>
+              {work.allowAfterWorkdayEnd ? (
+                <p className="mt-1 text-xs font-semibold text-amber-700">{t.allowAfterWorkdayEnd}{work.workdayEndExceptionReason ? ` · ${work.workdayEndExceptionReason}` : ""}</p>
+              ) : null}
             </div>
             <div>
               <dt className="text-slate-500">{t.descriptionLabel}</dt>
@@ -337,6 +436,96 @@ export default async function Verk10DetailPage({ params }: Props) {
               </dd>
             </div>
           </dl>
+
+          {companyAccess.canWrite && !workIsCompleted ? (
+            <form action={updateWorkOrderPlanning} className="mt-5 space-y-3 border-t pt-4">
+              <input type="hidden" name="workOrderId" value={work.id} />
+              <div>
+                <h3 className="font-bold text-slate-900">{t.planningTitle}</h3>
+                <p className="mt-1 text-xs leading-5 text-slate-500">{t.planningHelp}</p>
+              </div>
+              <div className="grid gap-3 sm:grid-cols-2">
+                <label className="text-xs font-semibold text-slate-600">
+                  {t.requiredPeople}
+                  <input name="requiredPeople" type="number" min={1} max={100} defaultValue={work.requiredPeople} required className="mt-1 w-full rounded-lg border bg-white px-3 py-2 text-sm text-slate-900" />
+                </label>
+                <div>
+                  <span className="text-xs font-semibold text-slate-600">{t.estimatedTime}</span>
+                  <div className="mt-1 grid grid-cols-2 gap-2">
+                    <label className="text-[11px] text-slate-500">{t.estimatedHours}<input name="estimatedHours" type="number" min={0} max={999} defaultValue={Math.floor((work.estimatedMinutes ?? 0) / 60)} className="mt-1 w-full rounded-lg border bg-white px-3 py-2 text-sm text-slate-900" /></label>
+                    <label className="text-[11px] text-slate-500">{t.estimatedMinutes}<input name="estimatedMinutePart" type="number" min={0} max={59} defaultValue={(work.estimatedMinutes ?? 0) % 60} className="mt-1 w-full rounded-lg border bg-white px-3 py-2 text-sm text-slate-900" /></label>
+                  </div>
+                </div>
+                <IcelandicDateInput
+                  name="plannedDate"
+                  label={t.plannedDate}
+                  defaultValue={work.plannedDate ? work.plannedDate.toISOString().slice(0, 10) : ""}
+                  submitFormat="iso"
+                  calendarButtonLabel={t.plannedDate}
+                  labelClassName="text-xs font-semibold text-slate-600"
+                  inputClassName="min-w-0 flex-1 rounded-lg border bg-white px-3 py-2 text-sm text-slate-900"
+                  buttonClassName="rounded-lg border bg-white px-3 py-2 hover:bg-slate-50"
+                />
+                <fieldset className="text-xs font-semibold text-slate-600">
+                  <legend>{t.plannedStartTime}</legend>
+                  <IcelandicTimeInput
+                    hourName="plannedStartHour"
+                    minuteName="plannedStartMinute"
+                    defaultValue={work.plannedStartMinutes !== null ? work10ClockFromMinutes(work.plannedStartMinutes) ?? "" : ""}
+                    pickerLabel={t.plannedStartTime}
+                    hourLabel={t.estimatedHours}
+                    minuteLabel={t.estimatedMinutes}
+                    inputClassName="w-full rounded-l-lg border border-r-0 bg-white px-3 py-2 text-sm text-slate-900"
+                  />
+                  <span className="mt-1 block font-normal text-slate-500">{t.plannedStartTimeHelp}</span>
+                </fieldset>
+                <IcelandicDateInput
+                  name="completionDeadlineDate"
+                  label={t.completionDeadlineDate}
+                  defaultValue={work.completionDeadlineDate ? work.completionDeadlineDate.toISOString().slice(0, 10) : ""}
+                  submitFormat="iso"
+                  calendarButtonLabel={t.completionDeadlineDate}
+                  labelClassName="text-xs font-semibold text-slate-600"
+                  inputClassName="min-w-0 flex-1 rounded-lg border bg-white px-3 py-2 text-sm text-slate-900"
+                  buttonClassName="rounded-lg border bg-white px-3 py-2 hover:bg-slate-50"
+                />
+                <fieldset className="text-xs font-semibold text-slate-600">
+                  <legend>{t.completionDeadlineTime}</legend>
+                  <IcelandicTimeInput
+                    hourName="completionDeadlineHour"
+                    minuteName="completionDeadlineMinute"
+                    defaultValue={work.completionDeadlineMinutes !== null ? work10ClockFromMinutes(work.completionDeadlineMinutes) ?? "" : ""}
+                    pickerLabel={t.completionDeadlineTime}
+                    hourLabel={t.estimatedHours}
+                    minuteLabel={t.estimatedMinutes}
+                    inputClassName="w-full rounded-l-lg border border-r-0 bg-white px-3 py-2 text-sm text-slate-900"
+                  />
+                </fieldset>
+              </div>
+              <div className="rounded-lg border border-amber-200 bg-amber-50/60 p-3">
+                <label className="flex items-start gap-2 text-xs font-semibold text-slate-700">
+                  <input type="checkbox" name="allowAfterWorkdayEnd" defaultChecked={work.allowAfterWorkdayEnd} className="mt-0.5" />
+                  <span>{t.allowAfterWorkdayEnd}</span>
+                </label>
+                <label className="mt-2 block text-xs font-semibold text-slate-600">
+                  {t.workdayEndExceptionReason}
+                  <input name="workdayEndExceptionReason" type="text" maxLength={500} defaultValue={work.workdayEndExceptionReason ?? ""} placeholder={t.workdayEndExceptionReasonPlaceholder} className="mt-1 w-full rounded-lg border bg-white px-3 py-2 text-sm text-slate-900" />
+                </label>
+                <p className="mt-1 text-[11px] leading-4 text-slate-500">{t.allowAfterWorkdayEndHelp}</p>
+              </div>
+              <label className="block text-xs font-semibold text-slate-600">
+                {t.photoRequirement}
+                <select name="photoRequirement" defaultValue={work.photoRequirement} className="mt-1 w-full rounded-lg border bg-white px-3 py-2 text-sm text-slate-900">
+                  <option value="NONE">{t.photoNone}</option>
+                  <option value="START">{t.photoStart}</option>
+                  <option value="PROGRESS">{t.photoProgress}</option>
+                  <option value="PART_COMPLETE">{t.photoPartComplete}</option>
+                  <option value="WORK_COMPLETE">{t.photoWorkComplete}</option>
+                </select>
+              </label>
+              <button type="submit" className="rounded-lg bg-slate-900 px-4 py-2 text-sm font-semibold text-white">{t.savePlanning}</button>
+            </form>
+          ) : null}
         </Card>
 
         <div className="grid gap-4 md:grid-cols-2">
@@ -408,7 +597,7 @@ export default async function Verk10DetailPage({ params }: Props) {
                   );
 
                   return (
-                    <div key={part.id} className="rounded-xl border bg-slate-50 p-4">
+                    <div id={`verkthattur-${part.id}`} key={part.id} className="scroll-mt-24 rounded-xl border bg-slate-50 p-4">
                       <div className="flex flex-wrap items-start justify-between gap-3">
                         <div className="min-w-0 flex-1">
                           <div className="flex flex-wrap items-center gap-2">
@@ -471,6 +660,7 @@ export default async function Verk10DetailPage({ params }: Props) {
                           <label className="min-w-0 flex-1 text-xs font-semibold text-slate-600">
                             {t.workflowStatusLabel}
                             <select
+                              key={`${part.id}:${part.status}`}
                               name="status"
                               defaultValue={part.status}
                               className="mt-1 w-full rounded-lg border bg-white px-3 py-2 text-sm font-normal text-slate-900"
@@ -615,6 +805,26 @@ export default async function Verk10DetailPage({ params }: Props) {
                   <div>
                     <label htmlFor="workPartDescription" className="text-sm font-medium">{t.workPartDescriptionLabel}</label>
                     <textarea id="workPartDescription" name="description" rows={3} className="mt-1 w-full rounded-lg border px-3 py-2 text-sm" placeholder={t.workPartDescriptionPlaceholder} />
+                  </div>
+                  <div className="grid gap-3 md:grid-cols-3">
+                    <label className="text-sm font-medium">{t.requiredPeople}<input name="requiredPeople" type="number" min={1} max={100} defaultValue={1} className="mt-1 w-full rounded-lg border px-3 py-2 text-sm" /></label>
+                    <div>
+                      <span className="text-sm font-medium">{t.estimatedTime}</span>
+                      <div className="mt-1 grid grid-cols-2 gap-2">
+                        <label className="text-xs text-slate-500">{t.estimatedHours}<input name="estimatedHours" type="number" min={0} max={999} defaultValue={0} className="mt-1 w-full rounded-lg border px-3 py-2 text-sm text-slate-900" /></label>
+                        <label className="text-xs text-slate-500">{t.estimatedMinutes}<input name="estimatedMinutePart" type="number" min={0} max={59} defaultValue={0} className="mt-1 w-full rounded-lg border px-3 py-2 text-sm text-slate-900" /></label>
+                      </div>
+                    </div>
+                    <label className="text-sm font-medium">{t.photoRequirement}
+                      <select name="photoRequirement" defaultValue="INHERIT" className="mt-1 w-full rounded-lg border bg-white px-3 py-2 text-sm">
+                        <option value="INHERIT">{t.photoInherit}</option>
+                        <option value="NONE">{t.photoNone}</option>
+                        <option value="START">{t.photoStart}</option>
+                        <option value="PROGRESS">{t.photoProgress}</option>
+                        <option value="PART_COMPLETE">{t.photoPartComplete}</option>
+                        <option value="WORK_COMPLETE">{t.photoWorkComplete}</option>
+                      </select>
+                    </label>
                   </div>
                   <button type="submit" className="rounded-lg bg-emerald-600 px-4 py-2 text-sm font-semibold text-white hover:bg-emerald-700">
                     {t.addWorkPartAction}

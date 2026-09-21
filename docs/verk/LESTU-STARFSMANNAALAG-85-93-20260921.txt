@@ -1,0 +1,38 @@
+GLÖGGT – Dagsmönnun: 85% markmið og 93% hart hámark
+Dagsetning: 21. september 2026
+
+Markmið
+- Sjálfvirk dagsáætlun á að stefna að raunhæfu álagi, ekki hámarksfyllingu.
+- Um 85% nýting er venjulegt rekstrarmark.
+- 93% er algjört hámark fyrir sjálfvirka úthlutun einstaklings.
+- Akstur sem fellur innan vinnutíma telst með í nýtingunni.
+- Formleg neysluhlé eru tekin úr ráðstöfunartíma eins og áður.
+
+Hvað breyttist
+1. Dagsmönnun reiknar ráðstöfunargetu hvers starfsmanns úr vinnudagsprófíl og formlegum hléum.
+2. Fyrir hverja mögulega úthlutun er áætluð heildarnotkun starfsmanns:
+   - þegar úthlutuð virk vinna í nýju tillögunni,
+   - þegar áætlaður akstur,
+   - nýja Verkið,
+   - akstur að Verkinu,
+   - og áætluð lokaför aftur á starfstöð.
+3. Ef tillagan myndi fara yfir 93% er starfsmaðurinn ekki sjálfvirkt gjaldgengur í það Verk.
+4. Undir 85% fær starfsmaður hóflegt jöfnunarforskot.
+5. Yfir 85% færist stigagjöfin hratt niður svo hæfur og minna hlaðinn starfsmaður geti tekið Verk í stað þess sem er orðinn þétt bókaður.
+6. Svæðisklösun, hæfni, starfssvið, deild, fast teymi og deadlines gilda áfram. Jöfnunin má ekki brjóta harðar hæfnis- eða heimildarkröfur.
+7. Ef enginn hæfur starfsmaður getur tekið Verk án þess að fara yfir 93% á sjálfvirka dagskipulagið að skilja Verkið eftir fremur en að búa til óraunhæfan dag.
+
+Mælingar
+- „Álag á einstaklinga“ sýnir áfram topp 5.
+- Texti og viðvörunarmörk hafa verið uppfærð í 85% markmið / 93% hámark.
+- 30 mínútna eða minna svigrúm er nú sýnt sem þröngt rekstrarsvigrúm.
+
+Prófun
+- Ekki reseed-a.
+- Keyra sama 08:00 próf á sömu 750 Verkunum.
+- Bera saman við síðustu stöðu:
+  167 tillögur, 234 klst. 55 mín. virk vinna, 55 klst. 27 mín. akstur, 55 klst. 28 mín. ónýtt laust rými.
+- Mikilvægasta staðfestingin: enginn í Topp 5 má birtast yfir 93%.
+- Skoða jafnframt hvort Verk flytjist frá 98–99% starfsmönnum yfir á hæfa starfsmenn með meira svigrúm án þess að fjölga óþarfa svæðisferðum.
+
+Engin Prisma migration fylgir þessari breytingu.

@@ -1,0 +1,28 @@
+GLÖGGT – stór uppfærsla: almenn reikningsgreining banka
+
+Afþjappaðu ZIP-skránni beint yfir C:\GLÖGGT.
+Skrárnar eiga að lenda í:
+  C:\GLÖGGT\app\banki\annual-analysis.ts
+  C:\GLÖGGT\app\banki\annual-analysis-text.ts
+  C:\GLÖGGT\app\banki\arsgreining\page.tsx
+
+Nýtt:
+- Allir bankareikningar í Ársgreiningu eru smellanlegir inn í almenna Reikningsgreiningu.
+- Reikningsgreining sýnir inn/út/nettó og fjölda færslna.
+- Líklegar innri millifærslur eru aðskildar frá ytra peningaflæði.
+- „Hvaðan kom féð?“ og „Hvert fór féð?“ sýna stærstu mótaðila/mynstur.
+- Línur eru smellanlegar niður í frumfærslur.
+- Regluleg útgreiðslumynstur eru sýnd fyrir valinn reikning án þess að kalla þau laun/kostnað.
+- Styrkjaflæði og fyrri ársgreining haldast inni.
+- UI-textar eru fyrir is/en/pl/sr.
+- Engin AI-notkun.
+- Engin Prisma migration.
+- Engin bókun eða sjálfvirk flokkun verður við skoðun.
+
+Próf:
+  npx tsc --noEmit
+
+Síðan:
+  /banki/arsgreining?year=2025
+
+Smelltu á t.d. Styrkir, Aðalreikning eða Sjóður UMFÞ í Bankareikningar.

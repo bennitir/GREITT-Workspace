@@ -1,0 +1,110 @@
+GLÖGGT – deildir, föst teymi og deildarvitund í Dagsmönnun
+21. september 2026
+
+MARKMIÐ
+- Stór vinnustaður er ekki einn sameiginlegur starfsmannapottur.
+- Starfsmenn vinna almennt innan sinnar formlegu deildar/einingar og oft í föstum teymum.
+- Stoðdeildir, t.d. Viðhald, Ræsting og Eftirlit, geta sinnt Verki inni hjá annarri deild án þess að starfsmaður teljist færður yfir í þá deild.
+- Dagsmönnun heldur áfram að geta myndað tímabundin dagsteymi ofan á föst teymi.
+
+HUGTÖK
+1. Deild/eining
+   - Formleg skipulagseining fyrirtækis.
+   - Má vera stigskipt: svið -> deild -> eining/deild -> o.s.frv.
+   - Nýtt gagnalag: CompanyDepartment.
+
+2. Fast teymi
+   - Varanlegt/venjulegt teymi innan einnar deildar.
+   - Ný gögn: EmployeeTeam + EmployeeTeamMembership.
+
+3. Dagsteymi
+   - Tímabundin samsetning sem Dagsmönnun lærir/heldur saman sama dag.
+   - Þetta er áfram rekstrarleg samfella, ekki formleg skipulagseining.
+
+VERK – TVÆR DEILDARTENGINGAR
+- responsibleDepartmentId = ábyrgðardeild Verks; þaðan á sjálfvirk mönnun að sækja fólk.
+- locationDepartmentId = stað-/móttökudeild; þar fer þjónustan fram eða sú deild fær þjónustuna.
+
+Dæmi:
+- Viðhaldsdeild ber ábyrgð á viðhaldsverki á Lageri.
+- Ræsting ber ábyrgð á þrifaverki inni hjá Þjónustu.
+- Eftirlit ber ábyrgð á öryggisskoðun hjá Vélar.
+Starfsmennirnir halda áfram að tilheyra sinni ábyrgðardeild.
+
+DAGSMÖNNUN
+Sjálfvirka tillagan notar nú formlega ábyrgðardeild sem harða síu þegar hún er skráð á Verki.
+Röðin er í meginatriðum:
+  starfssvið/réttindi og hæfni -> ábyrgðardeild -> tiltækileiki -> fast teymi -> sama dagsteymi -> önnur bestun.
+
+- Föst teymi fá sérstakt samfelluvægi þegar fleiri en einn þarf á Verki.
+- Sama dagsteymi heldur áfram að fá vægi.
+- Handvirk úthlutun er áfram möguleg sem skýr stjórnandaákvörðun; deildarsían er fyrir sjálfvirku tillöguna.
+- Eldri Verk án responsibleDepartmentId halda eldri hegðun og eru ekki sjálfkrafa útilokuð vegna deildar.
+
+PRÓFUNARGÖGN
+seed-verk-load-test.ts býr nú til formlegt prófunarskipulag:
+- Rekstur (yfireining)
+- Viðhald
+- Ræsting
+- Lager
+- Þjónusta
+- Vélar
+- Umhverfi
+- Flutningar
+- Eftirlit
+
+Einnig eru föst teymi innan deilda, m.a.:
+- Ræstingarteymi 1 og 2
+- Viðhaldsteymi 1 og 2
+- Eftirlitsteymi 1 og 2
+- Vélateymi
+- Flutningateymi
+- Lagerteymi
+- Þjónustuteymi
+- Umhverfisteymi
+
+Fimm prófunarstarfsmenn eru Ræstitæknar og eru aðeins með CLEANING sem venjulegt starfssvið.
+Þrif á sameign bera ábyrgð Ræstingar, svo sjálfvirk Dagsmönnun á ekki lengur að dreifa þeim á almenna starfsmenn úr öðrum deildum.
+
+STJÓRNUN
+/starfsmenn/monnun getur nú:
+- stofnað stigskiptar deildir/einingar,
+- stofnað föst teymi innan deildar,
+- tengt lágmarksmönnunarprófíl við formlega deild.
+
+Starfsmannaspjaldið getur nú:
+- tengt starfsmann við formlega deild,
+- tengt hann við eitt eða fleiri föst teymi innan þeirrar deildar,
+- merkt eitt teymi sem aðalteymi.
+
+NÝ MIGRATION
+20260921124500_add_departments_and_employee_teams
+
+UPPSETNING
+Afþjappið pakkanum yfir C:\GLÖGGT og keyrið:
+
+  npx prisma validate
+  npx prisma generate
+  npx prisma migrate deploy
+  npx tsc --noEmit
+
+Ef allt er hreint, endurgerið load-test safnið:
+
+  node --env-file=.env --import tsx scripts/seed-verk-load-test.ts --reset --apply
+
+Prófið síðan /verk -> Dagsmönnun frá 08:00.
+
+STAÐFESTA Í PRÓFI
+- Þrif fara á Ræstingardeild / Ræstitækna.
+- Viðhaldsverk fá fólk úr Viðhaldi þó staðdeild Verks sé t.d. Lager eða Þjónusta.
+- Fólk úr annarri rekstrardeild kemur ekki sjálfkrafa inn bara vegna þess að það er laust.
+- Föst teymi sjást sem „Fast teymi“ í tillögu þegar samfellan hefur áhrif.
+- Dagsteymissamfella sést áfram sem „Sama dagsteymi“.
+- Tillagan sýnir ábyrgðardeild, staðdeild þegar hún er önnur, og deild/föst teymi starfsmanns til að auðvelda raunprófun.
+
+EKKI KOMIÐ ENN
+- Raunveruleg leiðar-/aksturstímareiknivél.
+- Km og aksturskostnaður.
+- Staðsetningarbestun milli Verka.
+- Sjálfvirk endurröðun vegna raunverulegs lokatíma úr Mobile.
+Þetta kemur ofan á deilda- og teymisgrunninn síðar.

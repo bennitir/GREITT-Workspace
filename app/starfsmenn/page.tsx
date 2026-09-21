@@ -59,6 +59,7 @@ export default async function EmployeesPage() {
           <div>
             <h2 className="text-xl font-bold">{t.title}</h2>
             <p className="mt-1 text-sm text-slate-600">{t.workHelp}</p>
+            <Link href="/starfsmenn/monnun" className="mt-3 inline-flex rounded-lg border px-3 py-2 text-sm font-semibold hover:bg-slate-50">{t.manageStaffing} →</Link>
           </div>
           <details className="w-full max-w-xl rounded-xl border bg-slate-50 p-4">
             <summary className="cursor-pointer font-semibold">＋ {t.newEmployee}</summary>

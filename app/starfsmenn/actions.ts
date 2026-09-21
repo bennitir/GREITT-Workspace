@@ -7,8 +7,10 @@ import { prisma } from "@/lib/prisma";
 
 const EMPLOYMENT_KINDS = new Set(["EMPLOYEE", "TEMPORARY", "APPRENTICE", "OTHER"]);
 const PAY_TYPES = new Set(["MONTHLY", "HOURLY", "MIXED"]);
-const QUALIFICATION_TYPES = new Set(["DRIVING_LICENSE", "MACHINE", "CERTIFICATION", "TRAINING", "OTHER"]);
+const QUALIFICATION_TYPES = new Set(["EDUCATION", "DRIVING_LICENSE", "MACHINE", "CERTIFICATION", "TRAINING", "OTHER"]);
 const LANGUAGES = new Set(["is", "en", "pl", "sr"]);
+const WORK_SCHEDULE_TYPES = new Set(["DAY", "DAY_FIXED_OVERTIME", "SHIFT", "ROLLING_SHIFT", "FLEXIBLE", "OTHER"]);
+const INCIDENTAL_WORK_MODES = new Set(["NEVER", "MANUAL_ONLY", "AUTO_IF_NEEDED"]);
 
 async function requireEmployeeManager() {
   const companyId = await requireActiveCompanyReadAccess();
@@ -40,6 +42,14 @@ function optionalNumber(value: FormDataEntryValue | null) {
   const number = Number(text);
   if (!Number.isFinite(number)) throw new Error("Ógild tala.");
   return number;
+}
+
+function optionalId(value: FormDataEntryValue | null) {
+  const text = String(value ?? "").trim();
+  if (!text) return null;
+  const id = Number(text);
+  if (!Number.isInteger(id) || id <= 0) throw new Error("Ógilt auðkenni.");
+  return id;
 }
 
 function dateOnly(value: FormDataEntryValue | null) {
@@ -148,32 +158,185 @@ export async function updateEmployee(formData: FormData) {
 
   const employmentKindRaw = String(formData.get("employmentKind") ?? "EMPLOYEE");
   const preferredLanguageRaw = String(formData.get("preferredLanguage") ?? "is");
+  const workScheduleTypeRaw = String(formData.get("workScheduleType") ?? "DAY");
   const employmentPercent = optionalNumber(formData.get("employmentPercent"));
+  const contractedWeeklyHours = optionalNumber(formData.get("contractedWeeklyHours"));
+  const fixedOvertimeHoursPerWeek = optionalNumber(formData.get("fixedOvertimeHoursPerWeek"));
+  const contractedWeeklyMinutes = contractedWeeklyHours === null ? null : Math.round(contractedWeeklyHours * 60);
+  const fixedOvertimeMinutesPerWeek = fixedOvertimeHoursPerWeek === null ? null : Math.round(fixedOvertimeHoursPerWeek * 60);
+  const workplaceScheduleProfileId = optionalId(formData.get("workplaceScheduleProfileId"));
+  const laborAgreementProfileId = optionalId(formData.get("laborAgreementProfileId"));
+  const shiftPatternId = optionalId(formData.get("shiftPatternId"));
+  const incidentalWorkModeRaw = String(formData.get("incidentalWorkMode") ?? "NEVER");
+  const departmentId = optionalId(formData.get("departmentId"));
+  const selectedTeamIds = Array.from(new Set(formData.getAll("teamIds").map((value) => Number(value)).filter((value) => Number.isInteger(value) && value > 0)));
+  const primaryTeamId = optionalId(formData.get("primaryTeamId"));
+  if (primaryTeamId && !selectedTeamIds.includes(primaryTeamId)) throw new Error("Aðalteymi þarf einnig að vera valið sem teymi.");
+
   if (employmentPercent !== null && (employmentPercent < 0 || employmentPercent > 100)) {
     throw new Error("Starfshlutfall verður að vera á bilinu 0–100%.");
   }
+  for (const [label, value] of [
+    ["Samningsbundinn vinnutími", contractedWeeklyMinutes],
+    ["Fastir yfirvinnutímar", fixedOvertimeMinutesPerWeek],
+  ] as const) {
+    if (value !== null && (value < 0 || value > 10080)) {
+      throw new Error(`${label} verður að vera á bilinu 0–10.080 mínútur á viku.`);
+    }
+  }
 
-  await prisma.employee.update({
-    where: { id: employeeId },
-    data: {
-      employeeNumber: clean(formData.get("employeeNumber")),
-      fullName: requiredText(formData.get("fullName"), "Nafn"),
-      kennitala: clean(formData.get("kennitala")),
-      address: clean(formData.get("address")),
-      postalCode: clean(formData.get("postalCode")),
-      city: clean(formData.get("city")),
-      phone: clean(formData.get("phone")),
-      email: clean(formData.get("email")),
-      preferredLanguage: LANGUAGES.has(preferredLanguageRaw) ? preferredLanguageRaw : "is",
-      jobTitle: clean(formData.get("jobTitle")),
-      department: clean(formData.get("department")),
-      employmentKind: EMPLOYMENT_KINDS.has(employmentKindRaw) ? employmentKindRaw : "EMPLOYEE",
-      employmentStartDate: dateOnly(formData.get("employmentStartDate")),
-      employmentEndDate: dateOnly(formData.get("employmentEndDate")),
-      employmentPercent,
-      notes: clean(formData.get("notes")),
-      updatedById: userId,
-    },
+  const selectedStaffingRoleIds = Array.from(
+    new Set(
+      formData
+        .getAll("staffingRoleIds")
+        .map((value) => Number(value))
+        .filter((value) => Number.isInteger(value) && value > 0),
+    ),
+  );
+  const selectedWorkScopeIds = Array.from(
+    new Set(
+      formData
+        .getAll("workScopeIds")
+        .map((value) => Number(value))
+        .filter((value) => Number.isInteger(value) && value > 0),
+    ),
+  );
+  const primaryWorkScopeId = optionalId(formData.get("primaryWorkScopeId"));
+  if (primaryWorkScopeId && !selectedWorkScopeIds.includes(primaryWorkScopeId)) {
+    throw new Error("Aðalstarfssvið þarf einnig að vera valið sem venjulegt starfssvið.");
+  }
+  const primaryStaffingRoleId = optionalId(formData.get("primaryStaffingRoleId"));
+  if (primaryStaffingRoleId && !selectedStaffingRoleIds.includes(primaryStaffingRoleId)) {
+    throw new Error("Aðalmönnunarhlutverk þarf einnig að vera valið sem mönnunarhlutverk.");
+  }
+
+  const [workplace, agreement, shiftPattern, staffingRoleCount, workScopeCount, department, selectedTeams] = await Promise.all([
+    workplaceScheduleProfileId
+      ? prisma.workplaceScheduleProfile.findFirst({ where: { id: workplaceScheduleProfileId, companyId, isActive: true }, select: { id: true } })
+      : Promise.resolve(null),
+    laborAgreementProfileId
+      ? prisma.laborAgreementProfile.findFirst({ where: { id: laborAgreementProfileId, companyId, isActive: true }, select: { id: true } })
+      : Promise.resolve(null),
+    shiftPatternId
+      ? prisma.shiftPattern.findFirst({ where: { id: shiftPatternId, companyId, isActive: true }, select: { id: true } })
+      : Promise.resolve(null),
+    selectedStaffingRoleIds.length
+      ? prisma.staffingRole.count({ where: { id: { in: selectedStaffingRoleIds }, companyId, isActive: true } })
+      : Promise.resolve(0),
+    selectedWorkScopeIds.length
+      ? prisma.workScope.count({ where: { id: { in: selectedWorkScopeIds }, companyId, isActive: true } })
+      : Promise.resolve(0),
+    departmentId
+      ? prisma.companyDepartment.findFirst({ where: { id: departmentId, companyId, isActive: true }, select: { id: true, name: true } })
+      : Promise.resolve(null),
+    selectedTeamIds.length
+      ? prisma.employeeTeam.findMany({ where: { id: { in: selectedTeamIds }, companyId, isActive: true }, select: { id: true, departmentId: true } })
+      : Promise.resolve([]),
+  ]);
+
+  if (workplaceScheduleProfileId && !workplace) throw new Error("Vinnustaðarprófíll fannst ekki.");
+  if (laborAgreementProfileId && !agreement) throw new Error("Kjarasamningsprófíll fannst ekki.");
+  if (shiftPatternId && !shiftPattern) throw new Error("Vaktamynstur fannst ekki.");
+  if (staffingRoleCount !== selectedStaffingRoleIds.length) throw new Error("Eitt eða fleiri mönnunarhlutverk fundust ekki.");
+  if (workScopeCount !== selectedWorkScopeIds.length) throw new Error("Eitt eða fleiri starfssvið fundust ekki.");
+  if (departmentId && !department) throw new Error("Deild fannst ekki.");
+  if (selectedTeams.length !== selectedTeamIds.length) throw new Error("Eitt eða fleiri teymi fundust ekki.");
+  if (selectedTeamIds.length > 0 && !departmentId) throw new Error("Velja þarf deild áður en starfsmaður er settur í fast teymi.");
+  if (departmentId && selectedTeams.some((team) => team.departmentId !== departmentId)) throw new Error("Valin teymi þurfa að tilheyra deild starfsmanns.");
+
+  await prisma.$transaction(async (tx) => {
+    await tx.employee.update({
+      where: { id: employeeId },
+      data: {
+        employeeNumber: clean(formData.get("employeeNumber")),
+        fullName: requiredText(formData.get("fullName"), "Nafn"),
+        kennitala: clean(formData.get("kennitala")),
+        address: clean(formData.get("address")),
+        postalCode: clean(formData.get("postalCode")),
+        city: clean(formData.get("city")),
+        phone: clean(formData.get("phone")),
+        email: clean(formData.get("email")),
+        preferredLanguage: LANGUAGES.has(preferredLanguageRaw) ? preferredLanguageRaw : "is",
+        jobTitle: clean(formData.get("jobTitle")),
+        departmentId,
+        department: department?.name ?? clean(formData.get("department")),
+        jobDescription: clean(formData.get("jobDescription")),
+        employmentContractReference: clean(formData.get("employmentContractReference")),
+        employmentContractNotes: clean(formData.get("employmentContractNotes")),
+        employmentKind: EMPLOYMENT_KINDS.has(employmentKindRaw) ? employmentKindRaw : "EMPLOYEE",
+        employmentStartDate: dateOnly(formData.get("employmentStartDate")),
+        employmentEndDate: dateOnly(formData.get("employmentEndDate")),
+        employmentPercent,
+        workplaceScheduleProfileId,
+        laborAgreementProfileId,
+        shiftPatternId,
+        workScheduleType: WORK_SCHEDULE_TYPES.has(workScheduleTypeRaw) ? workScheduleTypeRaw : "DAY",
+        contractedWeeklyMinutes,
+        fixedOvertimeMinutesPerWeek,
+        workScheduleNotes: clean(formData.get("workScheduleNotes")),
+        incidentalWorkMode: INCIDENTAL_WORK_MODES.has(incidentalWorkModeRaw) ? incidentalWorkModeRaw : "NEVER",
+        incidentalWorkNotes: clean(formData.get("incidentalWorkNotes")),
+        notes: clean(formData.get("notes")),
+        updatedById: userId,
+      },
+    });
+
+    await tx.employeeStaffingRole.updateMany({
+      where: { companyId, employeeId },
+      data: { isActive: false, isPrimary: false },
+    });
+
+    for (const staffingRoleId of selectedStaffingRoleIds) {
+      await tx.employeeStaffingRole.upsert({
+        where: { employeeId_staffingRoleId: { employeeId, staffingRoleId } },
+        create: {
+          companyId,
+          employeeId,
+          staffingRoleId,
+          isActive: true,
+          isPrimary: staffingRoleId === primaryStaffingRoleId,
+        },
+        update: {
+          isActive: true,
+          isPrimary: staffingRoleId === primaryStaffingRoleId,
+        },
+      });
+    }
+
+    await tx.employeeWorkScope.updateMany({
+      where: { companyId, employeeId },
+      data: { isActive: false, isPrimary: false },
+    });
+
+    for (const workScopeId of selectedWorkScopeIds) {
+      await tx.employeeWorkScope.upsert({
+        where: { employeeId_workScopeId: { employeeId, workScopeId } },
+        create: {
+          companyId,
+          employeeId,
+          workScopeId,
+          isActive: true,
+          isPrimary: workScopeId === primaryWorkScopeId,
+        },
+        update: {
+          isActive: true,
+          isPrimary: workScopeId === primaryWorkScopeId,
+        },
+      });
+    }
+
+    await tx.employeeTeamMembership.updateMany({
+      where: { companyId, employeeId },
+      data: { isActive: false, isPrimary: false },
+    });
+
+    for (const teamId of selectedTeamIds) {
+      await tx.employeeTeamMembership.upsert({
+        where: { employeeId_teamId: { employeeId, teamId } },
+        create: { companyId, employeeId, teamId, isActive: true, isPrimary: teamId === primaryTeamId },
+        update: { isActive: true, isPrimary: teamId === primaryTeamId },
+      });
+    }
   });
 
   revalidateEmployee(employeeId);

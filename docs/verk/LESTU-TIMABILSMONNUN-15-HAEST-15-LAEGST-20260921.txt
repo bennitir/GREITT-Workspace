@@ -1,0 +1,12 @@
+GLÖGGT – Tímabilsmönnun: 15 hæst og 15 lægst nýttu starfsmenn
+21. september 2026
+
+Breyting:
+- Tímabilsmönnun sýnir nú 15 hæst nýttu og 15 lægst nýttu starfsmenn yfir allt valið tímabil.
+- Nýting hvers starfsmanns er reiknuð út frá tiltækri getu á þeim dögum sem viðkomandi var tiltækur, eftir formleg hlé.
+- Vinna og nauðsynlegur akstur teljast með í nýtingu.
+- Heimferð er talin einu sinni í lok dags hjá hverjum starfsmanni.
+- Botnlistinn inniheldur einnig 0% starfsmenn. Þetta er viljandi í tímabilsyfirliti svo stjórnandi sjái fólk/deildir sem fengu engin Verk yfir tímabilið.
+- Báðir listar sýna deild, vinnu, akstur, svigrúm og fjölda Verka.
+
+Engin gagnagrunnsmigration og ekkert reseed þarf fyrir þessa UI/greiningarbreytingu.

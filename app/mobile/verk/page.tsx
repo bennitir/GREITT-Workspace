@@ -2,7 +2,7 @@ import Link from "next/link";
 
 import MobileOperationalTranslationSync from "@/components/MobileOperationalTranslationSync";
 
-import { work10PriorityText, work10StatusText } from "@/lib/i18n/work10";
+import { work10PriorityText, work10StatusText, work10Text } from "@/lib/i18n/work10";
 import { workMobileText } from "@/lib/i18n/work-mobile";
 import { workResourceOperationsText } from "@/lib/i18n/work-resource-operations";
 import { prisma } from "@/lib/prisma";
@@ -10,7 +10,7 @@ import { projectWorkPartsForDisplay } from "@/lib/work10/display-parts";
 import { getMobileWorkActor } from "@/lib/work10/mobile-access";
 import { projectPersistedWorkOrderText } from "@/lib/work10/work-order-text";
 import { resolveWork10LocalizedText } from "@/lib/work10/operational-text";
-import { deriveWork10Status } from "@/lib/work10/status";
+import { deriveWork10Status, isWork10ReadyToClose } from "@/lib/work10/status";
 import { isWork10PartTerminalStatus } from "@/lib/work10/workflow";
 import ResourceQrScanner from "./ResourceQrScanner";
 
@@ -43,17 +43,23 @@ export default async function MobileVerkPage({ searchParams }: Props) {
   const params = await searchParams;
   const query = String(params.q ?? "").trim();
   const t = workMobileText(actor.language);
+  const workT = work10Text(actor.language);
   const ops = workResourceOperationsText(actor.language);
 
   const [workOrders, activeFact] = await Promise.all([
     prisma.workOrder.findMany({
-      where: {
-        companyId: actor.companyId,
-        OR: [
-          { workParts: { some: { status: { notIn: ["COMPLETED", "CANCELLED"] } } } },
-          { workParts: { none: {} }, status: { notIn: ["COMPLETED", "CANCELLED"] } },
-        ],
-      },
+      where: actor.access.canManage
+        ? {
+            companyId: actor.companyId,
+            status: { notIn: ["COMPLETED", "CANCELLED"] },
+          }
+        : {
+            companyId: actor.companyId,
+            OR: [
+              { workParts: { some: { status: { notIn: ["COMPLETED", "CANCELLED"] } } } },
+              { workParts: { none: {} }, status: { notIn: ["COMPLETED", "CANCELLED"] } },
+            ],
+          },
       include: {
         translations: true,
         workParts: {
@@ -133,6 +139,7 @@ export default async function MobileVerkPage({ searchParams }: Props) {
 
       const openPartCount = work.workParts.filter((part) => !isWork10PartTerminalStatus(part.status)).length;
       const effectiveStatus = deriveWork10Status(work.status, work.workParts);
+      const readyToClose = isWork10ReadyToClose(work.status, work.workParts);
       const searchablePartTitles = parts.map((part) => part.title);
       const matches = matchesQuery(
         [localizedTitle, work.workNumber, work.workKey, work.address, ...searchablePartTitles],
@@ -147,6 +154,7 @@ export default async function MobileVerkPage({ searchParams }: Props) {
         address: work.address,
         priority: work.priority,
         status: effectiveStatus,
+        readyToClose,
         openPartCount,
         assignedCount: assignedPartIds.size,
         directAssignedCount,
@@ -201,7 +209,7 @@ export default async function MobileVerkPage({ searchParams }: Props) {
           </p>
         </div>
         <span className="shrink-0 rounded-full bg-slate-100 px-2.5 py-1 text-xs font-semibold text-slate-700">
-          {work10StatusText(card.status, actor.language)}
+          {card.readyToClose ? workT.readyToCloseBadge : work10StatusText(card.status, actor.language)}
         </span>
       </div>
 

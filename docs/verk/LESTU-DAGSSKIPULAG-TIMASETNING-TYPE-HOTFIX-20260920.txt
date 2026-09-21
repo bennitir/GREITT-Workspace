@@ -1,0 +1,14 @@
+GLÖGGT – tímasetning Dagskipulags, TypeScript hotfix 20.09.2026
+
+Lagar:
+- WorkOrderData vantaði plannedDate og plannedStartMinutes.
+- Mapping fyrir WorkPartData skilaði ekki plannedDate/plannedStartMinutes.
+
+Engin ný Prisma migration.
+Migration 20260920173500_add_work_scheduling er þegar keyrð ef þú komst að TypeScript-villunum.
+
+Afþjappaðu yfir C:\GLÖGGT og keyrðu:
+
+npx tsc --noEmit
+
+Ef það er hreint þarf ekki að keyra prisma migrate deploy aftur fyrir þennan hotfix.

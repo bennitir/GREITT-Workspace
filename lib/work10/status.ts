@@ -1,13 +1,10 @@
 import type { Work10PartStatus, Work10Status } from "@/lib/work10/domain";
 
 /**
- * WorkOrder er yfirheiti Verks en WorkPart er sannleikurinn um framkvæmdina.
- * Þegar varanlegir Verkþættir eru til er sýnileg framkvæmdastaða því leidd af
- * þeim í stað þess að láta gamalt WorkOrder.status keppa við nýja kjarnann.
- *
- * WorkOrder.status heldur áfram að nýtast fyrir eldri Verk án Verkþátta og sem
- * meðvituð stjórnunarmerking (t.d. CANCELLED). Þetta gerir yfirfærsluna
- * afturvirkt örugga án þess að tvö stöðugildi verði sjálfstæðir sannleikar.
+ * WorkPart er sannleikurinn um framkvæmd Verkþátta en WorkOrder.status er
+ * meðvituð stjórnunarmerking fyrir sjálft Verkið. Verk lokast því ekki
+ * sjálfkrafa þegar síðasti Verkþátturinn fer í lokastöðu; stjórnandi staðfestir
+ * lokun sérstaklega. Þetta heldur framkvæmd, lokun og sögu aðskildum.
  */
 
 const ORDER_STATUSES = new Set<Work10Status>([
@@ -68,10 +65,11 @@ export function deriveWork10Status(
     status === "COMPLETED" || status === "CANCELLED",
   );
 
+  // Lokun sjálfs Verks er meðvituð stjórnandaaðgerð. Síðasti lokni Verkþáttur
+  // setur því Verkið í bið eftir lokun, en breytir því ekki sjálfkrafa í COMPLETED.
   if (allTerminal) {
-    return statuses.every((status) => status === "CANCELLED")
-      ? "CANCELLED"
-      : "COMPLETED";
+    if (legacyStatus === "COMPLETED") return "COMPLETED";
+    return "IN_PROGRESS";
   }
 
   // Virk framkvæmd hefur forgang yfir bið/áætlun því eitthvað er sannanlega í gangi.
@@ -95,11 +93,21 @@ export function deriveWork10Status(
   return "DRAFT";
 }
 
-export function isWork10EffectivelyCompleted(
+export function isWork10ReadyToClose(
   workOrderStatus: string,
   parts: Array<{ status: string }>,
 ) {
-  return deriveWork10Status(workOrderStatus, parts) === "COMPLETED";
+  if (parts.length === 0) return false;
+  const orderStatus = normalizeLegacyWork10Status(workOrderStatus);
+  if (orderStatus === "COMPLETED" || orderStatus === "CANCELLED") return false;
+  return parts.every((part) => isWork10PartTerminal(part.status));
+}
+
+export function isWork10EffectivelyCompleted(
+  workOrderStatus: string,
+  _parts: Array<{ status: string }>,
+) {
+  return normalizeLegacyWork10Status(workOrderStatus) === "COMPLETED";
 }
 
 // Gamalt heiti varðveitt tímabundið svo eldri kallstaðir brotni ekki.

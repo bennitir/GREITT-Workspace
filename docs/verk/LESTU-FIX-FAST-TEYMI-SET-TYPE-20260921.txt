@@ -1,0 +1,8 @@
+GLÖGGT – lagfæring á TypeScript týpu í fastri teymisreglu
+Dagsetning: 21. september 2026
+
+Lagfært var TypeScript narrowing-vandamál í app/verk/Work10Dashboard.tsx þar sem skurðmengi Set<number> var reiknað með spread/filter og TypeScript þrengdi callback-gildið ranglega í never.
+
+Nýja útfærslan notar skýrt Set<number> og byggir skurðmengið með einfaldri for-lykkju. Engin hegðunarbreyting er ætluð; fast teymi heldur áfram að vera valið sem hópur þegar heilt teymi getur fyllt mönnunarsætin.
+
+Engin Prisma-breyting eða migration fylgir þessari lagfæringu.

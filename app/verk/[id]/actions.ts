@@ -14,7 +14,7 @@ import { prisma } from "@/lib/prisma";
 import { notifyPriorityWork, priorityRecipientUserIdsForTeam } from "@/lib/push/priority-work";
 import { projectLegacyOperationalText } from "@/lib/work10/legacy-operational-text";
 import { projectPersistedWorkOrderText } from "@/lib/work10/work-order-text";
-import { deriveWork10Status, isWork10EffectivelyCompleted } from "@/lib/work10/status";
+import { deriveWork10Status, isWork10EffectivelyCompleted, isWork10ReadyToClose } from "@/lib/work10/status";
 import { defaultResourceUnit, isWork10PersistentResourceKind, resourceUsageKind } from "@/lib/work10/resources";
 import {
   isWork10PartStatus,
@@ -27,6 +27,7 @@ import type {
   Work10OperationalTranslation,
   Work10LocalizedText,
 } from "@/lib/work10/operational-text";
+import { parseWork10CompletionDeadline, parseWork10PlannedDate, parseWork10PlannedStartParts } from "@/lib/work10/scheduling";
 import {
   missingTargetLanguages,
   translateWork10OperationalItems,
@@ -72,6 +73,45 @@ function workPartStatusFromLegacy(status: string) {
   return "PLANNED";
 }
 
+const PHOTO_REQUIREMENTS = new Set(["NONE", "START", "PROGRESS", "PART_COMPLETE", "WORK_COMPLETE"]);
+const PART_PHOTO_REQUIREMENTS = new Set(["INHERIT", ...PHOTO_REQUIREMENTS]);
+
+function parsePlanningFields(formData: FormData, options?: { allowInheritPhoto?: boolean }) {
+  const requiredPeople = Number(formData.get("requiredPeople") ?? 1);
+  const estimatedHours = Number(formData.get("estimatedHours") ?? 0);
+  const estimatedMinutePart = Number(formData.get("estimatedMinutePart") ?? 0);
+  const photoRequirement = String(
+    formData.get("photoRequirement") ?? (options?.allowInheritPhoto ? "INHERIT" : "NONE"),
+  );
+
+  if (!Number.isInteger(requiredPeople) || requiredPeople < 1 || requiredPeople > 100) {
+    throw new Error("Fjöldi starfsmanna þarf að vera á bilinu 1–100.");
+  }
+  if (
+    !Number.isInteger(estimatedHours) ||
+    !Number.isInteger(estimatedMinutePart) ||
+    estimatedHours < 0 ||
+    estimatedHours > 999 ||
+    estimatedMinutePart < 0 ||
+    estimatedMinutePart > 59
+  ) {
+    throw new Error("Áætlaður tími er ógildur.");
+  }
+  const allowed = options?.allowInheritPhoto ? PART_PHOTO_REQUIREMENTS : PHOTO_REQUIREMENTS;
+  if (!allowed.has(photoRequirement)) throw new Error("Ógild myndakrafa.");
+
+  const totalMinutes = estimatedHours * 60 + estimatedMinutePart;
+  return {
+    requiredPeople,
+    estimatedMinutes: totalMinutes > 0 ? totalMinutes : null,
+    photoRequirement,
+  };
+}
+
+function effectivePartPhotoRequirement(partRequirement: string, workRequirement: string) {
+  return partRequirement === "INHERIT" ? workRequirement : partRequirement;
+}
+
 function translationRows(
   title: Work10LocalizedText,
   description: Work10LocalizedText | null,
@@ -111,6 +151,7 @@ export async function persistLegacyFirstWorkPart(formData: FormData) {
   const workOrderId = Number(formData.get("workOrderId"));
   const employeeValue = formData.get("employeeId");
   const employeeId = employeeValue && String(employeeValue) !== "" ? Number(employeeValue) : null;
+  const stayOnDashboard = String(formData.get("stayOnDashboard") ?? "") === "1";
   if (!Number.isInteger(workOrderId)) {
     throw new Error("Ógilt verknúmer.");
   }
@@ -137,7 +178,7 @@ export async function persistLegacyFirstWorkPart(formData: FormData) {
       ? Promise.resolve(null)
       : prisma.employee.findFirst({
           where: { id: employeeId, companyId, isActive: true },
-          select: { id: true, fullName: true, userId: true, preferredLanguage: true },
+          select: { id: true, fullName: true, userId: true, preferredLanguage: true, baseOperationalLocationId: true },
         }),
   ]);
 
@@ -180,6 +221,9 @@ export async function persistLegacyFirstWorkPart(formData: FormData) {
           title: operationalText.title.sourceText,
           description: operationalText.description?.sourceText ?? null,
           status: workPartStatusFromLegacy(work.status),
+          requiredPeople: work.requiredPeople,
+          estimatedMinutes: work.estimatedMinutes,
+          photoRequirement: "INHERIT",
           createdById,
           updatedById: createdById,
           translations:
@@ -258,7 +302,7 @@ export async function persistLegacyFirstWorkPart(formData: FormData) {
 
   revalidatePath("/verk");
   revalidatePath(`/verk/${workOrderId}`);
-  redirect(`/verk/${workOrderId}#uthlutun`);
+  if (!stayOnDashboard) redirect(`/verk/${workOrderId}#uthlutun`);
 }
 
 /**
@@ -269,6 +313,7 @@ export async function createWorkPart(formData: FormData) {
   const workOrderId = Number(formData.get("workOrderId"));
   const title = String(formData.get("title") ?? "").trim();
   const description = String(formData.get("description") ?? "").trim();
+  const planning = parsePlanningFields(formData, { allowInheritPhoto: true });
 
   if (!Number.isInteger(workOrderId)) {
     throw new Error("Ógilt verknúmer.");
@@ -324,6 +369,9 @@ export async function createWorkPart(formData: FormData) {
         title,
         description: description || null,
         status: "PLANNED",
+        requiredPeople: planning.requiredPeople,
+        estimatedMinutes: planning.estimatedMinutes,
+        photoRequirement: planning.photoRequirement,
         createdById,
         updatedById: createdById,
       },
@@ -1505,10 +1553,501 @@ export async function updateWorkOrderPriority(formData: FormData) {
   redirect(`/verk/${workOrderId}#forgangur`);
 }
 
+/** Uppfærir mönnunar-/tímaáætlun og valkvæða myndakröfu á þegar stofnuðu Verki. */
+export async function updateWorkOrderPlanning(formData: FormData) {
+  const workOrderId = Number(formData.get("workOrderId"));
+  if (!Number.isInteger(workOrderId)) throw new Error("Ógilt verknúmer.");
+
+  const planning = parsePlanningFields(formData);
+  const plannedDate = parseWork10PlannedDate(String(formData.get("plannedDate") ?? ""));
+  const plannedStartMinutes = parseWork10PlannedStartParts(formData.get("plannedStartHour")?.toString(), formData.get("plannedStartMinute")?.toString());
+  const completionDeadline = parseWork10CompletionDeadline(
+    String(formData.get("completionDeadlineDate") ?? ""),
+    formData.get("completionDeadlineHour")?.toString(),
+    formData.get("completionDeadlineMinute")?.toString(),
+  );
+  const allowAfterWorkdayEnd = formData.get("allowAfterWorkdayEnd") === "on";
+  const workdayEndExceptionReason = String(formData.get("workdayEndExceptionReason") ?? "").trim();
+  if (plannedStartMinutes !== null && !plannedDate) {
+    throw new Error("Veldu áætlaðan dag áður en upphafstími er skráður.");
+  }
+  if (allowAfterWorkdayEnd && !workdayEndExceptionReason) {
+    throw new Error("Skrá þarf ástæðu ef heimilt er að fara fram yfir dagslok.");
+  }
+  const companyId = await requireActiveCompanyWriteAccess();
+  const effectiveUser = await getEffectiveUser();
+
+  const work = await prisma.workOrder.findFirst({
+    where: { id: workOrderId, companyId },
+    select: { id: true, status: true },
+  });
+  if (!work) throw new Error("Verkið fannst ekki.");
+  if (work.status === "COMPLETED" || work.status === "CANCELLED") {
+    throw new Error("Endurvirkja þarf Verkið áður en áætlun þess er breytt.");
+  }
+
+  await prisma.$transaction(async (tx) => {
+    await tx.workOrder.update({
+      where: { id: workOrderId },
+      data: {
+        requiredPeople: planning.requiredPeople,
+        estimatedMinutes: planning.estimatedMinutes,
+        plannedDate,
+        plannedStartMinutes,
+        plannedEndMinutes: null,
+        completionDeadlineDate: completionDeadline.date,
+        completionDeadlineMinutes: completionDeadline.minutes,
+        allowAfterWorkdayEnd,
+        workdayEndExceptionReason: allowAfterWorkdayEnd ? workdayEndExceptionReason : null,
+        photoRequirement: planning.photoRequirement,
+      },
+    });
+
+    await tx.auditEvent.create({
+      data: {
+        companyId,
+        userId: effectiveUser?.id ?? null,
+        entityType: "WORK_ORDER",
+        entityId: workOrderId,
+        action: "PLANNING_UPDATED",
+        source: "USER",
+        description: "Mönnunar-/tímaáætlun Verks uppfærð.",
+        afterData: {
+          ...planning,
+          plannedDate: plannedDate?.toISOString().slice(0, 10) ?? null,
+          plannedStartMinutes,
+          completionDeadlineDate: completionDeadline.date?.toISOString().slice(0, 10) ?? null,
+          completionDeadlineMinutes: completionDeadline.minutes,
+          allowAfterWorkdayEnd,
+          workdayEndExceptionReason: allowAfterWorkdayEnd ? workdayEndExceptionReason : null,
+        },
+      },
+    });
+  });
+
+  revalidatePath("/verk");
+  revalidatePath(`/verk/${workOrderId}`);
+  revalidatePath("/mobile/verk");
+}
+
+
+export async function applyWorkdayStaffingPlan(formData: FormData) {
+  const rawPlan = String(formData.get("plan") ?? "").trim();
+  if (!rawPlan) throw new Error("Dagsáætlun vantar.");
+
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(rawPlan);
+  } catch {
+    throw new Error("Dagsáætlunin er ógild.");
+  }
+
+  if (!parsed || typeof parsed !== "object") throw new Error("Dagsáætlunin er ógild.");
+  const payload = parsed as {
+    plannedDate?: unknown;
+    works?: unknown;
+  };
+  const plannedDate = parseWork10PlannedDate(String(payload.plannedDate ?? ""));
+  if (!plannedDate) throw new Error("Dagsetning dagsáætlunar er ógild.");
+  if (!Array.isArray(payload.works) || payload.works.length === 0 || payload.works.length > 500) {
+    throw new Error("Dagsáætlunin inniheldur engan eða of marga Verkliði.");
+  }
+
+  const parsePlanTravelLeg = (rawValue: unknown, kind: "TO_WORK" | "RETURN_BASE", plannedStartMinutes: number, plannedEndMinutes: number) => {
+    if (rawValue === null || rawValue === undefined) return null;
+    if (typeof rawValue !== "object") throw new Error("Ógild ferðaleið í dagsáætlun.");
+    const rawTravel = rawValue as Record<string, unknown>;
+    const fromLocationId = Number(rawTravel.fromLocationId);
+    const toLocationId = Number(rawTravel.toLocationId);
+    const departureMinutes = Number(rawTravel.departureMinutes);
+    const arrivalMinutes = Number(rawTravel.arrivalMinutes);
+    const estimatedMinutes = Number(rawTravel.estimatedMinutes);
+    const distanceKm = Number(rawTravel.distanceKm);
+    const estimateSource = String(rawTravel.estimateSource ?? "MANUAL").trim().slice(0, 40) || "MANUAL";
+    const trafficRuleCode = rawTravel.trafficRuleCode === null || rawTravel.trafficRuleCode === undefined
+      ? null
+      : String(rawTravel.trafficRuleCode).trim().slice(0, 80) || null;
+    const commonInvalid =
+      !Number.isInteger(fromLocationId) || !Number.isInteger(toLocationId) ||
+      !Number.isInteger(departureMinutes) || !Number.isInteger(arrivalMinutes) || !Number.isInteger(estimatedMinutes) ||
+      !Number.isFinite(distanceKm) || distanceKm < 0 || estimatedMinutes < 0 ||
+      departureMinutes < 0 || departureMinutes >= 24 * 60 ||
+      arrivalMinutes < departureMinutes || arrivalMinutes > 24 * 60 ||
+      arrivalMinutes - departureMinutes !== estimatedMinutes;
+    const timingInvalid = kind === "TO_WORK"
+      ? arrivalMinutes > plannedStartMinutes
+      : departureMinutes < plannedEndMinutes;
+    if (commonInvalid || timingInvalid) throw new Error("Ógild ferðaleið í dagsáætlun.");
+    return { fromLocationId, toLocationId, departureMinutes, arrivalMinutes, estimatedMinutes, distanceKm, estimateSource, trafficRuleCode };
+  };
+
+  const works = payload.works.map((value) => {
+    if (!value || typeof value !== "object") throw new Error("Ógildur Verkliður í dagsáætlun.");
+    const item = value as {
+      workOrderId?: unknown;
+      plannedStartMinutes?: unknown;
+      plannedEndMinutes?: unknown;
+      assignments?: unknown;
+    };
+    const workOrderId = Number(item.workOrderId);
+    const plannedStartMinutes = Number(item.plannedStartMinutes);
+    const plannedEndMinutes = Number(item.plannedEndMinutes);
+    if (
+      !Number.isInteger(workOrderId) ||
+      !Number.isInteger(plannedStartMinutes) ||
+      !Number.isInteger(plannedEndMinutes) ||
+      plannedStartMinutes < 0 ||
+      plannedStartMinutes >= 24 * 60 ||
+      plannedEndMinutes <= plannedStartMinutes ||
+      plannedEndMinutes > 24 * 60
+    ) {
+      throw new Error("Ógildur tími eða verknúmer í dagsáætlun.");
+    }
+    if (!Array.isArray(item.assignments) || item.assignments.length === 0 || item.assignments.length > 100) {
+      throw new Error("Ógild mönnun í dagsáætlun.");
+    }
+    const assignments = item.assignments.map((assignmentValue) => {
+      if (!assignmentValue || typeof assignmentValue !== "object") throw new Error("Ógild úthlutun í dagsáætlun.");
+      const assignment = assignmentValue as { employeeId?: unknown; workPartId?: unknown; travelLeg?: unknown; returnLeg?: unknown };
+      const employeeId = Number(assignment.employeeId);
+      const workPartId = Number(assignment.workPartId);
+      if (!Number.isInteger(employeeId) || !Number.isInteger(workPartId)) throw new Error("Ógild úthlutun í dagsáætlun.");
+
+      const travelLeg = parsePlanTravelLeg(assignment.travelLeg, "TO_WORK", plannedStartMinutes, plannedEndMinutes);
+      const returnLeg = parsePlanTravelLeg(assignment.returnLeg, "RETURN_BASE", plannedStartMinutes, plannedEndMinutes);
+      return { employeeId, workPartId, travelLeg, returnLeg };
+    });
+    return { workOrderId, plannedStartMinutes, plannedEndMinutes, assignments };
+  });
+
+  const workOrderIds = [...new Set(works.map((item) => item.workOrderId))];
+  if (workOrderIds.length !== works.length) throw new Error("Sama Verk má aðeins koma einu sinni fyrir í dagsáætlun.");
+  const employeeIds = [...new Set(works.flatMap((item) => item.assignments.map((assignment) => assignment.employeeId)))];
+  const workPartIds = [...new Set(works.flatMap((item) => item.assignments.map((assignment) => assignment.workPartId)))];
+  const travelLocationIds = [...new Set(works.flatMap((item) => item.assignments.flatMap((assignment) => [
+    ...(assignment.travelLeg ? [assignment.travelLeg.fromLocationId, assignment.travelLeg.toLocationId] : []),
+    ...(assignment.returnLeg ? [assignment.returnLeg.fromLocationId, assignment.returnLeg.toLocationId] : []),
+  ])))];
+
+  const companyId = await requireActiveCompanyWriteAccess();
+  const effectiveUser = await getEffectiveUser();
+  const [dbWorks, employees, parts, existingAssignments, travelLocations] = await Promise.all([
+    prisma.workOrder.findMany({
+      where: { id: { in: workOrderIds }, companyId },
+      select: { id: true, status: true, priority: true, plannedDate: true, plannedStartMinutes: true, plannedEndMinutes: true, operationalLocationId: true },
+    }),
+    prisma.employee.findMany({
+      where: { id: { in: employeeIds }, companyId, isActive: true },
+      select: { id: true, fullName: true, userId: true, preferredLanguage: true, baseOperationalLocationId: true },
+    }),
+    prisma.workPart.findMany({
+      where: { id: { in: workPartIds }, companyId },
+      select: { id: true, workOrderId: true },
+    }),
+    prisma.workPartAssignment.findMany({
+      where: {
+        companyId,
+        workPartId: { in: workPartIds },
+        employeeId: { in: employeeIds },
+        resourceKind: "PERSON",
+        removedAt: null,
+      },
+      select: { workPartId: true, employeeId: true },
+    }),
+    travelLocationIds.length > 0
+      ? prisma.operationalLocation.findMany({ where: { companyId, id: { in: travelLocationIds }, isActive: true }, select: { id: true } })
+      : Promise.resolve([] as Array<{ id: number }>),
+  ]);
+
+  if (dbWorks.length !== workOrderIds.length) throw new Error("Eitt eða fleiri Verk fundust ekki.");
+  if (employees.length !== employeeIds.length) throw new Error("Einn eða fleiri starfsmenn fundust ekki eða eru óvirkir.");
+  if (travelLocations.length !== travelLocationIds.length) throw new Error("Einn eða fleiri rekstrarstaðir í ferðaleið fundust ekki.");
+  const workById = new Map(dbWorks.map((work) => [work.id, work]));
+  const employeeById = new Map(employees.map((employee) => [employee.id, employee]));
+  const partById = new Map(parts.map((part) => [part.id, part]));
+  const existingKeys = new Set(existingAssignments.map((assignment) => `${assignment.workPartId}:${assignment.employeeId}`));
+
+  for (const item of works) {
+    const work = workById.get(item.workOrderId);
+    if (!work) throw new Error("Verkið fannst ekki.");
+    if (work.status === "COMPLETED" || work.status === "CANCELLED") throw new Error("Lokuðu Verki má ekki bæta í dagsáætlun.");
+    for (const assignment of item.assignments) {
+      const part = partById.get(assignment.workPartId);
+      if (!part || part.workOrderId !== item.workOrderId) throw new Error("Verkþáttur passar ekki við Verk í dagsáætlun.");
+      if (!employeeById.has(assignment.employeeId)) throw new Error("Starfsmaður fannst ekki.");
+      if (assignment.travelLeg && work.operationalLocationId && assignment.travelLeg.toLocationId !== work.operationalLocationId) {
+        throw new Error("Áfangastaður ferðaleiðar passar ekki við rekstrarstað Verks.");
+      }
+      const employee = employeeById.get(assignment.employeeId);
+      if (assignment.returnLeg && work.operationalLocationId && assignment.returnLeg.fromLocationId !== work.operationalLocationId) {
+        throw new Error("Upphaf heimferðar passar ekki við rekstrarstað Verks.");
+      }
+      if (assignment.returnLeg && employee?.baseOperationalLocationId && assignment.returnLeg.toLocationId !== employee.baseOperationalLocationId) {
+        throw new Error("Heimferð endar ekki á starfstöð starfsmanns.");
+      }
+    }
+  }
+
+  await prisma.$transaction(async (tx) => {
+    for (const item of works) {
+      const before = workById.get(item.workOrderId)!;
+      await tx.workOrder.update({
+        where: { id: item.workOrderId },
+        data: { plannedDate, plannedStartMinutes: item.plannedStartMinutes, plannedEndMinutes: item.plannedEndMinutes },
+      });
+      await tx.auditEvent.create({
+        data: {
+          companyId,
+          userId: effectiveUser?.id ?? null,
+          entityType: "WORK_ORDER",
+          entityId: item.workOrderId,
+          action: "DAY_PLAN_CONFIRMED",
+          source: "USER",
+          description: "Dagsáætlun Verks staðfest.",
+          beforeData: {
+            plannedDate: before.plannedDate?.toISOString().slice(0, 10) ?? null,
+            plannedStartMinutes: before.plannedStartMinutes,
+            plannedEndMinutes: before.plannedEndMinutes,
+          },
+          afterData: {
+            plannedDate: plannedDate.toISOString().slice(0, 10),
+            plannedStartMinutes: item.plannedStartMinutes,
+            plannedEndMinutes: item.plannedEndMinutes,
+          },
+        },
+      });
+    }
+
+    for (const item of works) {
+      for (const assignment of item.assignments) {
+        const persistLeg = async (legType: "TO_WORK" | "RETURN_BASE", leg: typeof assignment.travelLeg) => {
+          if (!leg) {
+            await tx.workTravelPlanLeg.deleteMany({
+              where: { workOrderId: item.workOrderId, employeeId: assignment.employeeId, plannedDate, legType },
+            });
+            return;
+          }
+          await tx.workTravelPlanLeg.upsert({
+            where: {
+              workOrderId_employeeId_plannedDate_legType: {
+                workOrderId: item.workOrderId,
+                employeeId: assignment.employeeId,
+                plannedDate,
+                legType,
+              },
+            },
+            create: {
+              companyId, workOrderId: item.workOrderId, employeeId: assignment.employeeId, plannedDate, legType,
+              fromLocationId: leg.fromLocationId, toLocationId: leg.toLocationId,
+              departureMinutes: leg.departureMinutes, arrivalMinutes: leg.arrivalMinutes,
+              estimatedMinutes: leg.estimatedMinutes, distanceKm: leg.distanceKm,
+              estimateSource: leg.estimateSource, trafficRuleCode: leg.trafficRuleCode, status: "PLANNED",
+            },
+            update: {
+              fromLocationId: leg.fromLocationId, toLocationId: leg.toLocationId,
+              departureMinutes: leg.departureMinutes, arrivalMinutes: leg.arrivalMinutes,
+              estimatedMinutes: leg.estimatedMinutes, distanceKm: leg.distanceKm,
+              estimateSource: leg.estimateSource, trafficRuleCode: leg.trafficRuleCode, status: "PLANNED",
+            },
+          });
+        };
+
+        await persistLeg("TO_WORK", assignment.travelLeg);
+        await persistLeg("RETURN_BASE", assignment.returnLeg);
+      }
+    }
+
+    const newAssignments = works.flatMap((item) =>
+      item.assignments
+        .filter((assignment) => !existingKeys.has(`${assignment.workPartId}:${assignment.employeeId}`))
+        .map((assignment) => {
+          const employee = employeeById.get(assignment.employeeId)!;
+          return {
+            companyId,
+            workPartId: assignment.workPartId,
+            resourceKind: "PERSON",
+            employeeId: assignment.employeeId,
+            userId: employee.userId,
+            resourceLabel: employee.fullName,
+            createdById: effectiveUser?.id ?? null,
+          };
+        }),
+    );
+    if (newAssignments.length > 0) await tx.workPartAssignment.createMany({ data: newAssignments });
+  });
+
+  for (const item of works) {
+    const recipientUserIds = [...new Set(
+      item.assignments
+        .map((assignment) => employeeById.get(assignment.employeeId)?.userId ?? null)
+        .filter((userId): userId is number => userId !== null),
+    )];
+    try {
+      await bestEffortEnsureOperationalTranslations({
+        companyId,
+        workOrderId: item.workOrderId,
+        actingUserId: effectiveUser?.id ?? null,
+        recipientUserIds,
+        fallbackLanguages: item.assignments
+          .map((assignment) => employeeById.get(assignment.employeeId)?.preferredLanguage ?? null)
+          .filter((language): language is string => Boolean(language)),
+      });
+      if (recipientUserIds.length > 0 && ["HIGH", "URGENT"].includes(workById.get(item.workOrderId)?.priority ?? "")) {
+        await notifyPriorityWork({
+          workOrderId: item.workOrderId,
+          companyId,
+          reason: "ASSIGNED_PRIORITY",
+          recipientUserIds,
+        });
+      }
+    } catch (error) {
+      console.error("Day-plan post-processing failed", error);
+    }
+  }
+
+  revalidatePath("/verk");
+  revalidatePath("/mobile");
+  revalidatePath("/mobile/verk");
+  for (const workOrderId of workOrderIds) revalidatePath(`/verk/${workOrderId}`);
+}
+
 /**
- * Verkþáttur er sannleikurinn um framkvæmdarstöðu. WorkOrder.status og
- * startedAt/completedAt eru hér samstillt yfirlitsgildi, leidd af hlutunum,
- * svo eldri listar og nýi kjarninn segi ekki sitt hvorn sannleikann.
+ * Lokun sjálfs Verks er meðvituð stjórnandaaðgerð. Verkþættir mega allir vera
+ * loknir án þess að Verkið sjálft hverfi úr virkri rekstrarsýn fyrr en þetta
+ * skref er staðfest.
+ */
+export async function completeWorkOrder(formData: FormData) {
+  const workOrderId = Number(formData.get("workOrderId"));
+  if (!Number.isInteger(workOrderId)) throw new Error("Ógilt verknúmer.");
+
+  const companyId = await requireActiveCompanyWriteAccess();
+  const effectiveUser = await getEffectiveUser();
+  const userId = effectiveUser?.id ?? null;
+
+  const work = await prisma.workOrder.findFirst({
+    where: { id: workOrderId, companyId },
+    select: {
+      id: true,
+      status: true,
+      completedAt: true,
+      photoRequirement: true,
+      evidencePhotos: {
+        where: { stage: "WORK_COMPLETE" },
+        select: { id: true },
+        take: 1,
+      },
+      workParts: {
+        select: {
+          id: true,
+          status: true,
+          laborFacts: {
+            where: { voidedAt: null, startedAt: { not: null }, endedAt: null },
+            select: { id: true },
+          },
+        },
+      },
+    },
+  });
+
+  if (!work) throw new Error("Verkið fannst ekki.");
+  if (work.status === "CANCELLED") throw new Error("Ekki er hægt að ljúka niðurfelldu Verki.");
+  if (work.status === "COMPLETED") {
+    redirect(`/verk/${workOrderId}#lifsferill`);
+  }
+  if (!isWork10ReadyToClose(work.status, work.workParts)) {
+    throw new Error("Ekki er hægt að ljúka Verkinu fyrr en allir Verkþættir eru komnir í lokastöðu.");
+  }
+
+  if (work.photoRequirement === "WORK_COMPLETE" && work.evidencePhotos.length === 0) {
+    throw new Error("Myndakrafa Verks er ekki uppfyllt. Bæta þarf við lokamynd áður en Verkinu er lokað.");
+  }
+
+  const activeLaborCount = work.workParts.reduce(
+    (sum, part) => sum + part.laborFacts.length,
+    0,
+  );
+  if (activeLaborCount > 0) {
+    throw new Error("Ekki er hægt að ljúka Verkinu meðan virk tímaskráning er í gangi.");
+  }
+
+  const now = new Date();
+  await prisma.$transaction(async (tx) => {
+    await tx.workOrder.update({
+      where: { id: workOrderId },
+      data: { status: "COMPLETED", completedAt: now },
+    });
+    await tx.auditEvent.create({
+      data: {
+        companyId,
+        userId,
+        entityType: "WORK_ORDER",
+        entityId: workOrderId,
+        action: "COMPLETED",
+        source: "USER",
+        description: "Verki lokað eftir staðfestingu stjórnanda.",
+        beforeData: { status: work.status, completedAt: work.completedAt?.toISOString() ?? null },
+        afterData: { status: "COMPLETED", completedAt: now.toISOString() },
+        metadata: { reason: "MANUAL_WORK_CLOSE" },
+      },
+    });
+  });
+
+  revalidatePath("/verk");
+  revalidatePath(`/verk/${workOrderId}`);
+  revalidatePath("/mobile");
+  revalidatePath("/mobile/verk");
+  redirect(`/verk/${workOrderId}#lifsferill`);
+}
+
+export async function reopenWorkOrder(formData: FormData) {
+  const workOrderId = Number(formData.get("workOrderId"));
+  if (!Number.isInteger(workOrderId)) throw new Error("Ógilt verknúmer.");
+
+  const companyId = await requireActiveCompanyWriteAccess();
+  const effectiveUser = await getEffectiveUser();
+  const userId = effectiveUser?.id ?? null;
+
+  const work = await prisma.workOrder.findFirst({
+    where: { id: workOrderId, companyId },
+    select: { id: true, status: true, completedAt: true },
+  });
+  if (!work) throw new Error("Verkið fannst ekki.");
+  if (work.status !== "COMPLETED") {
+    redirect(`/verk/${workOrderId}#lifsferill`);
+  }
+
+  await prisma.$transaction(async (tx) => {
+    await tx.workOrder.update({
+      where: { id: workOrderId },
+      data: { status: "IN_PROGRESS", completedAt: null },
+    });
+    await tx.auditEvent.create({
+      data: {
+        companyId,
+        userId,
+        entityType: "WORK_ORDER",
+        entityId: workOrderId,
+        action: "REOPENED",
+        source: "USER",
+        description: "Verk endurvirkjað eftir handvirka lokun.",
+        beforeData: { status: work.status, completedAt: work.completedAt?.toISOString() ?? null },
+        afterData: { status: "IN_PROGRESS", completedAt: null },
+        metadata: { reason: "MANUAL_WORK_REOPEN" },
+      },
+    });
+  });
+
+  revalidatePath("/verk");
+  revalidatePath(`/verk/${workOrderId}`);
+  revalidatePath("/mobile");
+  revalidatePath("/mobile/verk");
+  redirect(`/verk/${workOrderId}#lifsferill`);
+}
+
+/**
+ * Verkþáttur er sannleikurinn um framkvæmdarstöðu. WorkOrder.status heldur
+ * utan um stjórnunarstöðu sjálfs Verks og lokast ekki sjálfkrafa með síðasta
+ * Verkþættinum.
  */
 export async function updateWorkPartStatus(formData: FormData) {
   const workOrderId = Number(formData.get("workOrderId"));
@@ -1535,9 +2074,10 @@ export async function updateWorkPartStatus(formData: FormData) {
         status: true,
         startedAt: true,
         completedAt: true,
+        photoRequirement: true,
         workParts: {
           orderBy: { sequence: "asc" },
-          select: { id: true, status: true, sequence: true, title: true },
+          select: { id: true, status: true, sequence: true, title: true, photoRequirement: true },
         },
       },
     }),
@@ -1548,6 +2088,9 @@ export async function updateWorkPartStatus(formData: FormData) {
   ]);
 
   if (!work) throw new Error("Verkið fannst ekki.");
+  if (work.status === "COMPLETED") {
+    throw new Error("Endurvirkja þarf Verkið áður en stöðu Verkþáttar er breytt.");
+  }
   if (work.status === "CANCELLED") {
     throw new Error("Ekki er hægt að breyta Verkþætti á niðurfelldu Verki.");
   }
@@ -1556,7 +2099,7 @@ export async function updateWorkPartStatus(formData: FormData) {
   if (!part) throw new Error("Verkþátturinn fannst ekki.");
   if (part.status === requestedStatus) {
     revalidateWorkOrder(workOrderId);
-    return;
+    redirect(`/verk/${workOrderId}#verkthattur-${workPartId}`);
   }
 
   if (work10StatusRequiresResolvedDependencies(requestedStatus)) {
@@ -1573,6 +2116,24 @@ export async function updateWorkPartStatus(formData: FormData) {
       throw new Error(
         `Verkþátturinn bíður eftir óloknum undanförum${names ? `: ${names}` : "."}`,
       );
+    }
+  }
+
+  if (requestedStatus === "COMPLETED") {
+    const requirement = effectivePartPhotoRequirement(part.photoRequirement, work.photoRequirement);
+    const requiredStage =
+      requirement === "START" ? "START" :
+      requirement === "PROGRESS" ? "PROGRESS" :
+      requirement === "PART_COMPLETE" ? "PART_COMPLETE" :
+      null;
+    if (requiredStage) {
+      const evidence = await prisma.workEvidencePhoto.findFirst({
+        where: { companyId, workOrderId, workPartId, stage: requiredStage },
+        select: { id: true },
+      });
+      if (!evidence) {
+        throw new Error("Myndakrafa Verkþáttar er ekki uppfyllt. Bæta þarf við tilskilinni mynd áður en honum er lokið.");
+      }
     }
   }
 
@@ -1638,6 +2199,7 @@ export async function updateWorkPartStatus(formData: FormData) {
   });
 
   revalidateWorkOrder(workOrderId);
+  redirect(`/verk/${workOrderId}#verkthattur-${workPartId}`);
 }
 
 /** Breytir aðeins framsetningarröð Verkþátta; dependency-grafið helst óbreytt. */

@@ -1,0 +1,63 @@
+GLÖGGT – VERK / MOBILE / FORGANGUR / QR
+20. september 2026
+
+MARKMIÐ PAKKANS
+- Virk Verk eru fremst í rekstrarsýn.
+- Lokið/hætt Verk færast í samanbrjótanlegt safn og trufla ekki virka vinnu.
+- Fyrsta Verkþátt má vista og úthluta starfsmanni í sömu aðgerð.
+- Forgangi Verks má breyta á Verksíðu.
+- HIGH / URGENT forgangur getur sent notanda Mobile-tilkynningu.
+- Tilkynning er alltaf varðveitt inni í GLÖGGT; Web Push er viðbót ofan á það.
+- Hljóð/píp er beiðni til stýrikerfis/vafra. Silent/DND eða OS-stillingar geta bælt hljóð.
+- QR compact-merki fá örlítið meira lárétt rými en haldast mjög þétt.
+
+MIKILVÆGT – NÝ MIGRATION
+Pakkinn bætir við:
+- UserPushSubscription
+- UserNotification
+
+Eftir að ZIP hefur verið afþjappað yfir C:\GLÖGGT skaltu fyrst keyra:
+
+  npx prisma validate
+  npx prisma generate
+  npx prisma migrate deploy
+  npx tsc --noEmit
+
+Ef einhver þessara skipana skilar villu: STOPPA og senda ChatGPT villuna áður en git commit/push er gert.
+
+WEB PUSH / VAPID
+Engin ný npm dependency er nauðsynleg.
+
+Eftir að kóðaprófin að ofan eru græn:
+
+  node scripts/generate-vapid-keys.mjs
+
+Skipunin býr til þrjú gildi:
+- WEB_PUSH_VAPID_PUBLIC_KEY
+- WEB_PUSH_VAPID_PRIVATE_KEY
+- WEB_PUSH_VAPID_SUBJECT
+
+Setja þarf sömu VAPID-gildi í local .env og í Vercel Environment Variables.
+PRIVATE KEY ER LEYNILYKill – ekki senda hann í spjall, skjáskot eða commit.
+
+TILKYNNINGAHEGÐUN
+- Tilkynning fer þegar forgangur hækkar inn í HIGH/URGENT.
+- Tilkynning fer þegar HIGH/URGENT Verk er nýúthlutað á starfsmann eða teymi.
+- Sama Verk pípir ekki stöðugt bara af því það er áfram í forgangi.
+- Mobile fær bjöllu með ólesnum fjölda og sérstaka tilkynningasögu.
+- Notandi virkjar Web Push í Mobile > Stillingar.
+- Notandi getur slökkt á hljóði fyrir tækið án þess að slökkva á sjálfri tilkynningunni.
+- Stýrikerfi/silent/DND getur samt bælt hljóð eða titring.
+
+SERVICE WORKER
+public/sw.js heldur áfram með install/activate/fetch og bætir við push + notification click.
+
+QR
+- 1,5 × 0,8 cm er raunveruleg lárétt merkjastærð.
+- Compact-ramminn fær aðeins meira lárétt bil svo tækjanúmerið klemmist ekki.
+- 0,5 cm QR er áfram prófunarstærð.
+- Lesgæði ráðast m.a. af QR-stærð, prentara, merkimiða og myndavél/skanna.
+
+GIT
+Ekki nota breitt "git add app lib prisma" ef aðrar óskyldar breytingar eru í vinnutrénu.
+Notaðu nákvæmt git add fyrir skrárnar úr þessum pakka eftir að prófin eru græn.

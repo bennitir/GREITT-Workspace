@@ -1,0 +1,107 @@
+GLÖGGT – Verk / Dagskipulag
+Rekstrarstaðir, stefnuvirkur og tímaháður ferðatími
+21. september 2026
+
+Markmið
+-------
+Þessi lota bætir sameiginlegu rekstrarstaðalagi og ferðatíma inn í Dagskipulag.
+Ferðatími er ekki reiknaður út frá km einum. Leið A -> B er sjálfstæð frá B -> A og
+má hafa mismunandi ferðatíma eftir vikudegi og brottfarartíma.
+
+Nýtt gagnalag
+-------------
+OperationalLocation
+- sameiginlegur rekstrarstaður sem síðar má endurnýta utan Verk;
+- kóði, heiti, heimilisfang, póstnúmer, bær, svæði og valfrjáls hnit;
+- BASE / SITE / DEPARTMENT / OTHER.
+
+Employee.baseOperationalLocationId
+- rekstrarlegur upphafsstaður starfsmanns;
+- er sérstaklega EKKI Employee.address / heimilisfang starfsmanns.
+
+CompanyDepartment.defaultOperationalLocationId
+- sjálfgefinn rekstrarstaður deildar þegar starfsmann eða Verk vantar beina tengingu.
+
+WorkOrder.operationalLocationId
+- beinn rekstrarstaður Verks;
+- WorkOrder.address er áfram varðveitt sem frumtexti/heimilisfang.
+
+OperationalTravelRoute
+- stefnuvirk leið frá einum rekstrarstað á annan;
+- distanceKm og defaultMinutes;
+- source = MANUAL | IMPORTED | API | TEST_PROJECTION.
+
+OperationalTravelTimeWindow
+- yfirskrifar defaultMinutes á ákveðnu tímabili;
+- ALL | WEEKDAY | SATURDAY | SUNDAY;
+- t.d. MORNING_PEAK 07:00–09:30 og AFTERNOON_PEAK 15:30–18:00;
+- vegna stefnuvirkra leiða getur A -> B verið allt önnur en B -> A á sama tíma.
+
+WorkTravelPlanLeg
+- rekjanleg ferðaleið sem er vistuð þegar dagsáætlun er staðfest;
+- starfsmaður, Verk, dagsetning, frá/til, brottför, koma, áætlaðar mínútur, km,
+  uppruni mats og umferðarregla.
+
+Dagsmönnun
+----------
+Dagsmönnun heldur nú utan um áætlaða staðsetningu hvers starfsmanns yfir daginn.
+Í upphafi er notaður baseOperationalLocationId eða sjálfgefinn staður deildar.
+Við endurkeyrslu síðar sama dag er síðasti lokni/áætlaði rekstrarstaður notaður þegar
+hann liggur fyrir.
+
+Þegar Verk er valið:
+1. harðar reglur halda áfram að gilda: ábyrgðardeild, starfssvið, réttindi/hæfni;
+2. föst teymi og dagsteymi halda áfram að fá vægi;
+3. leið frá núverandi stað starfsmanns að rekstrarstað Verks er metin á brottfarartíma;
+4. styttri ferðatími og færri km bæta valið, en fara ekki fram fyrir harðar kröfur;
+5. fólkið er frátekið frá brottför, ekki aðeins frá upphafi Verks;
+6. fjölmennt teymi byrjar Verk þegar hægasti ferðaleggurinn hefur komið á staðinn;
+7. eftir Verkið er rekstrarstaður Verks ný áætluð staðsetning starfsmanns/teymis.
+
+Ef skráð leið vantar milli tveggja þekktra rekstrarstaða giskar sjálfvirka dagsáætlunin
+ekki á ferðatímann fyrir þann frambjóðanda. Þetta fylgir „gögn fyrst, AI síðan“.
+
+Neysluhlé
+---------
+Ef áætlaður akstur myndi fara yfir skilgreindan markpunkt ótekins neysluhlés er sú
+brottför ekki valin. Dagslykkjan reynir aftur eftir að hléið hefur verið sett inn.
+Þetta kemur í veg fyrir að akstur sé einfaldlega lagður yfir fyrirfram skilgreint hlé.
+
+Load-test
+---------
+seed-verk-load-test.ts stofnar nú 8 prófunar-rekstrarstaði á Suðurnesjum og
+höfuðborgarsvæðinu og stefnuvirkar leiðir milli þeirra.
+
+Mikilvægt: ferðagildin í load-test eru TEST_PROJECTION. Þau eru viljandi gerð til að
+prófa hegðun kerfisins og eru EKKI mæld lifandi umferð eða fullyrðing um raunverulegan
+ferðatíma á ákveðinni leið.
+
+- Suðurnesjaleiðir hafa lítið álagsfrávik.
+- Höfuðborgarleiðir hafa stærra morgun-/síðdegisfrávik.
+- Álagsstuðull er stefnuvirkur þannig að A -> B og B -> A geti verið mismunandi.
+- Um 2/3 prófunar-Verka eru á Suðurnesjum og 1/3 á höfuðborgarsvæðinu.
+
+Síðar
+-----
+Arkitektúrinn er tilbúinn fyrir að route/source verði uppfært úr korta-/umferðarþjónustu
+(API) án þess að breyta sjálfri dagsmönnunarvél. Þá þarf að bæta við þjónustu sem sækir
+lifandi eða spáðan ferðatíma og uppfærir OperationalTravelRoute/TimeWindow eða sambærilegt
+cache-lag.
+
+Raunferð Mobile (raunveruleg brottför/koma), aksturskostnaður og samanburður á áætlun
+við raunferð er næsta mögulega lag; WorkTravelPlanLeg varðveitir þegar áætlaða grunninn.
+
+Migration
+---------
+20260921144500_add_operational_locations_and_travel
+
+Eftir afþjöppun
+---------------
+npx prisma validate
+npx prisma generate
+npx prisma migrate deploy
+npx tsc --noEmit
+node --env-file=.env --import tsx scripts/seed-verk-load-test.ts --reset --apply
+
+Síðan má búa til Dagsmönnun frá t.d. 08:00, 10:30, 13:00 eða 15:00 og bera saman
+ferðir innan Suðurnesja við höfuðborgarleiðir á mismunandi tímum dags.

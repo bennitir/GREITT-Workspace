@@ -1,0 +1,21 @@
+GLÖGGT – starfsmannakjarni, vaktir og lágmarksmönnun
+
+Setjið pakkann yfir rót C:\GLÖGGT og leyfið skrám að yfirskrifast.
+
+Keyrið síðan:
+  npx prisma validate
+  npx prisma generate
+  npx prisma migrate deploy
+  npx tsc --noEmit
+
+Ný migration:
+  20260921103000_add_employee_schedule_staffing_core
+
+Ný stillingasíða:
+  /starfsmenn/monnun
+
+Nánari lýsing:
+  docs/starfsmenn/LESTU-STARFSMANNAKJARNI-VAKTIR-MONNUN-20260921.txt
+
+Valfrjálst prófunarscript eftir migration:
+  node --env-file=.env --import tsx scripts/configure-employee-staffing-test.ts --company-id=1

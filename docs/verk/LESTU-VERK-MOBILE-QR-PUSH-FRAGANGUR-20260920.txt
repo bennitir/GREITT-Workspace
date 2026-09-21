@@ -1,0 +1,33 @@
+GLÖGGT – stór frágangspakki Verk / Mobile / QR / Push
+20. september 2026
+
+Afþjappaðu pakkanum yfir C:\GLÖGGT.
+
+Engin Prisma-breyting er í þessum pakka.
+Ekki keyra prisma migrate deploy vegna þessa pakka.
+
+Keyrðu fyrst:
+  npx tsc --noEmit
+
+Helstu breytingar:
+- Smá QR-merki passa sjálfkrafa QR-stærð að merkjastærð.
+- 1,5 × 0,8 cm merkimiði setur QR sjálfkrafa í 0,5 cm hámark.
+- QR-merkið er ein órofin prenteining með page-break vörn.
+- Compact rammi er aðeins rýmri en áfram mjög sparneytinn.
+- Prentleiðbeining minnir á að slökkva á Headers and footers og nota rétta pappírs-/merkisstærð.
+- Push-texti er styttri og sértækari: Brýnt/Forgangur + heiti Verks.
+- Push body sýnir raunverulegt samhengi (úthlutun/forgangshækkun, stað, verknúmer).
+- Sama push-atvik er varið gegn tvöföldun í 20 sekúndur.
+- Virk Verk raðast með Brýnt/Hátt fremst; lokuð Verk eru áfram í Lokið Verk sögu.
+- Starfsmannaúthlutun er sjónrænt skýrari á Verkþætti.
+
+Ef TypeScript er hreint skaltu prófa fyrst áður en commit/push er gert:
+1. QR 1,5 × 0,8 cm -> staðfesta að QR fari í 0,5 cm og allt merkið sé á einni prentsíðu.
+2. Slökkva á browser Headers and footers í print dialog.
+3. Prenta og skanna raunmerki.
+4. Breyta Venjulegt -> Brýnt og staðfesta hljóð + sértækan push-texta.
+5. Staðfesta að virkt forgangsverk komi fremst og lokið Verk fari í sögu.
+6. Staðfesta að "Úthluta starfsmanni" sé augljóst á Verkþætti.
+
+Sjá nánar:
+  docs/verk/README-VERK-MOBILE-QR-PUSH-FRAGANGUR-20260920.txt

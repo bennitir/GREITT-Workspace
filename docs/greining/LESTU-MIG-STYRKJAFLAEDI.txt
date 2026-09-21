@@ -1,0 +1,25 @@
+GLÖGGT – Styrkjaflæði í ársgreiningu
+
+Afritaðu innihald ZIP-skrárinnar beint yfir C:\GLÖGGT.
+Möppubyggingin byrjar á app\banki\...
+
+Breytt:
+- app\banki\annual-analysis.ts
+- app\banki\annual-analysis-text.ts
+- app\banki\arsgreining\page.tsx
+
+Nýtt:
+- Sjónrænn rammi „Styrkjaflæði“ á ársgreiningu.
+- Sýnir mögulega styrki inn, sterka pörun áfram og óparaða/óstaðfesta fjárhæð.
+- Tekur aðeins raunverulegar innborganir með styrkjavísbendingu úr bankatexta eða eigin reikningsheiti.
+- Sterk áfram-pörun notar sömu varfærnu reglu og gegnumstreymisgreining: nákvæm sama upphæð inn og út af sama eigin reikningi innan tveggja daga.
+- Ekki bókun, ekki staðfesting á endanlegum styrkþega, ekkert AI.
+- i18n: íslenska, enska, pólska, serbneska.
+
+Engin Prisma migration.
+Ekkert AI-kall.
+
+Próf eftir afritun:
+  npx tsc --noEmit
+
+Skoðaðu svo Banki > Ársgreining 2025 > Styrkjaflæði.

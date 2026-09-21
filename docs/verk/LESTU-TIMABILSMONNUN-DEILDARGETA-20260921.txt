@@ -1,0 +1,35 @@
+GLÖGGT – Tímabilsmönnun: deildarleg tímabilsgeta
+Dagsetning: 21.09.2026
+
+Tilgangur
+--------
+Bætir við deildarlegu yfirliti í Tímabilsmönnun svo hægt sé að greina hvort eftirbunki sé raunverulegur mönnunar-/getuvandi eða hvort pökkun og ferðalög séu að takmarka nýtingu.
+
+Nýtt yfirlit
+------------
+Fyrir hverja deild sýnir Tímabilsmönnun nú:
+- fjölda starfsmanna sem komu inn í tiltæka getu á tímabilinu,
+- tiltæka vinnutímagetu eftir formleg hlé,
+- áætlaðan Verkatíma,
+- akstur, þ.m.t. heimferð sem liggur á lokaverki starfsmanns,
+- nýtingu (Verkatími + akstur / tiltæk geta),
+- fjölda einstakra Verka í tímabilsáætlun,
+- fjölda óskipulagðra Verka sem bera ábyrgðardeildina eftir tímabilið.
+
+Getan fylgir sömu tiltækni og Dagsmönnun: starfsmaður telur aðeins inn í getu dagsins ef hann er tiltækur við upphaf mönnunar þess dags. Formleg hlé dragast frá.
+
+Túlkun
+------
+- Há nýting + mörg Verk eftir bendir að jafnaði til raunverulegs getu-/mönnunarþrýstings.
+- Lág nýting + mörg Verk eftir er merkt sérstaklega og bendir til að skoða ferðatíma, dagslok, hæfnisdreifingu eða pökkunarreiknirit nánar.
+- Deild með getu en engin Verk er ekki sjálfkrafa vandamál; hún getur t.d. verið viðveru-/þjónustudeild sem load-testið hefur engin Verk fyrir.
+
+Engin migration.
+Ekkert reseed.
+
+Próf
+----
+1. npx tsc --noEmit
+2. Opna Verk > Verkalisti.
+3. Búa til 5 daga tímabilstillögu frá 08:00.
+4. Skoða "Deildarleg tímabilsgeta" og bera sérstaklega saman Flutninga, Viðhald og Umhverfi við eftirbunkann.

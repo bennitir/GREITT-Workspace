@@ -1,0 +1,42 @@
+GLÖGGT – Verk: mönnun vs. verkabanki
+21. september 2026
+
+Tilgangur
+- Óúthlutað Verk í verkabanka er ekki sjálfkrafa "Vantar mönnun".
+- "Vantar mönnun" birtist þegar Verk er komið í raunverulegt mönnunarsamhengi:
+  * einhver er þegar úthlutaður en mannaþörf er ekki fullnægt,
+  * Verk hefur plannedDate,
+  * eða staða er READY / IN_PROGRESS.
+- Óskipulagt DRAFT-Verk með 0 úthlutaða birtist hlutlaust sem "Óúthlutað".
+- Gulur bakgrunnur er aðeins notaður þegar mönnun þarfnast raunverulegrar athygli.
+
+Röðun virkra Verka
+1. Forgangur fyrst.
+2. Innan sama forgangs fær raunverulegur mönnunarvandi athygli.
+3. Skipulögð dagsetning/tími.
+4. Staða.
+5. Elstu Verk fyrst innan sama forgangs.
+
+Mikilvægt
+- Aldur breytir ekki forgangi í Brýnt.
+- Morgunmönnun/dagsskipulag getur áfram valið úr öllum óúthlutuðum Verkum í verkabankanum.
+- "Manna Verk" takkinn helst tiltækur á óúthlutuðum Verkum.
+- Fjöltyngt: íslenska, enska, pólska og serbneska.
+
+Skrár
+app/verk/Work10Dashboard.tsx
+lib/i18n/work10.ts
+
+Engin Prisma breyting / migration.
+
+Setjið pakkann yfir rót C:\GLÖGGT og leyfið skrám að yfirskrifast.
+
+Próf
+npx tsc --noEmit
+
+Síðan:
+1. Opna /verk -> Verklisti.
+2. Staðfesta að venjuleg óskipulögð DRAFT-Verk séu merkt "Óúthlutað" en ekki "Vantar mönnun".
+3. Staðfesta að aðeins 7 Brýn Verk séu efst í 750-verka prófunarsafninu.
+4. Úthluta einum starfsmanni á 2-manna Verk eða setja Verk á dag/tíma og staðfesta að ófull mönnun verði gul "Vantar mönnun".
+5. Prófa Dagskipulag áfram kl. 08:00, 10:30, 13:00 og 15:00.

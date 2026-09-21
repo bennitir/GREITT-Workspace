@@ -61,15 +61,37 @@ model Company {
   usageEvents  UsageEvent[]
   users        UserCompany[]
   employees    Employee[]
+  departments CompanyDepartment[]
+  employeeTeams EmployeeTeam[]
+  employeeTeamMemberships EmployeeTeamMembership[]
   employeeCompensations EmployeeCompensation[]
   employeeQualifications EmployeeQualification[]
+  workplaceScheduleProfiles WorkplaceScheduleProfile[]
+  workplaceBreakRules WorkplaceBreakRule[]
+  laborAgreementProfiles LaborAgreementProfile[]
+  laborAgreementBreakRules LaborAgreementBreakRule[]
+  employeeBreakEvents EmployeeBreakEvent[]
+  staffingRoles StaffingRole[]
+  employeeStaffingRoles EmployeeStaffingRole[]
+  workScopes WorkScope[]
+  employeeWorkScopes EmployeeWorkScope[]
+  shiftPatterns ShiftPattern[]
+  shiftPatternSlots ShiftPatternSlot[]
+  staffingCoverageProfiles StaffingCoverageProfile[]
+  staffingCoverageRules StaffingCoverageRule[]
   workLogs     WorkLog[]
   workOrders   WorkOrder[]
   workParts    WorkPart[]
   workPartAssignments WorkPartAssignment[]
+  workPartStaffingRequirements WorkPartStaffingRequirement[]
   workPartLaborFacts WorkPartLaborFact[]
   workPartUsageFacts WorkPartUsageFact[]
+  workEvidencePhotos WorkEvidencePhoto[]
   workResources WorkResource[]
+  operationalLocations OperationalLocation[]
+  operationalTravelRoutes OperationalTravelRoute[]
+  operationalTravelTimeWindows OperationalTravelTimeWindow[]
+  workTravelPlanLegs WorkTravelPlanLeg[]
   workResourceMembers WorkResourceMember[]
   workResourceMeterReadings WorkResourceMeterReading[]
   workResourceMaintenanceKeys WorkResourceMaintenanceKey[]
@@ -491,6 +513,7 @@ model User {
   companyMobileFeatures UserCompanyMobileFeature[]
   pushSubscriptions UserPushSubscription[]
   notifications UserNotification[]
+  createdWorkEvidencePhotos WorkEvidencePhoto[] @relation("WorkEvidencePhotoCreatedBy")
 }
 
 
@@ -648,13 +671,44 @@ model Employee {
   preferredLanguage String @default("is")
 
   jobTitle          String?
+  // department er eldri textagildi til afturvirkni. departmentId er formlega
+  // skipulagseiningin sem mönnun og vaktir eiga að nota þegar hún liggur fyrir.
   department        String?
+  departmentId      Int?
+  jobDescription    String?
+  employmentContractReference String?
+  employmentContractNotes String?
   employmentKind    String @default("EMPLOYEE") // EMPLOYEE | TEMPORARY | APPRENTICE | OTHER
   employmentStartDate DateTime?
   employmentEndDate   DateTime?
   employmentPercent Float?
   isActive          Boolean @default(true)
   notes             String?
+
+  // Sjálfgefin vinnustaðar- og kjarasamningsprófíl fyrir dagskipulag.
+  // Vinnustaður segir hvernig dagurinn er skipulagður; kjarasamningsprófíll
+  // segir hvaða réttindi/reglur á að túlka síðar í Launum.
+  workplaceScheduleProfileId Int?
+  laborAgreementProfileId    Int?
+  shiftPatternId             Int?
+
+  // Núverandi vinnufyrirkomulag á starfsmannaspjaldi. Nákvæm vaktaskipan
+  // getur komið úr ShiftPattern en DAY/FLEXIBLE o.fl. þurfa ekki mynstur.
+  workScheduleType String @default("DAY") // DAY | DAY_FIXED_OVERTIME | SHIFT | ROLLING_SHIFT | FLEXIBLE | OTHER
+  contractedWeeklyMinutes Int?
+  fixedOvertimeMinutesPerWeek Int?
+  workScheduleNotes String?
+
+  // Ráðningarsamningur getur í sumum tilvikum heimilað önnur tilfallandi störf.
+  // NEVER = ekki utan venjulegs starfssviðs. MANUAL_ONLY = aðeins með skýrri
+  // ákvörðun stjórnanda. AUTO_IF_NEEDED = má nota sem neyðar-/varaleið í sjálfvirku plani.
+  incidentalWorkMode String @default("NEVER") // NEVER | MANUAL_ONLY | AUTO_IF_NEEDED
+  incidentalWorkNotes String?
+
+  // Rekstrarlegur upphafsstaður dags. Þetta er ekki heimilisfang starfsmanns.
+  // Dagskipulag notar þennan stað (eða sjálfgefinn stað deildar) sem grunn
+  // fyrir ferðatíma og km þegar engin nýrri staðsetning liggur fyrir.
+  baseOperationalLocationId Int?
 
   createdById Int?
   updatedById Int?
@@ -667,6 +721,16 @@ model Employee {
   updatedBy User? @relation("EmployeeUpdatedBy", fields: [updatedById], references: [id], onDelete: SetNull)
   compensations EmployeeCompensation[]
   qualifications EmployeeQualification[]
+  workplaceScheduleProfile WorkplaceScheduleProfile? @relation(fields: [workplaceScheduleProfileId], references: [id], onDelete: SetNull)
+  laborAgreementProfile LaborAgreementProfile? @relation(fields: [laborAgreementProfileId], references: [id], onDelete: SetNull)
+  shiftPattern ShiftPattern? @relation(fields: [shiftPatternId], references: [id], onDelete: SetNull)
+  staffingRoles EmployeeStaffingRole[]
+  workScopes EmployeeWorkScope[]
+  departmentUnit CompanyDepartment? @relation(fields: [departmentId], references: [id], onDelete: SetNull)
+  teamMemberships EmployeeTeamMembership[]
+  baseOperationalLocation OperationalLocation? @relation("EmployeeBaseOperationalLocation", fields: [baseOperationalLocationId], references: [id], onDelete: SetNull)
+  workTravelPlanLegs WorkTravelPlanLeg[]
+  breakEvents EmployeeBreakEvent[]
   workPartAssignments WorkPartAssignment[]
   workPartLaborFacts WorkPartLaborFact[]
   workResourceMemberships WorkResourceMember[]
@@ -675,7 +739,560 @@ model Employee {
   @@index([companyId, employeeNumber])
   @@index([companyId, isActive])
   @@index([companyId, fullName])
+  @@index([workplaceScheduleProfileId])
+  @@index([laborAgreementProfileId])
+  @@index([shiftPatternId])
+  @@index([departmentId])
+  @@index([workScheduleType])
+  @@index([incidentalWorkMode])
+  @@index([baseOperationalLocationId])
   @@index([kennitala])
+}
+
+// ============================================================
+// STARFSMANNAKJARNI – DEILDIR, EININGAR OG FÖST TEYMI
+// ============================================================
+//
+// Deild/eining er formlegt skipulag fyrirtækisins og má vera stigskipt.
+// Fast teymi tilheyrir einni deild en starfsmaður getur átt fleiri en eina
+// teymistengingu. Dagskipulag má mynda tímabundið dagsteymi ofan á þetta.
+
+model CompanyDepartment {
+  id        Int @id @default(autoincrement())
+  companyId Int
+  parentId  Int?
+  code      String
+  name      String
+  unitType  String @default("DEPARTMENT") // DIVISION | DEPARTMENT | UNIT | WARD | OTHER
+  sortOrder Int @default(0)
+  isActive  Boolean @default(true)
+  notes     String?
+  defaultOperationalLocationId Int?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  company Company @relation(fields: [companyId], references: [id], onDelete: Cascade)
+  parent CompanyDepartment? @relation("CompanyDepartmentHierarchy", fields: [parentId], references: [id], onDelete: Cascade)
+  children CompanyDepartment[] @relation("CompanyDepartmentHierarchy")
+  employees Employee[]
+  teams EmployeeTeam[]
+  responsibleWorkOrders WorkOrder[] @relation("WorkOrderResponsibleDepartment")
+  locationWorkOrders WorkOrder[] @relation("WorkOrderLocationDepartment")
+  coverageProfiles StaffingCoverageProfile[]
+  defaultOperationalLocation OperationalLocation? @relation("DepartmentDefaultOperationalLocation", fields: [defaultOperationalLocationId], references: [id], onDelete: SetNull)
+
+  @@unique([companyId, code])
+  @@index([companyId, isActive, sortOrder])
+  @@index([parentId])
+  @@index([defaultOperationalLocationId])
+}
+
+model EmployeeTeam {
+  id           Int @id @default(autoincrement())
+  companyId    Int
+  departmentId Int
+  code         String
+  name         String
+  teamType     String @default("FIXED") // FIXED | FLEXIBLE | SUPPORT
+  isActive     Boolean @default(true)
+  notes        String?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  company Company @relation(fields: [companyId], references: [id], onDelete: Cascade)
+  department CompanyDepartment @relation(fields: [departmentId], references: [id], onDelete: Cascade)
+  memberships EmployeeTeamMembership[]
+
+  @@unique([companyId, code])
+  @@index([companyId, departmentId, isActive])
+  @@index([departmentId, name])
+}
+
+model EmployeeTeamMembership {
+  id         Int @id @default(autoincrement())
+  companyId  Int
+  employeeId Int
+  teamId     Int
+  isPrimary  Boolean @default(false)
+  isActive   Boolean @default(true)
+  notes      String?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  company Company @relation(fields: [companyId], references: [id], onDelete: Cascade)
+  employee Employee @relation(fields: [employeeId], references: [id], onDelete: Cascade)
+  team EmployeeTeam @relation(fields: [teamId], references: [id], onDelete: Cascade)
+
+  @@unique([employeeId, teamId])
+  @@index([companyId, employeeId, isActive])
+  @@index([teamId, isActive])
+}
+
+
+// ============================================================
+// SAMEIGINLEGUR REKSTRARSTAÐUR OG FERÐATÍMI
+// ============================================================
+//
+// Rekstrarstaður er sameiginlegt staðsetningarlag fyrir Verk og síðar aðrar
+// einingar. Akstursleið er stefnuvirk (A -> B er önnur færsla en B -> A) og
+// tímaháðir gluggar geta yfirskrifað sjálfgefinn ferðatíma, t.d. á álagstíma.
+// LIVE/API gögn geta síðar uppfært sömu töflur án breytinga á dagsmönnunarvél.
+
+model OperationalLocation {
+  id        Int @id @default(autoincrement())
+  companyId Int
+  code      String
+  name      String
+  address   String?
+  postalCode String?
+  city      String?
+  zoneCode  String?
+  latitude  Float?
+  longitude Float?
+  locationKind String @default("SITE") // BASE | SITE | DEPARTMENT | OTHER
+  isActive Boolean @default(true)
+  notes    String?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  company Company @relation(fields: [companyId], references: [id], onDelete: Cascade)
+  baseEmployees Employee[] @relation("EmployeeBaseOperationalLocation")
+  departments CompanyDepartment[] @relation("DepartmentDefaultOperationalLocation")
+  workOrders WorkOrder[] @relation("WorkOrderOperationalLocation")
+  outgoingRoutes OperationalTravelRoute[] @relation("OperationalTravelRouteFrom")
+  incomingRoutes OperationalTravelRoute[] @relation("OperationalTravelRouteTo")
+  outgoingPlanLegs WorkTravelPlanLeg[] @relation("WorkTravelPlanLegFrom")
+  incomingPlanLegs WorkTravelPlanLeg[] @relation("WorkTravelPlanLegTo")
+
+  @@unique([companyId, code])
+  @@index([companyId, isActive])
+  @@index([companyId, zoneCode])
+}
+
+model OperationalTravelRoute {
+  id        Int @id @default(autoincrement())
+  companyId Int
+  fromLocationId Int
+  toLocationId Int
+  distanceKm Float
+  defaultMinutes Int
+  source String @default("MANUAL") // MANUAL | IMPORTED | API | TEST_PROJECTION
+  isActive Boolean @default(true)
+  notes String?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  company Company @relation(fields: [companyId], references: [id], onDelete: Cascade)
+  fromLocation OperationalLocation @relation("OperationalTravelRouteFrom", fields: [fromLocationId], references: [id], onDelete: Cascade)
+  toLocation OperationalLocation @relation("OperationalTravelRouteTo", fields: [toLocationId], references: [id], onDelete: Cascade)
+  timeWindows OperationalTravelTimeWindow[]
+
+  @@unique([companyId, fromLocationId, toLocationId])
+  @@index([companyId, isActive])
+  @@index([fromLocationId, toLocationId])
+}
+
+model OperationalTravelTimeWindow {
+  id        Int @id @default(autoincrement())
+  companyId Int
+  routeId   Int
+  dayType   String @default("WEEKDAY") // ALL | WEEKDAY | SATURDAY | SUNDAY
+  startMinutes Int
+  endMinutes Int
+  travelMinutes Int
+  ruleCode String?
+  source String @default("MANUAL") // MANUAL | IMPORTED | API | TEST_PROJECTION
+  sortOrder Int @default(0)
+  isActive Boolean @default(true)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  company Company @relation(fields: [companyId], references: [id], onDelete: Cascade)
+  route OperationalTravelRoute @relation(fields: [routeId], references: [id], onDelete: Cascade)
+
+  @@index([companyId, isActive])
+  @@index([routeId, dayType, startMinutes, endMinutes])
+}
+
+model WorkTravelPlanLeg {
+  id        Int @id @default(autoincrement())
+  companyId Int
+  workOrderId Int
+  employeeId Int
+  plannedDate DateTime @db.Date
+  legType String @default("TO_WORK") // TO_WORK | RETURN_BASE
+  fromLocationId Int
+  toLocationId Int
+  departureMinutes Int
+  arrivalMinutes Int
+  estimatedMinutes Int
+  distanceKm Float
+  estimateSource String @default("MANUAL")
+  trafficRuleCode String?
+  status String @default("PLANNED") // PLANNED | STARTED | COMPLETED | CANCELLED
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  company Company @relation(fields: [companyId], references: [id], onDelete: Cascade)
+  workOrder WorkOrder @relation(fields: [workOrderId], references: [id], onDelete: Cascade)
+  employee Employee @relation(fields: [employeeId], references: [id], onDelete: Cascade)
+  fromLocation OperationalLocation @relation("WorkTravelPlanLegFrom", fields: [fromLocationId], references: [id], onDelete: Restrict)
+  toLocation OperationalLocation @relation("WorkTravelPlanLegTo", fields: [toLocationId], references: [id], onDelete: Restrict)
+
+  @@unique([workOrderId, employeeId, plannedDate, legType])
+  @@index([companyId, plannedDate])
+  @@index([employeeId, plannedDate])
+  @@index([workOrderId])
+}
+
+// ============================================================
+// STARFSMANNAKJARNI – VINNUFYRIRKOMULAG, VAKTIR OG LÁGMARKSMÖNNUN
+// ============================================================
+//
+// Starfsmannaspjaldið segir hvaða mönnunarhlutverk starfsmaður getur talið
+// upp í. Lágmarksmönnun er hins vegar regla vinnustaðar/deildar og er því
+// geymd aðskilin frá einstaklingnum. Þetta styður t.d. sjúkrahús þar sem
+// ákveðinn fjöldi lækna, hjúkrunarfræðinga og annarra starfa þarf að vera
+// til staðar samtímis á tilteknu tímabili.
+
+model StaffingRole {
+  id        Int @id @default(autoincrement())
+  companyId Int
+  code      String
+  name      String
+  description String?
+  isActive  Boolean @default(true)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  company Company @relation(fields: [companyId], references: [id], onDelete: Cascade)
+  employees EmployeeStaffingRole[]
+  coverageRules StaffingCoverageRule[]
+  workRequirements WorkPartStaffingRequirement[]
+
+  @@unique([companyId, code])
+  @@index([companyId, isActive])
+  @@index([companyId, name])
+}
+
+model EmployeeStaffingRole {
+  id        Int @id @default(autoincrement())
+  companyId Int
+  employeeId Int
+  staffingRoleId Int
+  isPrimary Boolean @default(false)
+  isActive  Boolean @default(true)
+  notes     String?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  company Company @relation(fields: [companyId], references: [id], onDelete: Cascade)
+  employee Employee @relation(fields: [employeeId], references: [id], onDelete: Cascade)
+  staffingRole StaffingRole @relation(fields: [staffingRoleId], references: [id], onDelete: Cascade)
+
+  @@unique([employeeId, staffingRoleId])
+  @@index([companyId, employeeId, isActive])
+  @@index([staffingRoleId, isActive])
+}
+
+// ============================================================
+// STARFSMANNAKJARNI – STARFSSVIÐ SAMKVÆMT RÁÐNINGU
+// ============================================================
+//
+// Starfssvið er aðskilið frá hæfni/réttindum. Starfsmaður getur verið mjög
+// hæfur til ákveðins verks en samt ekki ráðinn til að sinna því starfssviði.
+// Verk les sama starfsmannakjarna og Vinnustund/Laun; það afritar ekki
+// ráðningarreglur inn í eigin starfsmannaskrá.
+
+model WorkScope {
+  id          Int @id @default(autoincrement())
+  companyId   Int
+  code        String
+  name        String
+  description String?
+  isActive    Boolean @default(true)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  company Company @relation(fields: [companyId], references: [id], onDelete: Cascade)
+  employees EmployeeWorkScope[]
+  workParts WorkPart[] @relation("WorkPartDefaultWorkScope")
+  staffingRequirements WorkPartStaffingRequirement[] @relation("WorkPartStaffingWorkScope")
+
+  @@unique([companyId, code])
+  @@index([companyId, isActive])
+  @@index([companyId, name])
+}
+
+model EmployeeWorkScope {
+  id          Int @id @default(autoincrement())
+  companyId   Int
+  employeeId  Int
+  workScopeId Int
+  isPrimary   Boolean @default(false)
+  isActive    Boolean @default(true)
+  notes       String?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  company Company @relation(fields: [companyId], references: [id], onDelete: Cascade)
+  employee Employee @relation(fields: [employeeId], references: [id], onDelete: Cascade)
+  workScope WorkScope @relation(fields: [workScopeId], references: [id], onDelete: Cascade)
+
+  @@unique([employeeId, workScopeId])
+  @@index([companyId, employeeId, isActive])
+  @@index([workScopeId, isActive])
+}
+
+model ShiftPattern {
+  id        Int @id @default(autoincrement())
+  companyId Int
+  code      String?
+  name      String
+  patternType String @default("FIXED_SHIFT") // FIXED_SHIFT | ROLLING | FLEXIBLE | OTHER
+  cycleLengthDays Int @default(1)
+  anchorDate DateTime? @db.Date
+  timezone String @default("Atlantic/Reykjavik")
+  isActive Boolean @default(true)
+  notes    String?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  company Company @relation(fields: [companyId], references: [id], onDelete: Cascade)
+  slots ShiftPatternSlot[]
+  employees Employee[]
+  coverageProfiles StaffingCoverageProfile[]
+
+  @@index([companyId, isActive])
+  @@index([companyId, code])
+}
+
+model ShiftPatternSlot {
+  id        Int @id @default(autoincrement())
+  companyId Int
+  shiftPatternId Int
+  dayOffset Int
+  sequence Int @default(1)
+  shiftCode String
+  label     String
+  startMinutes Int
+  durationMinutes Int
+  isWorkSlot Boolean @default(true)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  company Company @relation(fields: [companyId], references: [id], onDelete: Cascade)
+  shiftPattern ShiftPattern @relation(fields: [shiftPatternId], references: [id], onDelete: Cascade)
+
+  @@unique([shiftPatternId, dayOffset, sequence])
+  @@index([companyId])
+  @@index([shiftPatternId, dayOffset])
+}
+
+model StaffingCoverageProfile {
+  id        Int @id @default(autoincrement())
+  companyId Int
+  name      String
+  workplaceScheduleProfileId Int?
+  shiftPatternId Int?
+  department String? // eldri frjáls texti til afturvirkni
+  departmentId Int?
+  isActive Boolean @default(true)
+  notes    String?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  company Company @relation(fields: [companyId], references: [id], onDelete: Cascade)
+  workplaceScheduleProfile WorkplaceScheduleProfile? @relation(fields: [workplaceScheduleProfileId], references: [id], onDelete: SetNull)
+  shiftPattern ShiftPattern? @relation(fields: [shiftPatternId], references: [id], onDelete: SetNull)
+  departmentUnit CompanyDepartment? @relation(fields: [departmentId], references: [id], onDelete: SetNull)
+  rules StaffingCoverageRule[]
+
+  @@index([companyId, isActive])
+  @@index([workplaceScheduleProfileId])
+  @@index([shiftPatternId])
+  @@index([departmentId])
+}
+
+model StaffingCoverageRule {
+  id        Int @id @default(autoincrement())
+  companyId Int
+  staffingCoverageProfileId Int
+  staffingRoleId Int
+
+  label String?
+  // ISO-vikudagar 1=mánudagur ... 7=sunnudagur. Tóm/null merkir alla daga.
+  dayOfWeekMask String?
+  startMinutes Int
+  endMinutes   Int
+  minimumCount Int
+  validFrom DateTime? @db.Date
+  validTo   DateTime? @db.Date
+  notes     String?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  company Company @relation(fields: [companyId], references: [id], onDelete: Cascade)
+  staffingCoverageProfile StaffingCoverageProfile @relation(fields: [staffingCoverageProfileId], references: [id], onDelete: Cascade)
+  staffingRole StaffingRole @relation(fields: [staffingRoleId], references: [id], onDelete: Restrict)
+
+  @@index([companyId])
+  @@index([staffingCoverageProfileId])
+  @@index([staffingRoleId])
+}
+
+// ============================================================
+// VERK – VINNUDAGUR, HLÉ OG KJARASAMNINGSPRÓFÍLAR
+// ============================================================
+//
+// Vinnustaðarprófíll lýsir rekstrarlegri skipan dagsins (upphaf, lengd, hlé).
+// Kjarasamningsprófíll er aðskilinn og má vera mismunandi hjá starfsmönnum á
+// sama vinnustað. Launaleg túlkun ótekins hlés er vísvitandi EKKI hardkóðuð hér.
+
+model WorkplaceScheduleProfile {
+  id        Int @id @default(autoincrement())
+  companyId Int
+
+  name      String
+  address   String?
+  timezone  String @default("Atlantic/Reykjavik")
+  dayStartMinutes   Int @default(480)
+  standardWorkMinutes Int @default(480)
+  isDefault Boolean @default(false)
+  isActive  Boolean @default(true)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  company Company @relation(fields: [companyId], references: [id], onDelete: Cascade)
+  breaks WorkplaceBreakRule[]
+  employees Employee[]
+  staffingCoverageProfiles StaffingCoverageProfile[]
+
+  @@index([companyId, isActive])
+  @@index([companyId, isDefault])
+}
+
+model WorkplaceBreakRule {
+  id        Int @id @default(autoincrement())
+  companyId Int
+  workplaceScheduleProfileId Int
+
+  sequence Int @default(1)
+  code     String
+  label    String
+  targetStartMinutes Int
+  durationMinutes    Int
+  flexibleBeforeMinutes Int @default(0)
+  flexibleAfterMinutes  Int @default(30)
+
+  // Ef lítið er eftir af Verki má ljúka því fyrst og taka hléið strax á eftir.
+  allowFinishNearCompleteWork Boolean @default(true)
+  finishNearCompleteThresholdMinutes Int @default(15)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  company Company @relation(fields: [companyId], references: [id], onDelete: Cascade)
+  workplaceScheduleProfile WorkplaceScheduleProfile @relation(fields: [workplaceScheduleProfileId], references: [id], onDelete: Cascade)
+
+  @@unique([workplaceScheduleProfileId, code])
+  @@unique([workplaceScheduleProfileId, sequence])
+  @@index([companyId])
+  @@index([workplaceScheduleProfileId])
+}
+
+model LaborAgreementProfile {
+  id        Int @id @default(autoincrement())
+  companyId Int
+
+  code      String?
+  name      String
+  validFrom DateTime? @db.Date
+  validTo   DateTime? @db.Date
+  isActive  Boolean @default(true)
+
+  // UNVERIFIED þar til heimild/regla hefur verið staðfest fyrir viðkomandi samning.
+  interpretationStatus String @default("UNVERIFIED")
+  notes     String?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  company Company @relation(fields: [companyId], references: [id], onDelete: Cascade)
+  breakRules LaborAgreementBreakRule[]
+  employees Employee[]
+
+  @@index([companyId, isActive])
+  @@index([companyId, code])
+}
+
+model LaborAgreementBreakRule {
+  id        Int @id @default(autoincrement())
+  companyId Int
+  laborAgreementProfileId Int
+
+  sequence Int @default(1)
+  breakCode String
+  minimumShiftMinutes Int @default(0)
+  entitlementMinutes Int?
+  paidBreak Boolean?
+
+  // Aðeins lýsandi/staðfestingarstaða þar til launaregla er rannsökuð og staðfest.
+  missedBreakTreatment String @default("REVIEW")
+  notes String?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  company Company @relation(fields: [companyId], references: [id], onDelete: Cascade)
+  laborAgreementProfile LaborAgreementProfile @relation(fields: [laborAgreementProfileId], references: [id], onDelete: Cascade)
+
+  @@unique([laborAgreementProfileId, breakCode])
+  @@unique([laborAgreementProfileId, sequence])
+  @@index([companyId])
+  @@index([laborAgreementProfileId])
+}
+
+model EmployeeBreakEvent {
+  id        Int @id @default(autoincrement())
+  companyId Int
+  employeeId Int
+  workDate DateTime @db.Date
+
+  breakCode String?
+  state String @default("PLANNED") // PLANNED | TAKEN | DEFERRED | SKIPPED | WORKED_THROUGH
+  plannedStartMinutes Int?
+  plannedDurationMinutes Int?
+  actualStartedAt DateTime?
+  actualEndedAt   DateTime?
+  actualDurationMinutes Int?
+  note String?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  company Company @relation(fields: [companyId], references: [id], onDelete: Cascade)
+  employee Employee @relation(fields: [employeeId], references: [id], onDelete: Cascade)
+
+  @@index([companyId, workDate])
+  @@index([employeeId, workDate])
+  @@index([employeeId, state])
 }
 
 model EmployeeCompensation {
@@ -906,7 +1523,31 @@ model WorkOrder {
   title       String
   description String?
   address     String?
+  // responsibleDepartment segir hvaða deild á að manna/framkvæma Verkið.
+  // locationDepartment segir hvaða deild/eining fær þjónustuna eða hvar Verkið fer fram.
+  responsibleDepartmentId Int?
+  locationDepartmentId    Int?
+  // Beinn rekstrarstaður Verks. Ef hann vantar má dagskipulag nota sjálfgefinn
+  // rekstrarstað staðdeildar, en heimilisfangstextinn er áfram varðveittur.
+  operationalLocationId Int?
   priority    String    @default("NORMAL")
+  requiredPeople Int     @default(1)
+  estimatedMinutes Int?
+  // Áætluð dagsetning er staðbundinn rekstrardagur. Upphafstími er mínútur frá miðnætti
+  // svo Dagskipulag þurfi ekki að giska á timezone þegar aðeins klukkutími er skráður.
+  plannedDate DateTime? @db.Date
+  plannedStartMinutes Int?
+  // Reiknaður verklokatími fyrir staðfesta dagsáætlun. Getur innihaldið
+  // neysluhlé sem lenda inni í Verkinu en breytir ekki estimatedMinutes.
+  plannedEndMinutes Int?
+  // Skuldbundinn lokatími er aðskilinn frá áætluðum lokatíma. Dagsetning og
+  // mínútur eru geymd sér til að forðast timezone-gisk þegar um staðbundinn rekstrartíma er að ræða.
+  completionDeadlineDate DateTime? @db.Date
+  completionDeadlineMinutes Int?
+  // Dagslok eru sjálfgefið mörk skipuleggjandans. Frávik þarf að vera meðvitað og rekjanlegt.
+  allowAfterWorkdayEnd Boolean @default(false)
+  workdayEndExceptionReason String?
+  photoRequirement String @default("NONE") // NONE | START | PROGRESS | PART_COMPLETE | WORK_COMPLETE
   status      String    @default("NEW")
   createdAt   DateTime  @default(now())
   startedAt   DateTime?
@@ -914,12 +1555,22 @@ model WorkOrder {
 
   workLogs     WorkLog[]
   workParts    WorkPart[]
+  evidencePhotos WorkEvidencePhoto[]
   translations WorkOrderTranslation[]
   company      Company   @relation(fields: [companyId], references: [id], onDelete: Cascade)
   createdBy User?     @relation(fields: [createdById], references: [id])
+  responsibleDepartment CompanyDepartment? @relation("WorkOrderResponsibleDepartment", fields: [responsibleDepartmentId], references: [id], onDelete: SetNull)
+  locationDepartment CompanyDepartment? @relation("WorkOrderLocationDepartment", fields: [locationDepartmentId], references: [id], onDelete: SetNull)
+  operationalLocation OperationalLocation? @relation("WorkOrderOperationalLocation", fields: [operationalLocationId], references: [id], onDelete: SetNull)
+  travelPlanLegs WorkTravelPlanLeg[]
 
   @@unique([companyId, workNumber])
   @@index([companyId])
+  @@index([companyId, plannedDate])
+  @@index([companyId, completionDeadlineDate])
+  @@index([responsibleDepartmentId])
+  @@index([locationDepartmentId])
+  @@index([operationalLocationId])
   @@index([companyId, workKey])
   @@index([companyId, externalId])
   @@index([status])
@@ -988,6 +1639,14 @@ model WorkPart {
   description    String?
 
   status String @default("PLANNED")
+  requiredPeople Int @default(1)
+  estimatedMinutes Int?
+  photoRequirement String @default("INHERIT") // INHERIT | NONE | START | PROGRESS | PART_COMPLETE | WORK_COMPLETE
+  // Hæfnikóðar sem allir starfsmenn á þessum Verkþætti þurfa að uppfylla.
+  // Dæmi: SITE_SAFETY;SECURITY_CLEARANCE. Sérstök hlutverk eru í WorkPartStaffingRequirement.
+  requiredQualificationCodes String?
+  // Starfssvið samkvæmt ráðningarkjarna. Null heldur eldri Verk afturvirkt opin.
+  workScopeId Int?
 
   createdById Int?
   updatedById Int?
@@ -1002,15 +1661,58 @@ model WorkPart {
   assignments  WorkPartAssignment[]
   laborFacts   WorkPartLaborFact[]
   usageFacts   WorkPartUsageFact[]
+  evidencePhotos WorkEvidencePhoto[]
   resourceMeterReadings WorkResourceMeterReading[]
   inventoryMovements InventoryMovement[]
   predecessorDependencies WorkPartDependency[] @relation("WorkPartDependencyPredecessor")
   successorDependencies   WorkPartDependency[] @relation("WorkPartDependencySuccessor")
+  staffingRequirements WorkPartStaffingRequirement[]
+  workScope WorkScope? @relation("WorkPartDefaultWorkScope", fields: [workScopeId], references: [id], onDelete: SetNull)
 
   @@unique([workOrderId, sequence])
   @@index([companyId])
   @@index([workOrderId])
   @@index([status])
+  @@index([workScopeId])
+}
+
+
+model WorkPartStaffingRequirement {
+  id         Int @id @default(autoincrement())
+  companyId  Int
+  workPartId Int
+
+  // Röð innan Verkþáttar. roleCode er stöðluð vélmerking sem UI þýðir.
+  // Algeng dæmi: SPECIALIST | ASSISTANT | GENERAL | DRIVER | OPERATOR.
+  sequence   Int @default(1)
+  roleCode   String @default("GENERAL")
+  quantity   Int @default(1)
+  // Valfrjálst sameiginlegt mönnunarhlutverk úr starfsmannakjarnanum.
+  // Þetta gerir Verk kleift að krefjast t.d. RAFVIRKI eða HJUKRUNARFRAEDINGUR
+  // án þess að afrita starfssvið starfsmanns inn í Verk.
+  staffingRoleId Int?
+  // Valfrjálst starfssvið fyrir þetta tiltekna sæti. Ef null gildir sjálfgefið
+  // starfssvið Verkþáttarins. Þetta styður t.d. 1 fagmann + 1 aðstoðarmann.
+  workScopeId Int?
+
+  // Harðar kröfur útiloka starfsmann ef þær vantar. Æskilegar kröfur hækka röðun en útiloka ekki.
+  requiredQualificationCodes  String?
+  preferredQualificationCodes String?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  company  Company  @relation(fields: [companyId], references: [id], onDelete: Cascade)
+  workPart WorkPart @relation(fields: [workPartId], references: [id], onDelete: Cascade)
+  staffingRole StaffingRole? @relation(fields: [staffingRoleId], references: [id], onDelete: SetNull)
+  workScope WorkScope? @relation("WorkPartStaffingWorkScope", fields: [workScopeId], references: [id], onDelete: SetNull)
+
+  @@unique([workPartId, sequence])
+  @@index([companyId])
+  @@index([workPartId])
+  @@index([roleCode])
+  @@index([staffingRoleId])
+  @@index([workScopeId])
 }
 
 
@@ -1279,6 +1981,31 @@ model WorkPartLaborFact {
   @@index([userId, workDate])
   @@index([workDate])
   @@index([source])
+}
+
+
+model WorkEvidencePhoto {
+  id          Int      @id @default(autoincrement())
+  companyId   Int
+  workOrderId Int
+  workPartId  Int?
+
+  // START | PROGRESS | PART_COMPLETE | WORK_COMPLETE | OPTIONAL
+  stage       String
+  storagePath String
+  fileName    String?
+  mimeType    String?
+  createdById Int?
+  createdAt   DateTime @default(now())
+
+  company   Company   @relation(fields: [companyId], references: [id], onDelete: Cascade)
+  workOrder WorkOrder @relation(fields: [workOrderId], references: [id], onDelete: Cascade)
+  workPart  WorkPart? @relation(fields: [workPartId], references: [id], onDelete: Cascade)
+  createdBy User?     @relation("WorkEvidencePhotoCreatedBy", fields: [createdById], references: [id], onDelete: SetNull)
+
+  @@index([companyId, workOrderId, createdAt])
+  @@index([workPartId, stage])
+  @@index([createdById])
 }
 
 

@@ -1,0 +1,68 @@
+GLÖGGT – Dagsmönnun → staðfest dagsáætlun
+21. september 2026
+
+Markmið
+- Mönnunartillaga á /verk er ekki lengur aðeins fyrsta 08:00-úthlutunin.
+- Upphafstími dags er gefinn og tillagan fyllir daginn áfram með næstu Verk eftir því sem fólk losnar.
+- Forgangur, mannaþörf, skráð hæfni, mönnunarhlutverk, vinnudagur og neysluhlé hafa áhrif.
+- Tillagan breytir engu fyrr en notandi velur „Staðfesta dagsáætlun“.
+
+Staðfesting
+Við staðfestingu eru fyrirhuguð Verk:
+- úthlutuð á valda starfsmenn,
+- sett á valinn rekstrardag,
+- fá fyrirhugaðan upphafstíma,
+- fá reiknaðan verklokatíma sem varðveitir estimatedMinutes óbreytt.
+
+Neysluhlé
+- Hlé sem lenda inni í Verki lengja fyrirhugaðan verklokatíma.
+- Ef regla leyfir að klára stuttan afgang fyrst getur hlé legið strax á eftir Verki.
+- Slíkt hlé seinkar næsta Verki þó það breyti ekki verklokatíma fyrra Verksins.
+- Sama hlé er ekki reiknað aftur í seinna Verki sama dags í tillögugerðinni.
+
+Starfsmannakjarni
+- WorkPartStaffingRequirement.staffingRoleId er nú nýtt sem hörð mönnunarsía þegar það er skráð.
+- Verk getur þannig vísað í sameiginlegt mönnunarhlutverk úr starfsmannakjarnanum í stað þess að giska út frá starfsheiti.
+- Hæfnikóðar eru áfram sjálfstæðar harðar/æskilegar kröfur eftir uppsetningu Verks.
+
+Gagnalíkan
+Nýtt nullable svið á WorkOrder:
+- plannedEndMinutes
+
+Það er reiknaður endatími staðfestrar dagsáætlunar og breytir ekki estimatedMinutes.
+Handvirk breyting á grunnáætlun hreinsar plannedEndMinutes svo úreltur reiknaður endatími sitji ekki eftir.
+
+Migration
+20260921111500_add_workorder_planned_end_minutes
+
+Mikilvæg mörk þessarar útgáfu
+- Ferðatími og kílómetrar milli bækistöðvar/Verka eru EKKI enn inni í röðuninni.
+- Raunverulegur lokatími úr Mobile endurraðar EKKI enn sjálfkrafa rest dagsins.
+- Fullmönnuð en ótímasett Verk sem voru mönnuð áður en tillagan er búin til eru ekki enn meginmarkmið sjálfvirku dagsfyllingarinnar; þessi lota er fyrst og fremst fyrir stóra ómannaða verkabankann.
+
+Skrár
+app/verk/Work10Dashboard.tsx
+app/verk/page.tsx
+app/verk/[id]/actions.ts
+lib/i18n/work10.ts
+prisma/schema.prisma
+prisma/migrations/20260921111500_add_workorder_planned_end_minutes/migration.sql
+docs/verk/LESTU-DAGSMONNUN-LIFANDI-DAGSAAETLUN-20260921.txt
+
+Próf eftir uppsetningu
+npx prisma validate
+npx prisma generate
+npx prisma migrate deploy
+npx tsc --noEmit
+
+Síðan:
+1. Opna /verk → Verkalisti.
+2. Velja upphaf dags, t.d. 08:00.
+3. Búa til tillögu.
+4. Staðfesta að sama fólk fái fleiri en eitt Verk yfir daginn eftir því sem fyrri Verk klárast.
+5. Staðfesta að 09:40/20 mín., 12:00/30 mín. og 15:30/15 mín. hlé færi næstu raunhæfu upphafstíma.
+6. Velja „Staðfesta dagsáætlun“.
+7. Opna Dagskipulag og staðfesta að Verkin sjáist á tímalínunni með upphafi/lokum.
+
+Skjalareglan
+LESTU-/breytingaskrár eiga héðan í frá heima undir docs (oft docs/verk fyrir Verk) en ekki í rót C:\GLÖGGT.

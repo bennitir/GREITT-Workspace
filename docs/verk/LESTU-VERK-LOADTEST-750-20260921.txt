@@ -1,0 +1,42 @@
+GLÖGGT – Verk / Dagskipulag stórt prófunarsafn
+21. september 2026
+
+Markmið
+- Skipta gamla 300-verka load-test safninu út fyrir stærra safn.
+- Sjálfgefið: 750 ótímasett Verk + 50 prófunarstarfsmenn.
+- Hægt að velja 500–1000 Verk með --count=N.
+- Forgangur: um 1% Brýnt, 10% Hátt, 85% Venjulegt og 4% Lágt.
+- Aldur beiðna dreifist yfir 0–60 daga en aldur breytir ekki sjálfkrafa forgangi.
+- Mönnunarþörf: flest Verk þurfa 1 mann, færri 2–4.
+- Tímalengd: 15 mín. upp í 4 klst., mest vægi á 30–120 mín.
+- Öll Verkin eru ótímasett svo sama safn nýtist við prófun dagsins frá morgni til síðdegis.
+
+Engin Prisma migration.
+Engin schema-breyting.
+
+Skrár
+scripts/seed-verk-load-test.ts
+scripts/cleanup-verk-load-test.ts
+
+Uppsetning
+Afþjappið beint yfir rót C:\GLÖGGT og leyfið yfirskrift á scripts-skránum.
+
+MIKILVÆGT – umhverfisbreytur
+lib/prisma.ts les DATABASE_URL beint úr process.env. Því þarf að keyra scriptin með .env hlaðinni inn.
+
+1. Dry run
+node --env-file=.env --import tsx scripts/seed-verk-load-test.ts
+
+2. Skipta gamla 300-verka safninu út fyrir 750 Verk
+node --env-file=.env --import tsx scripts/seed-verk-load-test.ts --reset --apply
+
+Valfrjálst magn
+node --env-file=.env --import tsx scripts/seed-verk-load-test.ts --count=500 --reset --apply
+node --env-file=.env --import tsx scripts/seed-verk-load-test.ts --count=1000 --reset --apply
+
+Hreinsun
+node --env-file=.env --import tsx scripts/cleanup-verk-load-test.ts
+node --env-file=.env --import tsx scripts/cleanup-verk-load-test.ts --apply
+
+Athugið
+--reset hreinsar bæði gamla 20.09.2026 load-test safnið og nýja 21.09.2026 safnið áður en ný gögn eru búin til.

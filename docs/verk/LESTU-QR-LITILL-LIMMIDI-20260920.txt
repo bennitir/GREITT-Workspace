@@ -1,0 +1,16 @@
+GLÖGGT – ofurlítill QR-límmiði – 20.09.2026
+
+Breyting:
+- Minnsta QR-merkið notar nú lárétta framsetningu: tækjanúmer + QR hlið við hlið.
+- Rammi og innri spássía eru minnkuð verulega.
+- Sjálfvirk stærð við 0,5 cm QR verður um 1,3 cm á breidd og 0,7 cm á hæð.
+- Nýjar litlar merkjastærðir: 1,5 × 0,8 cm og 2 × 1 cm.
+- Stærri merkimiðar halda ítarlegri framsetningu.
+
+Markmið:
+Merkið geti setið við hlið mælis inni í vél eða á litlu verkfæri án þess að eyða óþarfa plássi.
+
+Prófun:
+npx tsc --noEmit
+
+Engin Prisma-breyting.

@@ -1,0 +1,43 @@
+GLÖGGT – Tímabilsmönnun: afköst og 1–31 daga yfirlit
+Dagsetning: 21. september 2026
+
+Markmið
+- Halda vafra viðbragðshæfum þegar Tímabilsmönnun reiknar 5–31 daga.
+- Sýna framvindu dags fyrir dag í stað einnar langrar, órofinna reiknilotu.
+- Forðast að teikna hundruð/mörg hundruð úthlutunarraða fyrir alla daga samtímis.
+- Gefa skýra samantekt yfir alla daga tímabilsins áður en farið er niður í einstaka dagsáætlun.
+
+Breytingar
+1. Tímabilsmönnun er nú keyrð sem async dagslotur.
+   - Sami dagsmönnunarkjarni er áfram notaður.
+   - Eftir hvern reiknaðan dag er stjórn skilað tímabundið til vafrans svo React/UI geti málað framvindu.
+   - Framvinduspjald sýnir Dagur X/Y og prósentu meðan keyrslan stendur.
+   - Tímabilshnappur er óvirkur meðan sama keyrsla stendur yfir.
+
+2. Niðurstöðugluggi teiknar ekki lengur allar dagsúthlutanir í einu.
+   - Fyrst kemur samantekt yfir alla daga tímabilsins.
+   - Fyrir hvern dag sjást: fjöldi Verka, fjöldi starfsmanna með Verk, fjöldi úthlutana, nýting, virk vinna, akstur og svigrúm.
+   - Smellt er á dag til að sjá aðeins úthlutanir þess dags.
+   - Þetta lækkar DOM-fjölda verulega; í 5 daga prófinu þarf því ekki að teikna allar ~691 úthlutunarraðir samtímis.
+
+3. Fleiri endurtekin .find() köll í tímabilsyfirliti voru skipt út fyrir Map uppflettingar á Verk og starfsmenn.
+
+Reglur sem breytast ekki
+- Verkaáætlun styður 1–31 samfellda daga.
+- Sama Verk er ekki lagt á fleiri en einn dag í sömu tímabilstillögu.
+- 93% er hart sjálfvirkt hámark á einstakling á dag.
+- Deild, starfssvið, hæfni/réttindi, föst teymi, ferðatími, hlé, deadline og heimferð halda áfram að gilda.
+- Þetta er enn forskoðun; tímabilstillagan er ekki staðfest í gagnagrunn sem heild.
+- Vaktaplan er áfram sérstakt viðverulag og getur síðar náð mun lengra fram en 31 dag.
+
+Prófun eftir yfirlagningu
+1. npx tsc --noEmit
+2. Opna /verk -> Verkalisti.
+3. Velja 5 daga og 08:00 og ýta á "Búa til tímabilstillögu".
+4. Staðfesta að framvinda sjáist Dagur 1/5 ... 5/5 og að síðan haldist viðbragðshæf milli dagslota.
+5. Þegar keyrslu lýkur: bera saman dagana fimm í samantektinni.
+6. Smella á hvern dag og staðfesta að aðeins dagsúthlutanir þess dags birtist undir samantektinni.
+7. Prófa síðan 14 daga. Ekki þarf að prófa 31 daga fyrr en 14 daga keyrslan hefur reynst stöðug.
+
+Engin Prisma migration.
+Ekkert reseed.

@@ -1,0 +1,64 @@
+GLÖGGT – svæðisferðir og starfsmannaálag
+Dagsetning: 21.09.2026
+
+Tilgangur
+--------
+Þessi breyting bætir greiningu við Dagsmönnun eftir að svæðisklösun og hæfnisþekja voru virkjuð.
+Hún breytir EKKI sjálfri röðun eða úthlutunaralgríminu. Markmiðið er að mæla næstu 08:00 keyrslu á sama gagnagrunni áður en frekari jafnvægisreglur eru settar inn.
+
+1. Endurteknar svæðisferðir
+---------------------------
+Dagsmönnun sýnir nú sérstakt spjald fyrir rekstrarstaði þar sem tvær eða fleiri aðskildar innferðir eru lagðar til.
+
+Vöktun telur aðeins ferðaleggi sem eru 10 mínútur eða lengri.
+Starfsmenn í sama fasta teymi, á sömu leið og með sama brottfarartíma, teljast ein ferðalota svo fjölmennt Verk teljist ekki ranglega sem margir bílar.
+
+Spjaldið sýnir meðal annars:
+- fjölda aðskildra innferða,
+- fjölda Verka,
+- fjölda starfsmanna,
+- samanlagðan áætlaðan ferðatíma ferðalota,
+- samanlagða áætlaða km ferðalota.
+
+Þetta er greiningarviðvörun. Hún segir ekki sjálfkrafa að önnur ferð sé röng; önnur ferð getur verið rétt vegna hæfni, deadline, samtímakröfu, liðsstærðar eða brýnna aðstæðna.
+
+2. Álag á einstaklinga – topp 5
+-------------------------------
+Dagsmönnun sýnir topp 5 starfsmenn eftir rekstrarlegri nýtingu innan venjulegs vinnudags.
+
+Fyrir hvern starfsmann birtist:
+- nýtingarhlutfall,
+- áætluð virk vinna,
+- akstur,
+- laust svigrúm,
+- fjöldi Verka.
+
+Vöktunarmerki:
+- mjög þétt dagsplan: 95% nýting eða meira,
+- lítið svigrúm: 15 mínútur eða minna,
+- mikið ferðaálag: 2 klst. eða meira innan venjulegs dags,
+- mörg staðaskipti: 4 eða fleiri ferðaleggir milli staða,
+- fram yfir dagslok: síðasta áætlaða lok/heimkoma er eftir venjuleg dagslok.
+
+Þessi mörk eru rekstrarvísar til samanburðar og rannsóknar. Þau eru ekki lagalegt mat, ekki túlkun kjarasamnings og ekki sjálfvirk höfnun dagsáætlunar.
+
+Prófun
+------
+Ekki reseed-a. Nota sömu 750 Verk svo samanburður við fyrri keyrslu haldist hreinn.
+
+Á Windows-vélinni:
+  npx tsc --noEmit
+
+Ef TypeScript er hreint:
+- opna Dagsmönnun,
+- keyra sömu 08:00 tillögu,
+- bera saman heildartölur,
+- skoða spjaldið „Endurteknar svæðisferðir“,
+- skoða „Álag á einstaklinga“ og topp 5.
+
+Grunnur fyrir næsta samanburð:
+- 167 Verk í tillögu,
+- 234 klst. 55 mín. virk vinna,
+- 55 klst. 27 mín. ferðatími,
+- 55 klst. 28 mín. ónýtt laust rými,
+- 84% heildarnýting samkvæmt núverandi mælikvarða.
