@@ -1,0 +1,33 @@
+GLÖGGT – GPS-track grunnur fyrir Verk/Mobile
+22.09.2026
+
+Markmið
+- Byrja raunverulega GPS-framvinduskráningu aðeins á vinnulotum þar sem verklykill hefur GPS-framvindu virka og starfsmaður hefur staðfest upplýsingaskjáinn.
+- GPS tilheyrir vinnulotunni/Verkinu, ekki almennri vöktun starfsmanns.
+- Skráning stöðvast þegar vinnulota er stöðvuð, sett í bið eða lokið.
+
+Ný gögn
+- WorkTrackSession: ein GPS-lota tengd annaðhvort WorkPartLaborFact eða EmployeeWorkDiaryEntry.
+- WorkTrackPoint: tímasett GPS-hnit, nákvæmni, hæð, stefna og hraði ef síminn gefur þau.
+- Session varðveitir punktatalningu, síðasta punkt og grófa heildarvegalengd.
+
+Mobile
+- Þegar virk GPS-vinnulota er opin ræsir Mobile navigator.geolocation.watchPosition.
+- Fyrsti punktur er sendur þegar viðunandi GPS-nákvæmni fæst.
+- Punktar eru ekki sendir oftar en á um 8 sek. fresti nema 25 sek. séu liðnar; lágmarks hreyfing er um 5 m.
+- Punktar með verri nákvæmni en 80 m eru ekki sendir í þessari fyrstu útgáfu.
+- Mobile sýnir stöðu, punktatalningu og síðustu GPS-nákvæmni svo auðvelt sé að raunprófa kerfið.
+
+Öryggi / aðgangur
+- API tekur aðeins við punktum á virkri session hjá innskráðum starfsmanni í sama fyrirtæki.
+- Ekki er hægt að senda punkta á lokaða session eða session annars starfsmanns.
+
+Takmörkun fyrstu prófunarútgáfu
+- Þetta er vef/PWA GPS-grunnur. Android/iOS geta gert hlé á browser-geolocation þegar sími læsist eða app fer alveg í bakgrunn.
+- Því á fyrst að prófa punktasöfnun í raunakstri áður en byggt er kort, sameiginleg 10-véla sýn og full background tracking.
+- Ekki þarf að horfa á símann við akstur; staða er aðeins til að yfirfara fyrir/eftir prófun.
+
+Næsti áfangi
+- Teikna GPS-track á korti.
+- Sameina margar WorkTrackSession á sama Verk/svæði fyrir verkstjórasýn.
+- Síðan skilgreina plan/coverage svo hægt sé að sýna búið/eftir fyrir snjómokstur, götusópun og slátt.

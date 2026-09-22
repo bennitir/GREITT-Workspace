@@ -2,6 +2,7 @@ import Link from "next/link";
 
 import MobileOperationalTranslationSync from "@/components/MobileOperationalTranslationSync";
 import MobileWorkStartDialog from "@/components/work/MobileWorkStartDialog";
+import MobileGpsTracker from "@/components/work/MobileGpsTracker";
 import { notFound } from "next/navigation";
 
 import { getCompanyModuleSettings } from "@/lib/core/company-module-repository";
@@ -121,6 +122,11 @@ export default async function MobileWorkDetailPage({ params }: Props) {
             },
             laborFacts: {
               where: { employeeId: actor.employee?.id ?? -1, voidedAt: null },
+              include: {
+                workTrackSession: {
+                  select: { id: true, pointCount: true, endedAt: true },
+                },
+              },
               orderBy: [{ workDate: "desc" }, { createdAt: "desc" }],
               take: 12,
             },
@@ -373,6 +379,13 @@ export default async function MobileWorkDetailPage({ params }: Props) {
                             ].filter(Boolean);
                             return parts.length > 0 ? <p className="mt-2 text-xs font-semibold text-emerald-900">{parts.join(" · ")}</p> : null;
                           })()}
+                          {activeFact.workTrackSession && !activeFact.workTrackSession.endedAt ? (
+                            <MobileGpsTracker
+                              sessionId={activeFact.workTrackSession.id}
+                              initialPointCount={activeFact.workTrackSession.pointCount}
+                              language={actor.language}
+                            />
+                          ) : null}
                           <div className="mt-3 grid grid-cols-2 gap-2">
                             <form action={stopMobileWorkPart}>
                               <input type="hidden" name="workOrderId" value={work.id} />

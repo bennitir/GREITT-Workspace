@@ -91,6 +91,7 @@ model Company {
   workPartStaffingRequirements WorkPartStaffingRequirement[]
   workPartLaborFacts WorkPartLaborFact[]
   employeeWorkDiaryEntries EmployeeWorkDiaryEntry[]
+  workTrackSessions WorkTrackSession[]
   workPartUsageFacts WorkPartUsageFact[]
   workEvidencePhotos WorkEvidencePhoto[]
   workResources WorkResource[]
@@ -753,6 +754,7 @@ model Employee {
   workPartAssignments WorkPartAssignment[]
   workPartLaborFacts WorkPartLaborFact[]
   workDiaryEntries EmployeeWorkDiaryEntry[]
+  workTrackSessions WorkTrackSession[]
   workResourceMemberships WorkResourceMember[]
 
   @@index([companyId, userId])
@@ -2099,6 +2101,7 @@ model WorkPartLaborFact {
   createdBy User?    @relation("WorkPartLaborFactCreatedBy", fields: [createdById], references: [id], onDelete: SetNull)
   voidedBy  User?    @relation("WorkPartLaborFactVoidedBy", fields: [voidedById], references: [id], onDelete: SetNull)
   translations WorkPartLaborFactTranslation[]
+  workTrackSession WorkTrackSession?
 
   @@index([companyId])
   @@index([workPartId, voidedAt])
@@ -2174,6 +2177,7 @@ model EmployeeWorkDiaryEntry {
   workResource        WorkResource?        @relation(fields: [workResourceId], references: [id], onDelete: SetNull)
   createdBy           User?                @relation("EmployeeWorkDiaryEntryCreatedBy", fields: [createdById], references: [id], onDelete: SetNull)
   voidedBy            User?                @relation("EmployeeWorkDiaryEntryVoidedBy", fields: [voidedById], references: [id], onDelete: SetNull)
+  workTrackSession    WorkTrackSession?
 
   @@index([companyId, workDate])
   @@index([employeeId, workDate])
@@ -2578,6 +2582,71 @@ model InventoryCountLine {
   @@index([itemId, countedAt])
   @@index([status])
   @@index([stocktakeId])
+}
+
+// GPS-framvinduskráning fyrir virka vinnulotu.
+// Session tilheyrir annaðhvort raunvinnufærslu á Verkþætti eða Dagbókarfærslu.
+// Punktar eru staðreyndir úr tæki meðan vinnan er virk; þeir eru ekki almenn starfsmannavöktun.
+model WorkTrackSession {
+  id        Int @id @default(autoincrement())
+  companyId Int
+  employeeId Int
+
+  workPartLaborFactId Int? @unique
+  diaryEntryId        Int? @unique
+  workOrderId          Int?
+  workPartId           Int?
+  workResourceId       Int?
+
+  status    String   @default("PENDING") // PENDING | TRACKING | STOPPED
+  source    String   @default("MOBILE_GPS")
+  startedAt DateTime
+  endedAt   DateTime?
+  lastPointAt DateTime?
+
+  pointCount     Int   @default(0)
+  totalDistanceM Float @default(0)
+  lastLatitude   Float?
+  lastLongitude  Float?
+  lastAccuracyM  Float?
+
+  createdById Int?
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  company Company @relation(fields: [companyId], references: [id], onDelete: Cascade)
+  employee Employee @relation(fields: [employeeId], references: [id], onDelete: Cascade)
+  workPartLaborFact WorkPartLaborFact? @relation(fields: [workPartLaborFactId], references: [id], onDelete: Cascade)
+  diaryEntry EmployeeWorkDiaryEntry? @relation(fields: [diaryEntryId], references: [id], onDelete: Cascade)
+  points WorkTrackPoint[]
+
+  @@index([companyId, employeeId, endedAt])
+  @@index([companyId, workOrderId, endedAt])
+  @@index([companyId, workPartId, endedAt])
+  @@index([companyId, workResourceId, endedAt])
+  @@index([status, startedAt])
+}
+
+model WorkTrackPoint {
+  id        Int @id @default(autoincrement())
+  companyId Int
+  sessionId Int
+  sequence  Int
+
+  recordedAt DateTime
+  receivedAt DateTime @default(now())
+  latitude   Float
+  longitude  Float
+  accuracyM  Float?
+  altitudeM  Float?
+  headingDeg Float?
+  speedMps   Float?
+
+  session WorkTrackSession @relation(fields: [sessionId], references: [id], onDelete: Cascade)
+
+  @@unique([sessionId, sequence])
+  @@index([companyId, recordedAt])
+  @@index([sessionId, recordedAt])
 }
 
 model WorkPartLaborFactTranslation {

@@ -374,6 +374,22 @@ export async function startMobileWorkPart(formData: FormData) {
         },
       });
 
+      if (workStartRuleEnabled(startRules, "GPS_PROGRESS")) {
+        await tx.workTrackSession.create({
+          data: {
+            companyId: actor.companyId,
+            employeeId: actor.employee.id,
+            workPartLaborFactId: fact.id,
+            workOrderId,
+            workPartId,
+            status: "PENDING",
+            source: "MOBILE_GPS",
+            startedAt: now,
+            createdById: actor.user.id,
+          },
+        });
+      }
+
       if (loaded.part!.status !== "IN_PROGRESS") {
         await tx.workPart.update({
           where: { id: workPartId },
@@ -502,6 +518,10 @@ async function closeActiveMobileFact(params: {
       await tx.workPartLaborFact.update({
         where: { id: active.id },
         data: { endedAt: now, durationMinutes: elapsed },
+      });
+      await tx.workTrackSession.updateMany({
+        where: { workPartLaborFactId: active.id, endedAt: null },
+        data: { endedAt: now, status: "STOPPED" },
       });
       await tx.auditEvent.create({
         data: {
@@ -864,6 +884,21 @@ export async function startMobileDiaryEntry(formData: FormData) {
         },
       });
 
+      if (workStartRuleEnabled(startRules, "GPS_PROGRESS")) {
+        await tx.workTrackSession.create({
+          data: {
+            companyId: actor.companyId,
+            employeeId: actor.employee.id,
+            diaryEntryId: entry.id,
+            workResourceId: selectedWorkResource?.id ?? null,
+            status: "PENDING",
+            source: "MOBILE_GPS",
+            startedAt: now,
+            createdById: actor.user.id,
+          },
+        });
+      }
+
       await tx.auditEvent.create({
         data: {
           companyId: actor.companyId,
@@ -939,6 +974,10 @@ export async function stopMobileDiaryEntry(formData: FormData) {
         endedAt: now,
         durationMinutes: elapsed,
       },
+    });
+    await tx.workTrackSession.updateMany({
+      where: { diaryEntryId: entry.id, endedAt: null },
+      data: { endedAt: now, status: "STOPPED" },
     });
 
     await tx.auditEvent.create({

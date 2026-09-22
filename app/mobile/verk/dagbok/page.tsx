@@ -1,6 +1,7 @@
 import Link from "next/link";
 
 import LiveDiaryTotal from "@/components/work/LiveDiaryTotal";
+import MobileGpsTracker from "@/components/work/MobileGpsTracker";
 import OperationalLocationAutocomplete, { type LocationOption } from "@/components/work/OperationalLocationAutocomplete";
 import MobileDiaryWorkKeyRequirements from "@/components/work/MobileDiaryWorkKeyRequirements";
 
@@ -10,6 +11,7 @@ import { prisma } from "@/lib/prisma";
 import { getMobileWorkActor } from "@/lib/work10/mobile-access";
 import { operationalLocationAddress, operationalLocationLabel } from "@/lib/work10/location-format";
 import { resourceTravelSpeedLimitsRoute } from "@/lib/work10/resources";
+import { workStartContextUsesGps } from "@/lib/work10/gps-tracking";
 import { normalizeWorkStartContext } from "@/lib/work10/work-start-requirements";
 import { startMobileDiaryEntry, stopMobileDiaryEntry } from "../actions";
 
@@ -207,6 +209,17 @@ export default async function MobileWorkDiaryPage() {
     null;
 
   const activeEntry = entries.find((entry) => !entry.endedAt) ?? null;
+  const activeTrackSession = activeEntry && workStartContextUsesGps(activeEntry.startContext)
+    ? await prisma.workTrackSession.findFirst({
+        where: {
+          companyId: actor.companyId,
+          employeeId: actor.employee.id,
+          diaryEntryId: activeEntry.id,
+          endedAt: null,
+        },
+        select: { id: true, pointCount: true },
+      })
+    : null;
   const todayKey = dateKey(now);
   const todayEntries = entries.filter((entry) => dateKey(entry.workDate) === todayKey);
   const completedTodayMinutes = todayEntries.reduce((sum, entry) => entry.endedAt ? sum + entry.durationMinutes : sum, 0);
@@ -291,6 +304,13 @@ export default async function MobileWorkDiaryPage() {
               <p className="mt-1 text-sm text-emerald-900">{t.diaryRecordedTravel}: {travelSummary(activeEntry.travelMinutes, activeEntry.travelKm, actor.language)}</p>
             ) : null}
             {activeEntry.note ? <p className="mt-2 whitespace-pre-wrap text-sm leading-6 text-emerald-900">{activeEntry.note}</p> : null}
+            {activeTrackSession ? (
+              <MobileGpsTracker
+                sessionId={activeTrackSession.id}
+                initialPointCount={activeTrackSession.pointCount}
+                language={actor.language}
+              />
+            ) : null}
             <form action={stopMobileDiaryEntry} className="mt-4">
               <input type="hidden" name="entryId" value={activeEntry.id} />
               <button type="submit" className="w-full rounded-xl bg-emerald-700 px-4 py-3 text-base font-bold text-white">{t.diaryStop}</button>
