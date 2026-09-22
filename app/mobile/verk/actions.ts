@@ -513,7 +513,7 @@ export async function startMobileDiaryEntry(formData: FormData) {
   const title = textField(formData.get("title"), 200);
   if (!title) throw new Error(t.errors.diaryTitleRequired);
 
-  const workKey = textField(formData.get("workKey"), 100);
+  const workKeyId = numberField(formData, "workKeyId");
   const note = textField(formData.get("note"), 2000);
   const locationText = textField(formData.get("locationText"), 240);
   const operationalLocationId = numberField(formData, "operationalLocationId");
@@ -526,6 +526,17 @@ export async function startMobileDiaryEntry(formData: FormData) {
     throw new Error(t.errors.invalidDiaryTravel);
   }
   const travelMinutes = travelMinutesValue === null ? null : Math.round(travelMinutesValue);
+
+  const selectedWorkKey = workKeyId
+    ? await prisma.workKey.findFirst({
+        where: { id: workKeyId, companyId: actor.companyId, isActive: true },
+        select: { id: true, code: true },
+      })
+    : null;
+  if (workKeyId && !selectedWorkKey) {
+    throw new Error(t.errors.invalidDiaryWorkKey);
+  }
+  const workKey = selectedWorkKey?.code ?? null;
 
   if (operationalLocationId) {
     const location = await prisma.operationalLocation.findFirst({
@@ -571,6 +582,7 @@ export async function startMobileDiaryEntry(formData: FormData) {
         note,
         noteSourceLanguage: actor.language,
         workKey,
+        workKeyId: selectedWorkKey?.id ?? null,
         operationalLocationId,
         locationText,
         travelMinutes,
@@ -596,6 +608,7 @@ export async function startMobileDiaryEntry(formData: FormData) {
           startedAt: now.toISOString(),
           title,
           workKey,
+          workKeyId: selectedWorkKey?.id ?? null,
           operationalLocationId,
         },
       },

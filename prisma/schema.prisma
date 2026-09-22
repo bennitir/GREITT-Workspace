@@ -81,6 +81,7 @@ model Company {
   staffingCoverageRules StaffingCoverageRule[]
   workLogs     WorkLog[]
   workOrders   WorkOrder[]
+  workKeys     WorkKey[]
   workParts    WorkPart[]
   workPartAssignments WorkPartAssignment[]
   workPartStaffingRequirements WorkPartStaffingRequirement[]
@@ -457,6 +458,8 @@ model User {
   companies                      UserCompany[]
   workLogs                       WorkLog[]
   createdWorkOrders              WorkOrder[]
+  createdWorkKeys                WorkKey[] @relation("WorkKeyCreatedBy")
+  updatedWorkKeys                WorkKey[] @relation("WorkKeyUpdatedBy")
   createdWorkOrderTranslations   WorkOrderTranslation[] @relation("WorkOrderTranslationCreatedBy")
   createdWorkParts               WorkPart[] @relation("WorkPartCreatedBy")
   updatedWorkParts               WorkPart[] @relation("WorkPartUpdatedBy")
@@ -1519,6 +1522,40 @@ model UsageEvent {
   @@index([eventType])
 }
 
+// Fyrirtækisbundin verklyklaskrá.
+// code er sýnilegt auðkenni; normalizedCode ver fyrirtækið gegn tvíteknum
+// lyklum sem eru aðeins ólíkir í há-/lágstöfum eða aukabilum.
+// WorkOrder.workKey og EmployeeWorkDiaryEntry.workKey eru áfram denormalíseruð
+// textagildi fyrir leit, birtingu og eldri kóða. AuditEvent varðveitir breytingasögu master-lykilsins.
+model WorkKey {
+  id             Int      @id @default(autoincrement())
+  companyId      Int
+  code           String
+  normalizedCode String
+  name           String
+  description    String?
+  externalId     String?
+  isActive       Boolean  @default(true)
+  source         String   @default("MANUAL") // MANUAL | IMPORTED | MIGRATED
+  createdById    Int?
+  updatedById    Int?
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+
+  company   Company @relation(fields: [companyId], references: [id], onDelete: Cascade)
+  createdBy User?   @relation("WorkKeyCreatedBy", fields: [createdById], references: [id], onDelete: SetNull)
+  updatedBy User?   @relation("WorkKeyUpdatedBy", fields: [updatedById], references: [id], onDelete: SetNull)
+  workOrders WorkOrder[]
+  diaryEntries EmployeeWorkDiaryEntry[]
+
+  @@unique([companyId, normalizedCode])
+  @@index([companyId, isActive])
+  @@index([companyId, name])
+  @@index([companyId, externalId])
+  @@index([createdById])
+  @@index([updatedById])
+}
+
 model WorkOrder {
   id          Int       @id @default(autoincrement())
   companyId   Int
@@ -1530,6 +1567,7 @@ model WorkOrder {
   // externalId varðveitir auðkenni úr eldra/ytra kerfi án endurnúmerunar.
   workNumber  String?
   workKey     String?
+  workKeyId   Int?
   externalId  String?
 
   title       String
@@ -1574,6 +1612,7 @@ model WorkOrder {
   responsibleDepartment CompanyDepartment? @relation("WorkOrderResponsibleDepartment", fields: [responsibleDepartmentId], references: [id], onDelete: SetNull)
   locationDepartment CompanyDepartment? @relation("WorkOrderLocationDepartment", fields: [locationDepartmentId], references: [id], onDelete: SetNull)
   operationalLocation OperationalLocation? @relation("WorkOrderOperationalLocation", fields: [operationalLocationId], references: [id], onDelete: SetNull)
+  workKeyRecord WorkKey? @relation(fields: [workKeyId], references: [id], onDelete: SetNull)
   travelPlanLegs WorkTravelPlanLeg[]
 
   @@unique([companyId, workNumber])
@@ -1584,6 +1623,7 @@ model WorkOrder {
   @@index([locationDepartmentId])
   @@index([operationalLocationId])
   @@index([companyId, workKey])
+  @@index([workKeyId])
   @@index([companyId, externalId])
   @@index([status])
   @@index([createdById])
@@ -2015,6 +2055,7 @@ model EmployeeWorkDiaryEntry {
   note               String?
   noteSourceLanguage String @default("is")
   workKey             String?
+  workKeyId           Int?
 
   operationalLocationId Int?
   locationText          String?
@@ -2033,6 +2074,7 @@ model EmployeeWorkDiaryEntry {
   company             Company              @relation(fields: [companyId], references: [id], onDelete: Cascade)
   employee            Employee             @relation(fields: [employeeId], references: [id], onDelete: Cascade)
   operationalLocation OperationalLocation? @relation(fields: [operationalLocationId], references: [id], onDelete: SetNull)
+  workKeyRecord       WorkKey?             @relation(fields: [workKeyId], references: [id], onDelete: SetNull)
   createdBy           User?                @relation("EmployeeWorkDiaryEntryCreatedBy", fields: [createdById], references: [id], onDelete: SetNull)
   voidedBy            User?                @relation("EmployeeWorkDiaryEntryVoidedBy", fields: [voidedById], references: [id], onDelete: SetNull)
 
@@ -2040,6 +2082,7 @@ model EmployeeWorkDiaryEntry {
   @@index([employeeId, workDate])
   @@index([companyId, employeeId, endedAt])
   @@index([operationalLocationId])
+  @@index([workKeyId])
   @@index([source])
 }
 

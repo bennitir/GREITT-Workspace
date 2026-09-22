@@ -7,6 +7,7 @@ import { applyWorkdayStaffingPlan, assignPersonToWorkPart, persistLegacyFirstWor
 import { work10FormatDate, work10PriorityText, work10StatusText, work10Text } from "@/lib/i18n/work10";
 import { workTimeText } from "@/lib/i18n/work-time";
 import { workResourceKindText, workResourceStatusText, workResourceText } from "@/lib/i18n/work-resources";
+import { workKeyText } from "@/lib/i18n/work-keys";
 import { work10ClockFromMinutes, work10ScheduleRangesOverlap } from "@/lib/work10/scheduling";
 import { projectWorkWindowWithBreaks, resolveWorkdayBreaks, type ProjectedBreak } from "@/lib/work10/workday-policy";
 import IcelandicDateInput from "@/components/ui/IcelandicDateInput";
@@ -876,6 +877,7 @@ export default function Work10Dashboard({ data }: { data: Work10DashboardData })
   const t = work10Text(data.language);
   const workTimeT = workTimeText(data.language);
   const resourceT = workResourceText(data.language);
+  const workKeyT = workKeyText(data.language);
   const [mainTab, setMainTab] = useState<MainTab>("schedule");
   const [resourceTab, setResourceTab] = useState<ResourceTab>("people");
   const [calendarMode, setCalendarMode] = useState<CalendarMode>("day");
@@ -3077,6 +3079,9 @@ export default function Work10Dashboard({ data }: { data: Work10DashboardData })
             <div className="flex items-center gap-3 text-sm text-slate-600">
               <Link href="/verk/vinnutimi" className="rounded-lg border px-3 py-2 font-semibold text-slate-700 hover:bg-slate-50">
                 {workTimeT.nav}
+              </Link>
+              <Link href="/verk/lyklar" className="rounded-lg border px-3 py-2 font-semibold text-slate-700 hover:bg-slate-50">
+                {workKeyT.nav}
               </Link>
               <Link href="/verk/nytt" className="rounded-lg border px-3 py-2 font-semibold text-blue-700 hover:bg-blue-50">
                 ＋ {t.newWork}

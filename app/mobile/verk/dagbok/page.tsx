@@ -1,6 +1,7 @@
 import Link from "next/link";
 
 import { workMobileText } from "@/lib/i18n/work-mobile";
+import { workKeyText } from "@/lib/i18n/work-keys";
 import { prisma } from "@/lib/prisma";
 import { getMobileWorkActor } from "@/lib/work10/mobile-access";
 import { startMobileDiaryEntry, stopMobileDiaryEntry } from "../actions";
@@ -46,6 +47,7 @@ function workDateFromNow(now: Date) {
 export default async function MobileWorkDiaryPage() {
   const actor = await getMobileWorkActor();
   const t = workMobileText(actor.language);
+  const workKeyT = workKeyText(actor.language);
 
   if (!actor.employee) {
     return (
@@ -65,11 +67,16 @@ export default async function MobileWorkDiaryPage() {
   const now = new Date();
   const today = workDateFromNow(now);
 
-  const [locations, entries, activeWork] = await Promise.all([
+  const [locations, workKeys, entries, activeWork] = await Promise.all([
     prisma.operationalLocation.findMany({
       where: { companyId: actor.companyId, isActive: true },
       select: { id: true, code: true, name: true },
       orderBy: [{ locationKind: "asc" }, { name: "asc" }],
+    }),
+    prisma.workKey.findMany({
+      where: { companyId: actor.companyId, isActive: true },
+      select: { id: true, code: true, name: true },
+      orderBy: [{ code: "asc" }],
     }),
     prisma.employeeWorkDiaryEntry.findMany({
       where: {
@@ -156,7 +163,10 @@ export default async function MobileWorkDiaryPage() {
               </label>
               <label className="grid gap-1 text-sm font-semibold text-slate-700">
                 <span>{t.diaryWorkKey}</span>
-                <input name="workKey" maxLength={100} disabled={Boolean(activeWork)} className="rounded-xl border border-slate-300 px-3 py-3 text-base disabled:bg-slate-100" />
+                <select name="workKeyId" defaultValue="" disabled={Boolean(activeWork)} className="rounded-xl border border-slate-300 bg-white px-3 py-3 text-base disabled:bg-slate-100">
+                  <option value="">{workKeyT.selectNone}</option>
+                  {workKeys.map((key) => <option key={key.id} value={key.id}>{key.code}{key.name !== key.code ? ` · ${key.name}` : ""}</option>)}
+                </select>
               </label>
               <label className="grid gap-1 text-sm font-semibold text-slate-700">
                 <span>{t.diaryLocation}</span>

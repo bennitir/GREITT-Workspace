@@ -1,0 +1,74 @@
+GLÖGGT – Verklyklar og innflutningur
+22. september 2026
+
+Markmið
+-------
+Verklykill er fyrirtækisbundið master-data auðkenni sem má nota á mörgum Verkum og í sjálfstæðri Mobile Dagbók.
+Verknúmer auðkennir einstakt Verk; verklykill er endurnýtanlegt flokkunar-/uppgjörssamhengi.
+
+Nýtt
+----
+- Prisma WorkKey master-data tafla.
+- /verk/lyklar fyrir stofnun, breytingu, virkja/óvirkja og yfirlit yfir notkun.
+- Innflutningur úr CSV, XLSX og XLS.
+- Nýtt Verk velur virkan verklykil úr skrá fyrirtækisins.
+- Mobile Dagbók velur virkan verklykil úr sömu skrá.
+- Eldri WorkOrder.workKey og EmployeeWorkDiaryEntry.workKey eru varðveitt sem denormalíserað textagildi fyrir núverandi leit/birtingu.
+- workKeyId tengir nýjan master-lykil við Verk og Dagbók.
+- AuditEvent skráir stofnun, breytingar, virkni og innflutning.
+
+Migration
+---------
+20260922090000_add_work_key_registry
+
+Migrationin:
+1. stofnar WorkKey;
+2. safnar saman núverandi workKey textum úr WorkOrder og EmployeeWorkDiaryEntry;
+3. normalíserar tvítekna lykla innan fyrirtækis;
+4. stofnar MIGRATED lykla;
+5. backfillar workKeyId á eldri Verk og Dagbókarfærslur þar sem samsvörun finnst.
+
+Innflutningssnið
+---------------
+Studd skráarsnið:
+- .csv
+- .xlsx
+- .xls
+
+Fyrsta vinnublað er lesið.
+Að hámarki 8 MB og 10.000 gagnalínur í einu.
+
+Nauðsynlegur dálkur – eitt af eftirfarandi heitum:
+- Verklykill
+- Lykill
+- Work key
+- Code
+- sambærileg þekkt afbrigði, t.d. WorkKeyCode / Verklykill nr.
+
+Valkvæðir dálkar:
+- Heiti / Nafn / Name / Title
+- Lýsing / Description / Note
+- Ytra auðkenni / External ID
+- Virkur / Active / Staða / Status
+
+Ef heiti vantar verður heiti = verklykill.
+Ef virk staða vantar verður nýr lykill virkur.
+Tvíteknar línur innan sömu skráar eru ekki fluttar tvisvar inn.
+Núverandi lykill með sama normalíseraða kóða er uppfærður, ekki tvítekinn.
+
+Öryggisregla
+------------
+Innflutningur stofnar eða uppfærir verklyklaskrá en býr ekki til Verk, breytir ekki úthlutunum og stofnar ekki bókun/reikning.
+
+Próf eftir uppsetningu
+----------------------
+1. npx prisma validate
+2. npx prisma generate
+3. npx tsc --noEmit
+4. npx prisma migrate deploy
+5. Opna /verk/lyklar og staðfesta að eldri verklyklar birtist sem MIGRATED ef þeir voru til.
+6. Stofna handvirkan lykil.
+7. Flytja inn prufuskrá CSV eða XLSX með Verklykill + Heiti.
+8. Opna /verk/nytt og staðfesta að aðeins virkir lyklar birtist í vali.
+9. Opna Mobile → Verk → Dagbók og staðfesta sama virka lyklaval.
+10. Gera lykil óvirkan og staðfesta að eldri Verk haldi honum en hann birtist ekki í nýju vali.

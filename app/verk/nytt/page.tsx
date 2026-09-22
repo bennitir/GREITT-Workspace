@@ -9,6 +9,7 @@ import Button from "@/components/ui/Button";
 import IcelandicDateInput from "@/components/ui/IcelandicDateInput";
 import IcelandicTimeInput from "@/components/ui/IcelandicTimeInput";
 import { workText } from "@/lib/i18n/work";
+import { workKeyText } from "@/lib/i18n/work-keys";
 import { normalizeUiLanguage } from "@/lib/i18n/ui";
 import { parseWork10CompletionDeadline, parseWork10PlannedDate, parseWork10PlannedStartParts } from "@/lib/work10/scheduling";
 
@@ -22,7 +23,7 @@ async function createWorkOrder(formData: FormData) {
   if (!Number.isInteger(companyId)) redirect("/fyrirtaeki");
   await requireCompanyWriteAccess(companyId);
   const requestedWorkNumber = String(formData.get("workNumber") ?? "").trim();
-  const workKey = String(formData.get("workKey") ?? "").trim();
+  const requestedWorkKeyId = Number(formData.get("workKeyId") ?? 0);
   const title = String(formData.get("title") ?? "").trim();
   const description = String(formData.get("description") ?? "").trim();
   const address = String(formData.get("address") ?? "").trim();
@@ -67,6 +68,7 @@ async function createWorkOrder(formData: FormData) {
   const sourceLanguage = normalizeUiLanguage(
     String(formData.get("sourceLanguage") ?? "is"),
   );
+  const workKeyT = workKeyText(sourceLanguage);
   if (!title) throw new Error("Heiti verks vantar.");
   const createdById = activeUserId ? Number(activeUserId) : null;
 
@@ -78,13 +80,24 @@ async function createWorkOrder(formData: FormData) {
     if (existing) throw new Error("Verknúmerið er þegar í notkun hjá fyrirtækinu.");
   }
 
+  const selectedWorkKey = requestedWorkKeyId
+    ? await prisma.workKey.findFirst({
+        where: { id: requestedWorkKeyId, companyId, isActive: true },
+        select: { id: true, code: true },
+      })
+    : null;
+  if (requestedWorkKeyId && !selectedWorkKey) {
+    throw new Error(workKeyT.errors.notFound);
+  }
+
   const created = await prisma.workOrder.create({
     data: {
       companyId,
       createdById: createdById && Number.isInteger(createdById) ? createdById : null,
       sourceLanguage,
       workNumber: requestedWorkNumber || null,
-      workKey: workKey || null,
+      workKey: selectedWorkKey?.code ?? null,
+      workKeyId: selectedWorkKey?.id ?? null,
       title,
       description: description || null,
       address: address || null,
@@ -123,9 +136,17 @@ export default async function NýttVerkPage() {
   if (!Number.isInteger(companyId)) redirect("/fyrirtaeki");
   await requireCompanyWriteAccess(companyId);
   const effectiveUser = await getEffectiveUser();
-  const userSettings = effectiveUser ? await prisma.userSettings.findUnique({ where: { userId: effectiveUser.id }, select: { interfaceLanguage: true } }) : null;
+  const [userSettings, workKeys] = await Promise.all([
+    effectiveUser ? prisma.userSettings.findUnique({ where: { userId: effectiveUser.id }, select: { interfaceLanguage: true } }) : Promise.resolve(null),
+    prisma.workKey.findMany({
+      where: { companyId, isActive: true },
+      select: { id: true, code: true, name: true },
+      orderBy: [{ code: "asc" }],
+    }),
+  ]);
   const language = userSettings?.interfaceLanguage ?? "is";
   const t = workText(language);
+  const workKeyT = workKeyText(language);
 
   return (
     <main className="space-y-6 p-8">
@@ -135,7 +156,17 @@ export default async function NýttVerkPage() {
           <input type="hidden" name="sourceLanguage" value={language} />
           <div className="grid gap-4 md:grid-cols-2">
             <div><label htmlFor="workNumber" className="block font-medium">{t.workNumber}</label><input id="workNumber" name="workNumber" type="text" maxLength={80} className="mt-2 w-full rounded-lg border px-4 py-3" placeholder={t.workNumberPlaceholder} /></div>
-            <div><label htmlFor="workKey" className="block font-medium">{t.workKey}</label><input id="workKey" name="workKey" type="text" maxLength={120} className="mt-2 w-full rounded-lg border px-4 py-3" placeholder={t.workKeyPlaceholder} /></div>
+            <div>
+              <label htmlFor="workKeyId" className="block font-medium">{t.workKey}</label>
+              <select id="workKeyId" name="workKeyId" defaultValue="" className="mt-2 w-full rounded-lg border bg-white px-4 py-3">
+                <option value="">{workKeyT.selectNone}</option>
+                {workKeys.map((key) => <option key={key.id} value={key.id}>{key.code}{key.name !== key.code ? ` · ${key.name}` : ""}</option>)}
+              </select>
+              <div className="mt-1 flex flex-wrap items-center justify-between gap-2 text-xs text-slate-500">
+                <span>{workKeyT.selectHelp}</span>
+                <a href="/verk/lyklar" className="font-semibold text-blue-700 hover:underline">{workKeyT.manageKeys}</a>
+              </div>
+            </div>
           </div>
           <div><label htmlFor="title" className="block font-medium">{t.workTitle}</label><input id="title" name="title" type="text" required className="mt-2 w-full rounded-lg border px-4 py-3" placeholder={t.workTitlePlaceholder} /></div>
           <div><label htmlFor="address" className="block font-medium">{t.address}</label><input id="address" name="address" type="text" className="mt-2 w-full rounded-lg border px-4 py-3" placeholder={t.addressPlaceholder} /></div>
