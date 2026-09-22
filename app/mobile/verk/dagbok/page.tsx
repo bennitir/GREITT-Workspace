@@ -92,7 +92,7 @@ export default async function MobileWorkDiaryPage() {
     }),
     prisma.workKey.findMany({
       where: { companyId: actor.companyId, isActive: true },
-      select: { id: true, code: true, name: true, address: true, postalCode: true, city: true },
+      select: { id: true, code: true, name: true },
       orderBy: [{ code: "asc" }],
     }),
     prisma.employeeWorkDiaryEntry.findMany({
