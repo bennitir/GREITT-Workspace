@@ -9,6 +9,7 @@ import { nextMaintenanceDueValue } from "@/lib/work10/maintenance";
 import { removeWorkResourceMedia, saveWorkResourceMeterPhoto } from "@/lib/work10/resource-media";
 import { removeWorkEvidenceMedia, saveWorkEvidencePhoto } from "@/lib/work10/work-evidence-media";
 import { requireMobileWorkEmployee } from "@/lib/work10/mobile-access";
+import { operationalLocationLabel } from "@/lib/work10/location-format";
 import {
   defaultResourceUnit,
   isWork10PersistentResourceKind,
@@ -63,12 +64,8 @@ type OperationalLocationSnapshot = {
 };
 
 function operationalLocationSnapshot(location: OperationalLocationSnapshot | null | undefined) {
-  if (!location) return null;
-  return [
-    location.name,
-    location.address,
-    [location.postalCode, location.city].filter(Boolean).join(" "),
-  ].filter(Boolean).join(" · ");
+  const label = operationalLocationLabel(location);
+  return label || null;
 }
 
 function effectivePhotoRequirement(partRequirement: string, workRequirement: string) {

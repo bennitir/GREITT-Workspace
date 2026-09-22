@@ -9,6 +9,7 @@ import path from "path";
 import { revalidatePath } from "next/cache";
 
 import { prisma } from "@/lib/prisma";
+import { normalizeLocationCity } from "@/lib/work10/location-format";
 import { defaultAccounts } from "@/app/data/accounts";
 import {
   getEffectiveUser,
@@ -752,7 +753,7 @@ await prisma.$transaction(async (tx) => {
     const baseName = defaultWorkLocation.name.trim();
     const baseAddress = defaultWorkLocation.address.trim();
     const basePostalCode = defaultWorkLocation.postalCode.trim();
-    const baseCity = defaultWorkLocation.city.trim();
+    const baseCity = normalizeLocationCity(basePostalCode, defaultWorkLocation.city);
     const hasBaseData = Boolean(baseName || baseAddress || basePostalCode || baseCity);
 
     if (hasBaseData) {

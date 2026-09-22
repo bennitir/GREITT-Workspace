@@ -1,9 +1,13 @@
 import Link from "next/link";
 
+import LiveDiaryTotal from "@/components/work/LiveDiaryTotal";
+import OperationalLocationAutocomplete, { type LocationOption } from "@/components/work/OperationalLocationAutocomplete";
+
 import { workMobileText } from "@/lib/i18n/work-mobile";
 import { workKeyText } from "@/lib/i18n/work-keys";
 import { prisma } from "@/lib/prisma";
 import { getMobileWorkActor } from "@/lib/work10/mobile-access";
+import { operationalLocationAddress, operationalLocationLabel } from "@/lib/work10/location-format";
 import { startMobileDiaryEntry, stopMobileDiaryEntry } from "../actions";
 
 function localeFor(language: string) {
@@ -83,12 +87,12 @@ export default async function MobileWorkDiaryPage() {
   const [locations, workKeys, entries, activeWork, company] = await Promise.all([
     prisma.operationalLocation.findMany({
       where: { companyId: actor.companyId, isActive: true },
-      select: { id: true, code: true, name: true },
+      select: { id: true, code: true, name: true, address: true, postalCode: true, city: true },
       orderBy: [{ locationKind: "asc" }, { name: "asc" }],
     }),
     prisma.workKey.findMany({
       where: { companyId: actor.companyId, isActive: true },
-      select: { id: true, code: true, name: true },
+      select: { id: true, code: true, name: true, address: true, postalCode: true, city: true },
       orderBy: [{ code: "asc" }],
     }),
     prisma.employeeWorkDiaryEntry.findMany({
@@ -133,10 +137,24 @@ export default async function MobileWorkDiaryPage() {
   const activeEntry = entries.find((entry) => !entry.endedAt) ?? null;
   const todayKey = dateKey(now);
   const todayEntries = entries.filter((entry) => dateKey(entry.workDate) === todayKey);
-  const todayMinutes = todayEntries.reduce((sum, entry) => {
-    if (entry.endedAt) return sum + entry.durationMinutes;
-    return sum + Math.max(1, Math.round((now.getTime() - entry.startedAt.getTime()) / 60_000));
-  }, 0);
+  const completedTodayMinutes = todayEntries.reduce((sum, entry) => entry.endedAt ? sum + entry.durationMinutes : sum, 0);
+  const locationOptions: LocationOption[] = [
+    ...locations.map((location) => ({
+      id: location.id,
+      name: location.name,
+      code: location.code,
+      address: location.address,
+      postalCode: location.postalCode,
+      city: location.city,
+      displayText: operationalLocationLabel(location),
+      inputText: operationalLocationAddress(location) || location.name,
+      searchText: [location.name, location.code, location.address, location.postalCode, location.city].filter(Boolean).join(" "),
+    })),
+    ...[...new Set(entries.map((entry) => entry.locationText?.trim()).filter((value): value is string => Boolean(value)))]
+      .filter((text) => !locations.some((location) => operationalLocationLabel(location).includes(text)))
+      .slice(0, 8)
+      .map((text) => ({ id: null, name: text, displayText: text, searchText: text })),
+  ];
 
   return (
     <main className="min-h-screen bg-slate-100">
@@ -164,7 +182,7 @@ export default async function MobileWorkDiaryPage() {
 
         <section className="mt-5 rounded-2xl bg-slate-950 p-4 text-white">
           <p className="text-xs font-semibold uppercase tracking-wide text-slate-300">{t.diaryToday}</p>
-          <p className="mt-1 text-3xl font-bold">{formatMinutes(todayMinutes, actor.language)}</p>
+          <p className="mt-1 text-3xl font-bold"><LiveDiaryTotal completedMinutes={completedTodayMinutes} activeStartedAt={activeEntry?.startedAt.toISOString() ?? null} language={actor.language} /></p>
           <p className="mt-1 text-xs text-slate-300">{displayDate(today, actor.language)}</p>
         </section>
 
@@ -202,7 +220,7 @@ export default async function MobileWorkDiaryPage() {
                 <p className="mt-1 font-semibold text-slate-900">{defaultBaseLocation?.name ?? "—"}</p>
                 {defaultBaseLocation?.address ? (
                   <p className="mt-1 text-xs leading-5 text-slate-600">
-                    {[defaultBaseLocation.address, defaultBaseLocation.postalCode, defaultBaseLocation.city].filter(Boolean).join(", ")}
+                    {operationalLocationAddress(defaultBaseLocation)}
                   </p>
                 ) : null}
                 <p className="mt-1 text-xs leading-5 text-slate-500">{t.diaryDefaultBaseHelp}</p>
@@ -218,17 +236,16 @@ export default async function MobileWorkDiaryPage() {
                   {workKeys.map((key) => <option key={key.id} value={key.id}>{key.code}{key.name !== key.code ? ` · ${key.name}` : ""}</option>)}
                 </select>
               </label>
-              <label className="grid gap-1 text-sm font-semibold text-slate-700">
-                <span>{t.diaryLocation}</span>
-                <select name="operationalLocationId" disabled={Boolean(activeWork)} className="rounded-xl border border-slate-300 bg-white px-3 py-3 text-base disabled:bg-slate-100">
-                  <option value="">—</option>
-                  {locations.map((location) => <option key={location.id} value={location.id}>{location.name}{location.code ? ` · ${location.code}` : ""}</option>)}
-                </select>
-              </label>
-              <label className="grid gap-1 text-sm font-semibold text-slate-700">
-                <span>{t.diaryCustomLocation}</span>
-                <input name="locationText" maxLength={240} disabled={Boolean(activeWork)} className="rounded-xl border border-slate-300 px-3 py-3 text-base disabled:bg-slate-100" />
-              </label>
+              <OperationalLocationAutocomplete
+                label={t.diaryLocation}
+                placeholder={t.diaryCustomLocation}
+                help={t.diaryLocationSearchHelp}
+                textName="locationText"
+                options={locationOptions}
+                disabled={Boolean(activeWork)}
+                labelClassName="grid gap-1 text-sm font-semibold text-slate-700"
+                inputClassName="rounded-xl border border-slate-300 px-3 py-3 text-base font-normal"
+              />
               <div className="grid grid-cols-2 gap-2">
                 <label className="grid gap-1 text-sm font-semibold text-slate-700">
                   <span>{t.diaryTravelMinutes}</span>

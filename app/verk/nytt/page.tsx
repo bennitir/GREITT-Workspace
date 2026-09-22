@@ -8,10 +8,13 @@ import Card from "@/components/ui/Card";
 import Button from "@/components/ui/Button";
 import IcelandicDateInput from "@/components/ui/IcelandicDateInput";
 import IcelandicTimeInput from "@/components/ui/IcelandicTimeInput";
+import OperationalLocationAutocomplete, { type LocationOption } from "@/components/work/OperationalLocationAutocomplete";
 import { workText } from "@/lib/i18n/work";
+import { workResourceTravelModeText } from "@/lib/i18n/work-resources";
 import { workKeyText } from "@/lib/i18n/work-keys";
 import { normalizeUiLanguage } from "@/lib/i18n/ui";
 import { parseWork10CompletionDeadline, parseWork10PlannedDate, parseWork10PlannedStartParts } from "@/lib/work10/scheduling";
+import { operationalLocationAddress, operationalLocationLabel } from "@/lib/work10/location-format";
 
 async function createWorkOrder(formData: FormData) {
   "use server";
@@ -28,6 +31,7 @@ async function createWorkOrder(formData: FormData) {
   const description = String(formData.get("description") ?? "").trim();
   const address = String(formData.get("address") ?? "").trim();
   const requestedOperationalLocationId = Number(formData.get("operationalLocationId") ?? 0);
+  const requestedResourceIds = [...new Set(formData.getAll("workResourceId").map((value) => Number(value)).filter((value) => Number.isInteger(value) && value > 0))];
   const operationalLocationId = Number.isInteger(requestedOperationalLocationId) && requestedOperationalLocationId > 0
     ? requestedOperationalLocationId
     : null;
@@ -102,41 +106,86 @@ async function createWorkOrder(formData: FormData) {
     if (!location) throw new Error("Valinn rekstrarstaður fannst ekki.");
   }
 
-  const created = await prisma.workOrder.create({
-    data: {
-      companyId,
-      createdById: createdById && Number.isInteger(createdById) ? createdById : null,
-      sourceLanguage,
-      workNumber: requestedWorkNumber || null,
-      workKey: selectedWorkKey?.code ?? null,
-      workKeyId: selectedWorkKey?.id ?? null,
-      title,
-      description: description || null,
-      address: address || null,
-      operationalLocationId,
-      priority,
-      requiredPeople: requiredPeopleRaw,
-      estimatedMinutes: estimatedMinutes > 0 ? estimatedMinutes : null,
-      plannedDate,
-      plannedStartMinutes,
-      completionDeadlineDate: completionDeadline.date,
-      completionDeadlineMinutes: completionDeadline.minutes,
-      allowAfterWorkdayEnd,
-      workdayEndExceptionReason: allowAfterWorkdayEnd ? workdayEndExceptionReason : null,
-      photoRequirement,
-      status: "NEW",
-    },
-    select: { id: true, workNumber: true },
-  });
-
-  // Ný Verk fá alltaf raunverulegt verknúmer. Innra id er öruggur fallback
-  // þegar fyrirtækið velur ekki eigið/ytra verknúmer við stofnun.
-  if (!created.workNumber) {
-    await prisma.workOrder.update({
-      where: { id: created.id },
-      data: { workNumber: String(created.id) },
-    });
+  const selectedResources = requestedResourceIds.length > 0
+    ? await prisma.workResource.findMany({
+        where: {
+          companyId,
+          id: { in: requestedResourceIds },
+          isActive: true,
+          kind: { in: ["MACHINE", "VEHICLE", "TOOL"] },
+        },
+        select: { id: true, kind: true, name: true },
+      })
+    : [];
+  if (selectedResources.length !== requestedResourceIds.length) {
+    throw new Error("Eitt eða fleiri valin tæki fundust ekki eða eru óvirk.");
   }
+
+  const created = await prisma.$transaction(async (tx) => {
+    const work = await tx.workOrder.create({
+      data: {
+        companyId,
+        createdById: createdById && Number.isInteger(createdById) ? createdById : null,
+        sourceLanguage,
+        workNumber: requestedWorkNumber || null,
+        workKey: selectedWorkKey?.code ?? null,
+        workKeyId: selectedWorkKey?.id ?? null,
+        title,
+        description: description || null,
+        address: address || null,
+        operationalLocationId,
+        priority,
+        requiredPeople: requiredPeopleRaw,
+        estimatedMinutes: estimatedMinutes > 0 ? estimatedMinutes : null,
+        plannedDate,
+        plannedStartMinutes,
+        completionDeadlineDate: completionDeadline.date,
+        completionDeadlineMinutes: completionDeadline.minutes,
+        allowAfterWorkdayEnd,
+        workdayEndExceptionReason: allowAfterWorkdayEnd ? workdayEndExceptionReason : null,
+        photoRequirement,
+        status: "NEW",
+      },
+      select: { id: true, workNumber: true },
+    });
+
+    if (!work.workNumber) {
+      await tx.workOrder.update({ where: { id: work.id }, data: { workNumber: String(work.id) } });
+    }
+
+    if (selectedResources.length > 0) {
+      const part = await tx.workPart.create({
+        data: {
+          companyId,
+          workOrderId: work.id,
+          sequence: 1,
+          sourceLanguage,
+          title,
+          description: description || null,
+          status: "PLANNED",
+          requiredPeople: requiredPeopleRaw,
+          estimatedMinutes: estimatedMinutes > 0 ? estimatedMinutes : null,
+          photoRequirement: "INHERIT",
+          createdById: createdById && Number.isInteger(createdById) ? createdById : null,
+          updatedById: createdById && Number.isInteger(createdById) ? createdById : null,
+        },
+        select: { id: true },
+      });
+
+      await tx.workPartAssignment.createMany({
+        data: selectedResources.map((resource) => ({
+          companyId,
+          workPartId: part.id,
+          resourceKind: resource.kind,
+          workResourceId: resource.id,
+          resourceLabel: resource.name,
+          createdById: createdById && Number.isInteger(createdById) ? createdById : null,
+        })),
+      });
+    }
+
+    return work;
+  });
   revalidatePath("/verk");
   redirect("/verk");
 }
@@ -149,7 +198,7 @@ export default async function NýttVerkPage() {
   if (!Number.isInteger(companyId)) redirect("/fyrirtaeki");
   await requireCompanyWriteAccess(companyId);
   const effectiveUser = await getEffectiveUser();
-  const [userSettings, workKeys, operationalLocations, companyContext] = await Promise.all([
+  const [userSettings, workKeys, operationalLocations, companyContext, workResources, recentWorkLocations] = await Promise.all([
     effectiveUser ? prisma.userSettings.findUnique({ where: { userId: effectiveUser.id }, select: { interfaceLanguage: true } }) : Promise.resolve(null),
     prisma.workKey.findMany({
       where: { companyId, isActive: true },
@@ -158,7 +207,7 @@ export default async function NýttVerkPage() {
     }),
     prisma.operationalLocation.findMany({
       where: { companyId, isActive: true },
-      select: { id: true, code: true, name: true, locationKind: true },
+      select: { id: true, code: true, name: true, address: true, postalCode: true, city: true, locationKind: true },
       orderBy: [{ locationKind: "asc" }, { name: "asc" }],
     }),
     prisma.company.findUnique({
@@ -169,10 +218,38 @@ export default async function NýttVerkPage() {
         },
       },
     }),
+    prisma.workResource.findMany({
+      where: { companyId, isActive: true, kind: { in: ["MACHINE", "VEHICLE", "TOOL"] } },
+      select: { id: true, kind: true, code: true, name: true, travelMode: true, planningTravelSpeedKmh: true, status: true },
+      orderBy: [{ kind: "asc" }, { name: "asc" }],
+    }),
+    prisma.workOrder.findMany({
+      where: { companyId, address: { not: null } },
+      select: { address: true },
+      orderBy: { createdAt: "desc" },
+      take: 30,
+    }),
   ]);
   const language = userSettings?.interfaceLanguage ?? "is";
   const t = workText(language);
   const workKeyT = workKeyText(language);
+  const locationOptions: LocationOption[] = [
+    ...operationalLocations.map((location) => ({
+      id: location.id,
+      name: location.name,
+      code: location.code,
+      address: location.address,
+      postalCode: location.postalCode,
+      city: location.city,
+      displayText: operationalLocationLabel(location),
+      inputText: operationalLocationAddress(location) || location.name,
+      searchText: [location.name, location.code, location.address, location.postalCode, location.city].filter(Boolean).join(" "),
+    })),
+    ...[...new Set(recentWorkLocations.map((row) => row.address?.trim()).filter((value): value is string => Boolean(value)))]
+      .filter((address) => !operationalLocations.some((location) => operationalLocationLabel(location).includes(address)))
+      .slice(0, 12)
+      .map((address) => ({ id: null, name: address, displayText: address, searchText: address })),
+  ];
 
   return (
     <main className="space-y-6 p-8">
@@ -200,29 +277,38 @@ export default async function NýttVerkPage() {
             <p className="mt-1 font-semibold text-slate-900">{companyContext?.defaultOperationalLocation?.name ?? t.companyWorkBaseMissing}</p>
             {companyContext?.defaultOperationalLocation?.address ? (
               <p className="mt-1 text-sm text-slate-600">
-                {[
-                  companyContext.defaultOperationalLocation.address,
-                  companyContext.defaultOperationalLocation.postalCode,
-                  companyContext.defaultOperationalLocation.city,
-                ].filter(Boolean).join(" · ")}
+                {operationalLocationAddress(companyContext.defaultOperationalLocation)}
               </p>
             ) : null}
           </div>
-          <div className="grid gap-4 md:grid-cols-2">
-            <div>
-              <label htmlFor="operationalLocationId" className="block font-medium">{t.operationalLocation}</label>
-              <select id="operationalLocationId" name="operationalLocationId" defaultValue="" className="mt-2 w-full rounded-lg border bg-white px-4 py-3">
-                <option value="">—</option>
-                {operationalLocations.map((location) => (
-                  <option key={location.id} value={location.id}>
-                    {location.name}{location.code ? ` · ${location.code}` : ""}
-                  </option>
+          <OperationalLocationAutocomplete
+            label={t.operationalLocation}
+            placeholder={t.addressPlaceholder}
+            help={t.operationalLocationHelp}
+            textName="address"
+            options={locationOptions}
+            labelClassName="grid gap-2 font-medium"
+            inputClassName="rounded-lg border px-4 py-3 font-normal"
+          />
+          {workResources.length > 0 ? (
+            <fieldset className="rounded-xl border border-slate-200 bg-slate-50 p-4">
+              <legend className="px-1 font-semibold text-slate-900">{t.workResourcesAtCreate}</legend>
+              <p className="mt-1 text-xs leading-5 text-slate-500">{t.workResourcesAtCreateHelp}</p>
+              <div className="mt-3 grid gap-2 md:grid-cols-2 xl:grid-cols-3">
+                {workResources.map((resource) => (
+                  <label key={resource.id} className="flex items-start gap-3 rounded-lg border bg-white p-3 text-sm">
+                    <input type="checkbox" name="workResourceId" value={resource.id} className="mt-1" disabled={["MAINTENANCE", "OUT_OF_SERVICE", "INACTIVE"].includes(resource.status)} />
+                    <span className="min-w-0">
+                      <span className="block font-semibold text-slate-900">{resource.code} · {resource.name}</span>
+                      <span className="mt-0.5 block text-xs text-slate-500">
+                        {resource.kind}{resource.travelMode !== "NONE" ? ` · ${workResourceTravelModeText(resource.travelMode, language)}` : ""}{resource.planningTravelSpeedKmh ? ` · ${resource.planningTravelSpeedKmh} km/klst.` : ""}
+                      </span>
+                    </span>
+                  </label>
                 ))}
-              </select>
-              <p className="mt-1 text-xs leading-5 text-slate-500">{t.operationalLocationHelp}</p>
-            </div>
-            <div><label htmlFor="address" className="block font-medium">{t.address}</label><input id="address" name="address" type="text" className="mt-2 w-full rounded-lg border px-4 py-3" placeholder={t.addressPlaceholder} /></div>
-          </div>
+              </div>
+            </fieldset>
+          ) : null}
           <div><label htmlFor="description" className="block font-medium">{t.description}</label><textarea id="description" name="description" rows={5} className="mt-2 w-full rounded-lg border px-4 py-3" placeholder={t.descriptionPlaceholder} /></div>
           <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-4">
             <div><label htmlFor="requiredPeople" className="block font-medium">{t.requiredPeople}</label><input id="requiredPeople" name="requiredPeople" type="number" min={1} max={100} defaultValue={1} required className="mt-2 w-full rounded-lg border px-4 py-3" /><p className="mt-1 text-xs text-slate-500">{t.requiredPeopleHelp}</p></div>

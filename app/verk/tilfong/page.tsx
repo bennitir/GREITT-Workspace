@@ -140,16 +140,16 @@ export default async function WorkResourcesPage({ searchParams }: WorkResourcesP
               <span>{t.meterUnit}</span>
               <input name="meterUnit" maxLength={40} className="rounded-lg border px-3 py-2" placeholder="HOUR / KM" />
             </label>
-            <label className="grid gap-1 text-sm font-medium text-slate-700">
+            <label className="grid min-w-0 gap-1 text-sm font-medium text-slate-700">
               <span>{t.travelMode}</span>
-              <select name="travelMode" defaultValue="" className="rounded-lg border bg-white px-3 py-2">
+              <select name="travelMode" defaultValue="" className="w-full min-w-0 rounded-lg border bg-white px-3 py-2">
                 <option value="">{t.travelModeAuto}</option>
                 {WORK10_RESOURCE_TRAVEL_MODES.map((mode) => <option key={mode} value={mode}>{workResourceTravelModeText(mode, language)}</option>)}
               </select>
             </label>
-            <label className="grid gap-1 text-sm font-medium text-slate-700">
+            <label className="grid min-w-0 gap-1 text-sm font-medium text-slate-700">
               <span>{t.planningTravelSpeed}</span>
-              <input name="planningTravelSpeedKmh" inputMode="decimal" className="rounded-lg border px-3 py-2" placeholder="25" />
+              <input name="planningTravelSpeedKmh" inputMode="decimal" className="w-full min-w-0 rounded-lg border px-3 py-2" placeholder="25" />
             </label>
             <p className="text-xs leading-5 text-slate-500 md:col-span-2 xl:col-span-4">{t.planningTravelSpeedHelp}</p>
             <div className="flex items-end">
@@ -236,15 +236,15 @@ export default async function WorkResourcesPage({ searchParams }: WorkResourcesP
                           <span>{t.meterUnit}</span>
                           <input name="meterUnit" maxLength={40} defaultValue={resource.meterUnit ?? ""} className="rounded-lg border bg-white px-3 py-2 text-sm" />
                         </label>
-                        <label className="grid gap-1 text-xs font-medium text-slate-600">
+                        <label className="grid min-w-0 gap-1 text-xs font-medium text-slate-600">
                           <span>{t.travelMode}</span>
-                          <select name="travelMode" defaultValue={resource.travelMode} className="rounded-lg border bg-white px-3 py-2 text-sm">
+                          <select name="travelMode" defaultValue={resource.travelMode} className="w-full min-w-0 rounded-lg border bg-white px-3 py-2 text-sm">
                             {WORK10_RESOURCE_TRAVEL_MODES.map((mode) => <option key={mode} value={mode}>{workResourceTravelModeText(mode, language)}</option>)}
                           </select>
                         </label>
-                        <label className="grid gap-1 text-xs font-medium text-slate-600">
+                        <label className="grid min-w-0 gap-1 text-xs font-medium text-slate-600">
                           <span>{t.planningTravelSpeed}</span>
-                          <input name="planningTravelSpeedKmh" inputMode="decimal" defaultValue={resource.planningTravelSpeedKmh ?? ""} className="rounded-lg border bg-white px-3 py-2 text-sm" />
+                          <input name="planningTravelSpeedKmh" inputMode="decimal" defaultValue={resource.planningTravelSpeedKmh ?? ""} className="w-full min-w-0 rounded-lg border bg-white px-3 py-2 text-sm" />
                         </label>
                         <p className="text-xs leading-5 text-slate-500 sm:col-span-2">{t.planningTravelSpeedHelp}</p>
                         <p className="text-xs leading-5 text-slate-500 sm:col-span-2">{t.historicalCostHelp}</p>

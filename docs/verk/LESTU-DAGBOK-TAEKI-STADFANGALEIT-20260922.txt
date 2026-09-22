@@ -1,0 +1,41 @@
+GLÖGGT – Dagbók, tækjaval og staðfangaleit
+22.09.2026
+
+Markmið
+- Dagbók í dag sýnir samanlagðan tíma dagsins og telur virka færslu áfram án refresh.
+- Nýtt Verk getur fengið tæki/vinnuvélar við stofnun.
+- Valdar vinnuvélar/farartæki fara í canonical WorkPartAssignment og ferðahraði þeirra nýtist Dagsmönnun.
+- Verkstaður/st staðsetning verður leitarreitur með tillögum meðan skrifað er.
+- Mobile Dagbók notar sama tillöguflæði.
+- Ferðamáti og ferðahraði eru styttri og reitir eiga ekki að skarast.
+- Tvöfalt póstnúmer í staðsetningartexta er hreinsað.
+
+Staðfangaleit v1
+- Fyrst eru notaðir þekktir OperationalLocation staðir fyrirtækisins.
+- Síðan nýleg heimilisföng/verkstaðir úr eigin gögnum.
+- Frjáls texti er áfram leyfður.
+- Val á þekktum OperationalLocation varðveitir operationalLocationId svo ferðaleiðir geti nýst.
+- Landsleit úr opinberri Staðfangaskrá er næsta provider-lag og þarf ekki að breyta UI-komponentinum.
+
+Tækjaval við stofnun Verks
+- Virk MACHINE / VEHICLE / TOOL birtast.
+- Ef eitt eða fleiri tæki eru valin er fyrsta persistent WorkPart stofnaður með Verkinu.
+- Tækin tengjast honum með WorkPartAssignment.
+- Dagsmönnun les þar með núverandi travelMode/planningTravelSpeedKmh án sérleiðar.
+- Óvirk/biluð/viðhaldstæki eru sýnd en ekki valanleg.
+
+Dagbókartími
+- Loknar mínútur dagsins koma úr vistuðum færslum.
+- Virk færsla bætist við á client og uppfærist á 15 sek. fresti.
+- Engin breyting er gerð á canonical durationMinutes fyrr en færsla er stöðvuð.
+
+Prófun eftir afritun
+1. npx prisma validate
+2. npx prisma generate
+3. npx tsc --noEmit
+4. Engin migration er í þessum pakka.
+5. Prófa Nýtt Verk: skrifa hluta af þekktum stað og velja tillögu.
+6. Velja vinnuvél með ferðahraða og stofna Verk.
+7. Staðfesta á Verk-skjá að tækið sé úthlutað.
+8. Prófa Mobile Dagbók í Production eftir push: svartur rammi á að telja áfram án refresh.
+9. Stöðva Dagbók og staðfesta að heildin haldist rétt.
