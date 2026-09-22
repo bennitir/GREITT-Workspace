@@ -9,6 +9,7 @@ import { requireCompanyModule } from "@/lib/core/require-company-module";
 import { prisma } from "@/lib/prisma";
 import { inventoryText } from "@/lib/i18n/inventory";
 import { workResourceKindText, workResourceStatusText, workResourceText } from "@/lib/i18n/work-resources";
+import { workGpsText } from "@/lib/i18n/work-gps";
 import Card from "@/components/ui/Card";
 import PageHeader from "@/components/ui/PageHeader";
 import IcelandicDateInput from "@/components/ui/IcelandicDateInput";
@@ -77,7 +78,7 @@ export default async function Verk10DetailPage({ params }: Props) {
   const companyId = await requireCompanyModule("verk");
   const effectiveUser = await getEffectiveUser();
 
-  const [work, userSettings, companyAccess, companyEmployees, companyResources, inventoryItems, inventoryLocations] = await Promise.all([
+  const [work, userSettings, companyAccess, companyEmployees, companyResources, inventoryItems, inventoryLocations, gpsTrackSummary] = await Promise.all([
     prisma.workOrder.findFirst({
       where: { id: workOrderId, companyId },
       include: {
@@ -161,6 +162,15 @@ export default async function Verk10DetailPage({ params }: Props) {
       select: { id: true, code: true, name: true },
       orderBy: [{ name: "asc" }],
     }),
+    prisma.workTrackSession.aggregate({
+      where: {
+        companyId,
+        workOrderId,
+        pointCount: { gt: 0 },
+      },
+      _count: { _all: true },
+      _sum: { pointCount: true, totalDistanceM: true },
+    }),
   ]);
 
   if (!work) {
@@ -169,6 +179,13 @@ export default async function Verk10DetailPage({ params }: Props) {
 
   const language = userSettings?.interfaceLanguage ?? "is";
   const t = work10Text(language);
+  const gps = workGpsText(language);
+  const gpsSessionCount = gpsTrackSummary._count._all;
+  const gpsPointCount = gpsTrackSummary._sum.pointCount ?? 0;
+  const gpsDistanceM = gpsTrackSummary._sum.totalDistanceM ?? 0;
+  const gpsDistanceText = gpsDistanceM >= 1_000
+    ? `${work10FormatQuantity(gpsDistanceM / 1_000, language)} km`
+    : `${work10FormatQuantity(gpsDistanceM, language)} m`;
   const effectiveWorkStatus = effectiveWork10Status(work.status, work.workParts);
   const workIsCompleted = isWork10EffectivelyCompleted(work.status, work.workParts);
   const workReadyToClose = isWork10ReadyToClose(work.status, work.workParts);
@@ -278,6 +295,31 @@ export default async function Verk10DetailPage({ params }: Props) {
       </div>
 
       <PageHeader title={localizedTitle.text} description={t.detailDescription} />
+
+      <Card>
+        <div className="flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between">
+          <div className="min-w-0">
+            <p className="text-xs font-semibold uppercase tracking-wide text-blue-700">{gps.managerOverview}</p>
+            <h2 className="mt-1 text-lg font-bold text-slate-950">{gps.managerMapTitle}</h2>
+            <p className="mt-1 max-w-3xl text-sm leading-6 text-slate-600">{gps.managerMapHelp}</p>
+            {gpsSessionCount > 0 ? (
+              <div className="mt-3 flex flex-wrap gap-x-5 gap-y-2 text-sm text-slate-600">
+                <span><strong className="text-slate-900">{gpsSessionCount}</strong> {gps.sessionsLabel.toLowerCase()}</span>
+                <span><strong className="text-slate-900">{gpsPointCount}</strong> {gps.points}</span>
+                <span><strong className="text-slate-900">{gpsDistanceText}</strong> {gps.totalDistance.toLowerCase()}</span>
+              </div>
+            ) : (
+              <p className="mt-3 text-sm text-slate-500">{gps.managerNoSessions}</p>
+            )}
+          </div>
+          <Link
+            href={`/verk/${work.id}/kort`}
+            className="inline-flex min-h-11 shrink-0 items-center justify-center rounded-lg bg-blue-600 px-4 py-2 text-sm font-semibold text-white hover:bg-blue-700"
+          >
+            {gps.managerOpenMap}
+          </Link>
+        </div>
+      </Card>
 
       {(workReadyToClose || workIsCompleted) && (
         <Card>

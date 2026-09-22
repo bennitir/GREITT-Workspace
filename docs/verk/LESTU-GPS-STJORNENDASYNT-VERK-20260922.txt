@@ -1,0 +1,59 @@
+GLÖGGT – GPS stjórnendasýn á Verki
+Dagsetning: 22.09.2026
+
+MARKMIÐ
+Færa aðalsýn GPS úr Mobile yfir í stjórnendasýn Verk á tölvu.
+Stjórnandi á að geta opnað eitt Verk og séð allar GPS-vinnulotur sem tilheyra því Verki, óháð því hvaða Mobile-notandi framkvæmdi vinnuna.
+
+HVAÐ BREYTIST
+1. /verk/[id]
+   - Nýtt GPS-stjórnendakort efst á Verk-síðunni.
+   - Sýnir fjölda GPS-vinnulota, punkta og samanlagða track-vegalengd.
+   - Hnappur opnar sameiginlega stjórnendasýn.
+
+2. /verk/[id]/kort
+   - Ný tölvusýn fyrir stjórnanda/skoðunaraðgang.
+   - Sækir WorkTrackSession eftir companyId + workOrderId, ekki eftir núverandi Mobile-starfsmaður.
+   - Sýnir allar vinnulotur með GPS-punktum á sama korti.
+   - Hver vinnulota fær sér lit og heldur eigin punktaröð aðskildri.
+   - Sýnir einnig lista með starfsmanni, Verkþætti, tíma, punktum og vegalengd.
+   - Ef workResourceId er til á lotunni birtist kóði/heiti auðlindar.
+
+3. components/work/WorkOrderTrackMap.tsx
+   - Nýtt fjöl-track kort fyrir stjórnendasýn.
+   - Endurnýtir sama OpenStreetMap-grunn og Mobile-kortið.
+   - Engin breyting er gerð á Mobile WorkTrackMap eða GPS-söfnun.
+
+4. lib/i18n/work-gps.ts
+   - Nýir textar fyrir stjórnendasýn á íslensku, ensku, pólsku og serbnesku.
+
+MIKILVÆGT
+- Engin Prisma schema-breyting.
+- Engin migration.
+- Engin breyting á hráum GPS-gögnum.
+- Engin gæðasía á drift/stökkum ennþá.
+- Fyrsta markmiðið er að sjá kyrrstöðutilraun og raunverulega aksturstilraun í stjórnendasýn og bera þær saman.
+
+PRÓFUN
+1. Afrita skrár pakkans inn í C:\GLÖGGT með sömu möppuskipan.
+2. Keyra:
+   npx tsc --noEmit
+3. Opna stjórnendasýn Verks sem hefur GPS-gögn.
+4. Staðfesta að GPS-kortið birtist efst á /verk/[id].
+5. Smella „Opna stjórnendakort“.
+6. Staðfesta að /verk/[id]/kort sýni allar GPS-vinnulotur Verksins, líka lotu frá öðrum Mobile-aðgangi ef hún tilheyrir sama Verki.
+7. Bera saman kyrrstöðudrift og aksturstilraun.
+
+GIT
+Ekki nota git add .
+Stage-a aðeins:
+  git add "app/verk/[id]/page.tsx" \
+    "app/verk/[id]/kort/page.tsx" \
+    "components/work/WorkOrderTrackMap.tsx" \
+    "lib/i18n/work-gps.ts" \
+    "docs/verk/LESTU-GPS-STJORNENDASYNT-VERK-20260922.txt"
+
+NÆSTA SKREF EFTIR RAUNPRÓF
+- Staðfesta að báðar þekktu GPS-tilraunirnar sjáist rétt.
+- Síðan meta gæðasíu fyrir GPS-drift/stökk án þess að breyta hráum gögnum.
+- Eftir það þróast sama stjórnendakort áfram í fjölvéla/verkstjórasýn (t.d. 10+ vélar samtímis).

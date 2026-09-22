@@ -13,6 +13,7 @@ import { resourceTravelSpeedLimitsRoute } from "@/lib/work10/resources";
 import { projectWorkWindowWithBreaks, resolveWorkdayBreaks, type ProjectedBreak } from "@/lib/work10/workday-policy";
 import IcelandicDateInput from "@/components/ui/IcelandicDateInput";
 import IcelandicTimeInput from "@/components/ui/IcelandicTimeInput";
+import CompanyWorkTrackMap from "@/components/work/CompanyWorkTrackMap";
 
 type ActualLaborData = {
   id: string;
@@ -3776,7 +3777,13 @@ export default function Work10Dashboard({ data }: { data: Work10DashboardData })
                 <h2 className="text-xl font-bold text-slate-950">
                   {mainTab === "list" ? t.tabs.list : mainTab === "queue" ? t.tabs.queue : mainTab === "map" ? t.tabs.map : mainTab === "machines" ? t.tabs.machines : mainTab === "docs" ? t.tabs.docs : t.tabs.reports}
                 </h2>
-                {mainTab !== "list" && mainTab !== "machines" ? <p className="mt-2 max-w-3xl text-sm leading-6 text-slate-600">{t.tabPlaceholder}</p> : null}
+                {mainTab !== "list" && mainTab !== "machines" && mainTab !== "map" ? <p className="mt-2 max-w-3xl text-sm leading-6 text-slate-600">{t.tabPlaceholder}</p> : null}
+                {mainTab === "map" ? (
+                  <CompanyWorkTrackMap
+                    dateIso={isoDateFromDate(selectedDate)}
+                    language={data.language}
+                  />
+                ) : null}
                 {mainTab === "list" && (
                   <div className="mt-5 space-y-4">
                     <div className="rounded-xl border border-indigo-200 bg-indigo-50/50 p-4">

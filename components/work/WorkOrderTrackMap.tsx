@@ -10,23 +10,46 @@ type TrackPoint = {
   recordedAt: string;
 };
 
-type Props = {
+type Track = {
+  id: number;
+  label: string;
+  detail?: string | null;
   points: TrackPoint[];
-  startLabel: string;
-  endLabel: string;
+};
+
+type Props = {
+  tracks: Track[];
   zoomInLabel: string;
   zoomOutLabel: string;
   fitLabel: string;
+  startLabel: string;
+  endLabel: string;
 };
 
 const TILE_SIZE = 256;
 const MIN_ZOOM = 3;
 const MAX_ZOOM = 19;
-const DEFAULT_WIDTH = 340;
-const DEFAULT_HEIGHT = 360;
-const FIT_PADDING = 54;
+const DEFAULT_WIDTH = 760;
+const DEFAULT_HEIGHT = 520;
+const FIT_PADDING = 62;
 const DISPLAY_COORD_DECIMALS = 3;
 const TILE_TEMPLATE = process.env.NEXT_PUBLIC_GLOGGT_MAP_TILE_URL ?? "https://tile.openstreetmap.org/{z}/{x}/{y}.png";
+
+const TRACK_COLORS = [
+  "#2563eb",
+  "#16a34a",
+  "#dc2626",
+  "#9333ea",
+  "#ea580c",
+  "#0891b2",
+  "#4f46e5",
+  "#be123c",
+  "#65a30d",
+  "#0f766e",
+  "#a16207",
+  "#7c3aed",
+  "#0369a1",
+];
 
 function roundDisplayCoordinate(value: number) {
   const factor = 10 ** DISPLAY_COORD_DECIMALS;
@@ -55,20 +78,33 @@ function tileUrl(zoom: number, x: number, y: number) {
 
 function fitZoom(points: TrackPoint[], width: number, height: number) {
   if (points.length <= 1) return 17;
+
   for (let zoom = MAX_ZOOM; zoom >= MIN_ZOOM; zoom -= 1) {
     const world = points.map((point) => worldPoint(point.latitude, point.longitude, zoom));
     const xs = world.map((point) => point.x);
     const ys = world.map((point) => point.y);
     const spanX = Math.max(...xs) - Math.min(...xs);
     const spanY = Math.max(...ys) - Math.min(...ys);
-    if (spanX <= Math.max(1, width - FIT_PADDING * 2) && spanY <= Math.max(1, height - FIT_PADDING * 2)) {
+
+    if (
+      spanX <= Math.max(1, width - FIT_PADDING * 2) &&
+      spanY <= Math.max(1, height - FIT_PADDING * 2)
+    ) {
       return zoom;
     }
   }
+
   return MIN_ZOOM;
 }
 
-export default function WorkTrackMap({ points, startLabel, endLabel, zoomInLabel, zoomOutLabel, fitLabel }: Props) {
+export default function WorkOrderTrackMap({
+  tracks,
+  zoomInLabel,
+  zoomOutLabel,
+  fitLabel,
+  startLabel,
+  endLabel,
+}: Props) {
   const containerRef = useRef<HTMLDivElement | null>(null);
   const [size, setSize] = useState({ width: DEFAULT_WIDTH, height: DEFAULT_HEIGHT });
   const [zoomOffset, setZoomOffset] = useState(0);
@@ -82,10 +118,12 @@ export default function WorkTrackMap({ points, startLabel, endLabel, zoomInLabel
     if (!mounted) return;
     const element = containerRef.current;
     if (!element) return;
+
     const update = () => {
-      const width = Math.max(260, Math.round(element.getBoundingClientRect().width));
+      const width = Math.max(280, Math.round(element.getBoundingClientRect().width));
       setSize({ width, height: DEFAULT_HEIGHT });
     };
+
     update();
     const observer = new ResizeObserver(update);
     observer.observe(element);
@@ -93,29 +131,32 @@ export default function WorkTrackMap({ points, startLabel, endLabel, zoomInLabel
   }, [mounted]);
 
   const geometry = useMemo(() => {
-    if (points.length === 0) return null;
-    const baseZoom = fitZoom(points, size.width, size.height);
+    const visibleTracks = tracks.filter((track) => track.points.length > 0);
+    const allPoints = visibleTracks.flatMap((track) => track.points);
+    if (allPoints.length === 0) return null;
+
+    const baseZoom = fitZoom(allPoints, size.width, size.height);
     const zoom = Math.max(MIN_ZOOM, Math.min(MAX_ZOOM, baseZoom + zoomOffset));
-    const projected = points.map((point) => ({
-      ...point,
-      ...worldPoint(point.latitude, point.longitude, zoom),
-    }));
-    const minX = Math.min(...projected.map((point) => point.x));
-    const maxX = Math.max(...projected.map((point) => point.x));
-    const minY = Math.min(...projected.map((point) => point.y));
-    const maxY = Math.max(...projected.map((point) => point.y));
+    const projectedPoints = allPoints.map((point) => worldPoint(point.latitude, point.longitude, zoom));
+    const minX = Math.min(...projectedPoints.map((point) => point.x));
+    const maxX = Math.max(...projectedPoints.map((point) => point.x));
+    const minY = Math.min(...projectedPoints.map((point) => point.y));
+    const maxY = Math.max(...projectedPoints.map((point) => point.y));
     const centerX = (minX + maxX) / 2;
     const centerY = (minY + maxY) / 2;
     const left = centerX - size.width / 2;
     const top = centerY - size.height / 2;
+
     const tileMinX = Math.floor(left / TILE_SIZE) - 1;
     const tileMaxX = Math.floor((left + size.width) / TILE_SIZE) + 1;
     const tileMinY = Math.floor(top / TILE_SIZE) - 1;
     const tileMaxY = Math.floor((top + size.height) / TILE_SIZE) + 1;
     const tileCount = 2 ** zoom;
     const tiles: Array<{ key: string; url: string; left: number; top: number }> = [];
+
     for (let tileY = tileMinY; tileY <= tileMaxY; tileY += 1) {
       if (tileY < 0 || tileY >= tileCount) continue;
+
       for (let tileX = tileMinX; tileX <= tileMaxX; tileX += 1) {
         const wrappedX = ((tileX % tileCount) + tileCount) % tileCount;
         tiles.push({
@@ -126,22 +167,28 @@ export default function WorkTrackMap({ points, startLabel, endLabel, zoomInLabel
         });
       }
     }
-    const screenPoints = projected.map((point) => ({
-      ...point,
-      screenX: roundDisplayCoordinate(point.x - left),
-      screenY: roundDisplayCoordinate(point.y - top),
+
+    const projectedTracks = visibleTracks.map((track, index) => ({
+      ...track,
+      color: TRACK_COLORS[index % TRACK_COLORS.length],
+      points: track.points.map((point) => {
+        const projected = worldPoint(point.latitude, point.longitude, zoom);
+        return {
+          ...point,
+          screenX: roundDisplayCoordinate(projected.x - left),
+          screenY: roundDisplayCoordinate(projected.y - top),
+        };
+      }),
     }));
-    return { baseZoom, zoom, tiles, screenPoints };
-  }, [points, size, zoomOffset]);
+
+    return { tiles, tracks: projectedTracks };
+  }, [tracks, size, zoomOffset]);
 
   if (!mounted) {
     return <div className="overflow-hidden rounded-2xl border border-slate-200 bg-slate-100 shadow-sm" style={{ height: DEFAULT_HEIGHT }} aria-hidden="true" />;
   }
 
   if (!geometry) return null;
-  const first = geometry.screenPoints[0];
-  const last = geometry.screenPoints[geometry.screenPoints.length - 1];
-  const polyline = geometry.screenPoints.map((point) => `${point.screenX},${point.screenY}`).join(" ");
 
   return (
     <div className="overflow-hidden rounded-2xl border border-slate-200 bg-slate-100 shadow-sm">
@@ -156,21 +203,45 @@ export default function WorkTrackMap({ points, startLabel, endLabel, zoomInLabel
         ))}
 
         <svg
-          aria-label="GPS track"
+          aria-label="GPS tracks"
           className="pointer-events-none absolute inset-0 h-full w-full"
           viewBox={`0 0 ${size.width} ${size.height}`}
           preserveAspectRatio="none"
         >
-          {geometry.screenPoints.length > 1 ? (
-            <>
-              <polyline points={polyline} fill="none" stroke="white" strokeWidth="4.5" strokeLinecap="round" strokeLinejoin="round" opacity="0.45" />
-              <polyline points={polyline} fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" opacity="0.85" className="text-blue-600" />
-            </>
-          ) : null}
-          <circle cx={first.screenX} cy={first.screenY} r="9" fill="white" />
-          <circle cx={first.screenX} cy={first.screenY} r="6" className="fill-emerald-600" />
-          <circle cx={last.screenX} cy={last.screenY} r="9" fill="white" />
-          <circle cx={last.screenX} cy={last.screenY} r="6" className="fill-rose-600" />
+          {geometry.tracks.map((track) => {
+            const first = track.points[0];
+            const last = track.points[track.points.length - 1];
+            const polyline = track.points.map((point) => `${point.screenX},${point.screenY}`).join(" ");
+
+            return (
+              <g key={track.id}>
+                {track.points.length > 1 ? (
+                  <>
+                    <polyline
+                      points={polyline}
+                      fill="none"
+                      stroke="white"
+                      strokeWidth="4.5"
+                      strokeLinecap="round"
+                      strokeLinejoin="round"
+                      opacity="0.45"
+                    />
+                    <polyline
+                      points={polyline}
+                      fill="none"
+                      stroke={track.color}
+                      strokeWidth="2.5"
+                      strokeLinecap="round"
+                      strokeLinejoin="round"
+                      opacity="0.85"
+                    />
+                  </>
+                ) : null}
+                <circle cx={first.screenX} cy={first.screenY} r="7" fill="white" stroke={track.color} strokeWidth="3" />
+                <circle cx={last.screenX} cy={last.screenY} r="7" fill={track.color} stroke="white" strokeWidth="3" />
+              </g>
+            );
+          })}
         </svg>
 
         <div className="absolute right-3 top-3 grid gap-2">
@@ -205,9 +276,21 @@ export default function WorkTrackMap({ points, startLabel, endLabel, zoomInLabel
           © <a href="https://www.openstreetmap.org/copyright" target="_blank" rel="noreferrer" className="underline">OpenStreetMap</a> contributors
         </div>
       </div>
-      <div className="grid grid-cols-2 gap-3 border-t border-slate-200 bg-white p-3 text-xs text-slate-700">
-        <div className="flex items-center gap-2"><span className="h-3 w-3 rounded-full bg-emerald-600" />{startLabel}</div>
-        <div className="flex items-center justify-end gap-2"><span className="h-3 w-3 rounded-full bg-rose-600" />{endLabel}</div>
+
+      <div className="border-t border-slate-200 bg-white p-4">
+        <div className="flex flex-wrap gap-x-5 gap-y-3">
+          {geometry.tracks.map((track) => (
+            <div key={track.id} className="flex min-w-0 items-center gap-2 text-xs text-slate-700">
+              <span className="h-3 w-3 shrink-0 rounded-full" style={{ backgroundColor: track.color }} />
+              <span className="truncate font-semibold">{track.label}</span>
+              {track.detail ? <span className="truncate text-slate-500">· {track.detail}</span> : null}
+            </div>
+          ))}
+        </div>
+        <div className="mt-3 flex flex-wrap gap-4 border-t border-slate-100 pt-3 text-xs text-slate-500">
+          <span>{startLabel}: ○</span>
+          <span>{endLabel}: ●</span>
+        </div>
       </div>
     </div>
   );

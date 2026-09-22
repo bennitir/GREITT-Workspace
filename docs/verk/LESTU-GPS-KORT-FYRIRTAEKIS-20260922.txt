@@ -1,0 +1,55 @@
+GLÖGGT – Verk / GPS-kort stjórnanda – fyrirtækissýn
+Dagsetning: 22.09.2026
+
+MARKMIÐ
+- Virkja núverandi „Kort“ flipa í stjórnendasýn Verk.
+- Sýna allar GPS-vinnulotur fyrirtækisins fyrir valinn dag á einu korti.
+- Halda hverri vinnulotu aðskildri.
+- Sýna lotur sem hafa ekkert workOrderId sem „Ótengt Verki“.
+- Ekki breyta eða tengja hrá GPS-gögn sjálfkrafa.
+- Þynna GPS-línur bæði í Mobile og stjórnendasýn svo vegurinn sjáist undir leiðinni.
+
+BREYTTAR / NÝJAR SKRÁR
+- app/verk/Work10Dashboard.tsx
+- app/api/verk/gps-tracks/route.ts (ný)
+- components/work/CompanyWorkTrackMap.tsx (ný)
+- components/work/WorkTrackMap.tsx
+- components/work/WorkOrderTrackMap.tsx
+- lib/i18n/work-gps.ts
+
+ENGIN PRISMA BREYTING
+- Engin migration.
+- GPS-söfnun og WorkTrackSession/WorkTrackPoint eru óbreytt.
+
+FRAMSETNING LÍNU
+- Hvítur bakgrunnsstroka: 4.5 px, opacity 0.45.
+- Lituð GPS-lína: 2.5 px, opacity 0.85.
+- Sama regla notuð á Mobile-korti og stjórnendakorti.
+
+PRÓFUN
+1. Afþjappa yfir C:\GLÖGGT.
+2. Keyra: npx tsc --noEmit
+3. Endurræsa dev-server ef ný API-route finnst ekki strax.
+4. Opna Verk -> Kort.
+5. Valinn dagur efst á Verk-síðunni stýrir hvaða GPS-lotur eru sóttar.
+6. Fyrir 22.09.2026 ættu prófunargögnin að sýna:
+   - kyrrstöðulotu án workOrderId sem „Ótengt Verki“
+   - aksturslotu tengda „prufa gps“ (#6310)
+7. Staðfesta að línan sé nú nógu þunn til að vegur/akreinar sjáist betur undir henni.
+
+ATHUGUN
+Þetta er fyrsta fyrirtækissýn. Síur eftir starfsmanni, Verki, teymi, vél eða verktaka eru ekki settar inn í þessum pakka. Valinn dagur er fyrsta sían.
+
+## Hydration-lagfæring 22.09.2026
+
+React/Next.js hydration mismatch kom fram í SVG `polyline` á stjórnendakorti.
+Orsökin var að Mercator/SVG skjáhnit voru reiknuð bæði við server-render og í vafra og gátu orðið örlítið mismunandi sem strengir.
+
+Lagfært með því að:
+- teikna kortið fyrst eftir client mount,
+- láta ResizeObserver mæla raunverulega breidd eftir mount,
+- rúnna birtingarhnit í 3 aukastafi,
+- halda GPS-gögnum og söfnun óbreyttum.
+
+Sama vörn er notuð í `WorkOrderTrackMap` og Mobile `WorkTrackMap`.
+Leiðarlínan er áfram þynnri: 2,5 px aðallína með 4,5 px léttri hvítri undirstrikun.
