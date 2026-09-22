@@ -1,0 +1,11 @@
+GLÖGGT – Verkfæri og mælastaða – 22.09.2026
+
+Lítil fínstilling á Tækjalista:
+- TOOL birtist sem „Verkfæri“ í stað „Tæki / verkfæri“.
+- Verkfæri fær ekki mælireit sjálfkrafa við stofnun.
+- Fyrir verkfæri birtist valið „Verkfærið er með mæli“; aðeins þá birtist „Mælieining mælis“.
+- Eldri verkfæri með skráða mælastaða halda mælinum virkum og sögunni sýnilegri.
+- Mælastaðahluti verkfæraspjalds birtist aðeins ef mælir er virkur eða saga er þegar til.
+- Viðhald er aðskilið frá mælastaðahlutanum og helst sýnilegt fyrir verkfæri þó þau séu ekki með mæli.
+- Vinnuvélar og ökutæki halda áfram að styðja mælieiningu eins og áður.
+- Engin Prisma migration.

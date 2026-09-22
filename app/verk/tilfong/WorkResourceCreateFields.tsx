@@ -6,6 +6,7 @@ import { workResourceKindText, workResourceText } from "@/lib/i18n/work-resource
 import { WORK10_EQUIPMENT_KINDS, type Work10EquipmentKind } from "@/lib/work10/resources";
 import WorkEquipmentUnitFields from "./WorkEquipmentUnitFields";
 import WorkResourceMachineTravelFields from "./WorkResourceMachineTravelFields";
+import WorkResourceMeterFields from "./WorkResourceMeterFields";
 
 type Props = {
   language: string;
@@ -57,10 +58,7 @@ export default function WorkResourceCreateFields({ language }: Props) {
         <span>{t.saleRate}</span>
         <input name="saleRateIsk" inputMode="decimal" className="rounded-lg border px-3 py-2" />
       </label>
-      <label className="grid gap-1 text-sm font-medium text-slate-700">
-        <span>{t.meterUnit}</span>
-        <input name="meterUnit" maxLength={40} className="rounded-lg border px-3 py-2" placeholder="HOUR / KM" />
-      </label>
+      <WorkResourceMeterFields language={language} kind={kind} />
       {kind === "MACHINE" ? (
         <WorkResourceMachineTravelFields
           language={language}
