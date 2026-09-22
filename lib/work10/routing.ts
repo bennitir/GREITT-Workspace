@@ -2,7 +2,7 @@ import { prisma } from "@/lib/prisma";
 import { normalizeIcelandAddressSearch } from "@/lib/work10/iceland-address";
 
 const DEFAULT_ROUTING_BASE_URL = "https://valhalla1.openstreetmap.de";
-const ROUTE_SOURCE = "VALHALLA_OSM";
+const ROUTE_SOURCE = "API";
 const ROUTE_TIMEOUT_MS = 6000;
 
 type RouteLocation = {
