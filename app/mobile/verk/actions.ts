@@ -529,6 +529,7 @@ export async function startMobileDiaryEntry(formData: FormData) {
   if (!title) throw new Error(t.errors.diaryTitleRequired);
 
   const workKeyId = numberField(formData, "workKeyId");
+  const workResourceId = numberField(formData, "workResourceId");
   const note = textField(formData.get("note"), 2000);
   const locationText = textField(formData.get("locationText"), 240);
   const operationalLocationId = numberField(formData, "operationalLocationId");
@@ -552,6 +553,29 @@ export async function startMobileDiaryEntry(formData: FormData) {
     throw new Error(t.errors.invalidDiaryWorkKey);
   }
   const workKey = selectedWorkKey?.code ?? null;
+
+  const selectedWorkResource = workResourceId
+    ? await prisma.workResource.findFirst({
+        where: {
+          id: workResourceId,
+          companyId: actor.companyId,
+          isActive: true,
+          kind: { in: ["MACHINE", "VEHICLE", "TOOL"] },
+          status: { in: ["AVAILABLE", "IN_USE"] },
+        },
+        select: {
+          id: true,
+          kind: true,
+          code: true,
+          name: true,
+          travelMode: true,
+          planningTravelSpeedKmh: true,
+        },
+      })
+    : null;
+  if (workResourceId && !selectedWorkResource) {
+    throw new Error(t.errors.invalidDiaryResource);
+  }
 
   const destinationLocation: OperationalLocationSnapshot | null = operationalLocationId
     ? await prisma.operationalLocation.findFirst({
@@ -601,6 +625,20 @@ export async function startMobileDiaryEntry(formData: FormData) {
         estimatedTravelMinutes = route.defaultMinutes;
         estimatedTravelKm = route.distanceKm;
         travelEstimateSource = route.source;
+
+        const travelSpeed = selectedWorkResource?.planningTravelSpeedKmh ?? null;
+        const speedControlsTravel =
+          (selectedWorkResource?.travelMode === "SELF_PROPELLED" || selectedWorkResource?.travelMode === "ROAD") &&
+          travelSpeed !== null &&
+          travelSpeed > 0 &&
+          route.distanceKm > 0;
+        if (speedControlsTravel) {
+          const resourceMinimumMinutes = Math.ceil((route.distanceKm / travelSpeed) * 60);
+          if (resourceMinimumMinutes > estimatedTravelMinutes) {
+            estimatedTravelMinutes = resourceMinimumMinutes;
+            travelEstimateSource = "ROUTE_AND_RESOURCE_SPEED";
+          }
+        }
       }
     }
   }
@@ -647,6 +685,11 @@ export async function startMobileDiaryEntry(formData: FormData) {
         noteSourceLanguage: actor.language,
         workKey,
         workKeyId: selectedWorkKey?.id ?? null,
+        workResourceId: selectedWorkResource?.id ?? null,
+        workResourceCodeSnapshot: selectedWorkResource?.code ?? null,
+        workResourceNameSnapshot: selectedWorkResource?.name ?? null,
+        resourceTravelModeSnapshot: selectedWorkResource?.travelMode ?? null,
+        resourceTravelSpeedKmhSnapshot: selectedWorkResource?.planningTravelSpeedKmh ?? null,
         operationalLocationId,
         travelFromOperationalLocationId,
         travelFromLabelSnapshot,
@@ -679,6 +722,11 @@ export async function startMobileDiaryEntry(formData: FormData) {
           title,
           workKey,
           workKeyId: selectedWorkKey?.id ?? null,
+        workResourceId: selectedWorkResource?.id ?? null,
+        workResourceCodeSnapshot: selectedWorkResource?.code ?? null,
+        workResourceNameSnapshot: selectedWorkResource?.name ?? null,
+        resourceTravelModeSnapshot: selectedWorkResource?.travelMode ?? null,
+        resourceTravelSpeedKmhSnapshot: selectedWorkResource?.planningTravelSpeedKmh ?? null,
           operationalLocationId,
           travelFromOperationalLocationId,
           travelFromLabelSnapshot,

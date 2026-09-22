@@ -1,0 +1,29 @@
+GLÖGGT – Mobile Dagbók: aðaltæki / vinnuvél
+Dagsetning: 22.09.2026
+
+Markmið
+- Sjálfstæð Dagbókarfærsla getur valið eitt aðaltæki/vinnuvél.
+- Valið tæki er varðveitt á færslunni án þess að búa til gervi-Verk eða WorkPart.
+- Kóði, heiti, ferðamáti og ferðahraði eru snapshot-aðir við upphaf færslu.
+- Ef þekkt leið er milli starfsstöðvar og verkstaðar og tækið er ROAD eða SELF_PROPELLED,
+  getur skráður ferðahraði sett neðri mörk á áætlaðan ferðatíma.
+- TRANSPORTED tæki stýrir ekki ferðatíma sjálft.
+- Raunakstur starfsmanns helst aðskilinn frá áætluðum ferðatíma.
+
+Mobile
+- Nýr reitur: Tæki / vinnuvél.
+- Sýnir virkar MACHINE, VEHICLE og TOOL auðlindir sem eru AVAILABLE eða IN_USE.
+- Valfrjálst; „Ekkert tæki“ er leyfilegt.
+- Valda tækið sést á virkri færslu og í Dagbókarsögu.
+
+Gagnalíkan
+EmployeeWorkDiaryEntry fær:
+- workResourceId
+- workResourceCodeSnapshot
+- workResourceNameSnapshot
+- resourceTravelModeSnapshot
+- resourceTravelSpeedKmhSnapshot
+
+Meginregla
+Dagbók er áfram sjálfstætt sannleikslag. Val á aðaltæki merkir hvaða tæki fylgir vinnunni/ferðinni,
+en býr ekki sjálfkrafa til WorkPartUsageFact, reikning eða bókhaldsfærslu.

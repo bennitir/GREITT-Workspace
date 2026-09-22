@@ -1899,6 +1899,7 @@ model WorkResource {
   meterReadings WorkResourceMeterReading[]
   maintenanceKeys WorkResourceMaintenanceKey[]
   maintenanceLogs WorkResourceMaintenanceLog[]
+  diaryEntries EmployeeWorkDiaryEntry[]
 
   @@unique([companyId, code])
   @@index([companyId, kind, isActive])
@@ -2072,6 +2073,14 @@ model EmployeeWorkDiaryEntry {
   workKey             String?
   workKeyId           Int?
 
+  // Aðaltæki/vinnuvél sem fylgir sjálfstæðri Dagbókarfærslu.
+  // Snapshot-reitir varðveita sögulega merkingu og ferðahraða þó tækinu sé breytt síðar.
+  workResourceId                 Int?
+  workResourceCodeSnapshot       String?
+  workResourceNameSnapshot       String?
+  resourceTravelModeSnapshot     String?
+  resourceTravelSpeedKmhSnapshot Float?
+
   operationalLocationId Int?
   // Upphafsstaður ferðar er starfsstöðin sem gilti þegar Dagbókarfærsla hófst.
   // operationalLocationId er áfangastaður/verkstaður. Textasnapshot varðveitir
@@ -2103,6 +2112,7 @@ model EmployeeWorkDiaryEntry {
   operationalLocation OperationalLocation? @relation("EmployeeWorkDiaryLocation", fields: [operationalLocationId], references: [id], onDelete: SetNull)
   travelFromOperationalLocation OperationalLocation? @relation("EmployeeWorkDiaryTravelFrom", fields: [travelFromOperationalLocationId], references: [id], onDelete: SetNull)
   workKeyRecord       WorkKey?             @relation(fields: [workKeyId], references: [id], onDelete: SetNull)
+  workResource        WorkResource?        @relation(fields: [workResourceId], references: [id], onDelete: SetNull)
   createdBy           User?                @relation("EmployeeWorkDiaryEntryCreatedBy", fields: [createdById], references: [id], onDelete: SetNull)
   voidedBy            User?                @relation("EmployeeWorkDiaryEntryVoidedBy", fields: [voidedById], references: [id], onDelete: SetNull)
 
@@ -2112,6 +2122,7 @@ model EmployeeWorkDiaryEntry {
   @@index([operationalLocationId])
   @@index([travelFromOperationalLocationId])
   @@index([workKeyId])
+  @@index([workResourceId])
   @@index([source])
 }
 

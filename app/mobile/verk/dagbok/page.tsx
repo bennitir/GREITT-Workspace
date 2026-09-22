@@ -5,6 +5,7 @@ import OperationalLocationAutocomplete, { type LocationOption } from "@/componen
 
 import { workMobileText } from "@/lib/i18n/work-mobile";
 import { workKeyText } from "@/lib/i18n/work-keys";
+import { workResourceKindText, workResourceTravelModeText } from "@/lib/i18n/work-resources";
 import { prisma } from "@/lib/prisma";
 import { getMobileWorkActor } from "@/lib/work10/mobile-access";
 import { operationalLocationAddress, operationalLocationLabel } from "@/lib/work10/location-format";
@@ -34,6 +35,11 @@ function displayTime(value: Date | null, language: string) {
   }).format(value);
 }
 
+function speedUnit(language: string) {
+  if (language === "is") return "km/klst.";
+  return "km/h";
+}
+
 function formatMinutes(total: number, language: string) {
   const safe = Math.max(0, Math.round(total));
   const hours = Math.floor(safe / 60);
@@ -61,6 +67,44 @@ function travelSummary(minutes: number | null, km: number | null, language: stri
   return parts.join(" · ");
 }
 
+function resourceSummary(resource: {
+  code: string;
+  name: string;
+  kind: string;
+  travelMode: string;
+  planningTravelSpeedKmh: number | null;
+}, language: string) {
+  const parts = [
+    `${resource.code} · ${resource.name}`,
+    workResourceKindText(resource.kind, language),
+  ];
+  if (resource.travelMode !== "NONE") {
+    parts.push(workResourceTravelModeText(resource.travelMode, language));
+  }
+  if (resource.planningTravelSpeedKmh !== null) {
+    parts.push(`${new Intl.NumberFormat(localeFor(language), { maximumFractionDigits: 1 }).format(resource.planningTravelSpeedKmh)} ${speedUnit(language)}`);
+  }
+  return parts.join(" · ");
+}
+
+function diaryResourceSummary(entry: {
+  workResourceCodeSnapshot: string | null;
+  workResourceNameSnapshot: string | null;
+  resourceTravelModeSnapshot: string | null;
+  resourceTravelSpeedKmhSnapshot: number | null;
+  workResource: { code: string; name: string; travelMode: string; planningTravelSpeedKmh: number | null } | null;
+}, language: string) {
+  const code = entry.workResourceCodeSnapshot ?? entry.workResource?.code ?? null;
+  const name = entry.workResourceNameSnapshot ?? entry.workResource?.name ?? null;
+  if (!code && !name) return null;
+  const parts = [[code, name].filter(Boolean).join(" · ")];
+  const mode = entry.resourceTravelModeSnapshot ?? entry.workResource?.travelMode ?? null;
+  const speed = entry.resourceTravelSpeedKmhSnapshot ?? entry.workResource?.planningTravelSpeedKmh ?? null;
+  if (mode && mode !== "NONE") parts.push(workResourceTravelModeText(mode, language));
+  if (speed !== null) parts.push(`${new Intl.NumberFormat(localeFor(language), { maximumFractionDigits: 1 }).format(speed)} ${speedUnit(language)}`);
+  return parts.join(" · ");
+}
+
 export default async function MobileWorkDiaryPage() {
   const actor = await getMobileWorkActor();
   const t = workMobileText(actor.language);
@@ -84,7 +128,7 @@ export default async function MobileWorkDiaryPage() {
   const now = new Date();
   const today = workDateFromNow(now);
 
-  const [locations, workKeys, entries, activeWork, company] = await Promise.all([
+  const [locations, workKeys, workResources, entries, activeWork, company] = await Promise.all([
     prisma.operationalLocation.findMany({
       where: { companyId: actor.companyId, isActive: true },
       select: { id: true, code: true, name: true, address: true, postalCode: true, city: true },
@@ -95,6 +139,23 @@ export default async function MobileWorkDiaryPage() {
       select: { id: true, code: true, name: true },
       orderBy: [{ code: "asc" }],
     }),
+    prisma.workResource.findMany({
+      where: {
+        companyId: actor.companyId,
+        isActive: true,
+        kind: { in: ["MACHINE", "VEHICLE", "TOOL"] },
+        status: { in: ["AVAILABLE", "IN_USE"] },
+      },
+      select: {
+        id: true,
+        code: true,
+        name: true,
+        kind: true,
+        travelMode: true,
+        planningTravelSpeedKmh: true,
+      },
+      orderBy: [{ kind: "asc" }, { code: "asc" }],
+    }),
     prisma.employeeWorkDiaryEntry.findMany({
       where: {
         companyId: actor.companyId,
@@ -104,6 +165,7 @@ export default async function MobileWorkDiaryPage() {
       include: {
         operationalLocation: { select: { id: true, code: true, name: true } },
         travelFromOperationalLocation: { select: { id: true, code: true, name: true } },
+        workResource: { select: { id: true, code: true, name: true, travelMode: true, planningTravelSpeedKmh: true } },
       },
       orderBy: { startedAt: "desc" },
       take: 30,
@@ -192,6 +254,7 @@ export default async function MobileWorkDiaryPage() {
             <h2 className="mt-1 text-xl font-bold text-emerald-950">{activeEntry.title}</h2>
             <p className="mt-1 text-sm text-emerald-900">{t.diaryStarted}: {displayTime(activeEntry.startedAt, actor.language)}</p>
             {activeEntry.workKey ? <p className="mt-2 text-sm text-emerald-900">{t.diaryWorkKey}: {activeEntry.workKey}</p> : null}
+            {diaryResourceSummary(activeEntry, actor.language) ? <p className="mt-1 text-sm text-emerald-900">{t.diaryEquipment}: {diaryResourceSummary(activeEntry, actor.language)}</p> : null}
             {activeEntry.travelFromLabelSnapshot || activeEntry.travelFromOperationalLocation ? (
               <p className="mt-1 text-sm text-emerald-900">{t.diaryTravelFrom}: {activeEntry.travelFromLabelSnapshot ?? activeEntry.travelFromOperationalLocation?.name}</p>
             ) : null}
@@ -235,6 +298,16 @@ export default async function MobileWorkDiaryPage() {
                   <option value="">{workKeyT.selectNone}</option>
                   {workKeys.map((key) => <option key={key.id} value={key.id}>{key.code}{key.name !== key.code ? ` · ${key.name}` : ""}</option>)}
                 </select>
+              </label>
+              <label className="grid gap-1 text-sm font-semibold text-slate-700">
+                <span>{t.diaryEquipment}</span>
+                <select name="workResourceId" defaultValue="" disabled={Boolean(activeWork)} className="rounded-xl border border-slate-300 bg-white px-3 py-3 text-base disabled:bg-slate-100">
+                  <option value="">{t.diaryEquipmentNone}</option>
+                  {workResources.map((resource) => (
+                    <option key={resource.id} value={resource.id}>{resourceSummary(resource, actor.language)}</option>
+                  ))}
+                </select>
+                <span className="text-xs font-normal leading-5 text-slate-500">{t.diaryEquipmentHelp}</span>
               </label>
               <OperationalLocationAutocomplete
                 label={t.diaryLocation}
@@ -287,6 +360,7 @@ export default async function MobileWorkDiaryPage() {
                       <span className="shrink-0 rounded-full bg-slate-100 px-2.5 py-1 text-xs font-bold text-slate-700">{formatMinutes(duration, actor.language)}</span>
                     </div>
                     {entry.workKey ? <p className="mt-2 text-sm text-slate-700">{t.diaryWorkKey}: {entry.workKey}</p> : null}
+                    {diaryResourceSummary(entry, actor.language) ? <p className="mt-1 text-sm text-slate-700">{t.diaryEquipment}: {diaryResourceSummary(entry, actor.language)}</p> : null}
                     {entry.travelFromLabelSnapshot || entry.travelFromOperationalLocation ? (
                       <p className="mt-1 text-sm text-slate-700">{t.diaryTravelFrom}: {entry.travelFromLabelSnapshot ?? entry.travelFromOperationalLocation?.name}</p>
                     ) : null}
