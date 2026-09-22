@@ -15,6 +15,7 @@ import {
   work10StatusText,
   work10UnitText,
 } from "@/lib/i18n/work10";
+import { workGpsText } from "@/lib/i18n/work-gps";
 import { workMobileText } from "@/lib/i18n/work-mobile";
 import { workResourceOperationsText } from "@/lib/i18n/work-resource-operations";
 import { prisma } from "@/lib/prisma";
@@ -64,6 +65,7 @@ export default async function MobileWorkDetailPage({ params }: Props) {
 
   const actor = await getMobileWorkActor();
   const t = workMobileText(actor.language);
+  const gps = workGpsText(actor.language);
   const ops = workResourceOperationsText(actor.language);
   const moduleSettings = await getCompanyModuleSettings(actor.companyId);
   const inventoryEnabled = isCompanyModuleEnabled("birgdir", moduleSettings);
@@ -572,6 +574,14 @@ export default async function MobileWorkDetailPage({ params }: Props) {
                                 ].filter(Boolean);
                                 return parts.length > 0 ? <div className="mt-1 font-semibold text-blue-800">{parts.join(" · ")}</div> : null;
                               })()}
+                              {fact.workTrackSession && fact.workTrackSession.pointCount > 0 ? (
+                                <Link
+                                  href={`/mobile/verk/${work.id}/vinna/${fact.id}/kort`}
+                                  className="mt-2 flex min-h-10 items-center justify-center rounded-lg border border-blue-200 bg-blue-50 px-3 py-2 text-sm font-bold text-blue-800"
+                                >
+                                  {gps.openMap} · {fact.workTrackSession.pointCount} {gps.points}
+                                </Link>
+                              ) : null}
                             </div>
                           ))}
                         </div>

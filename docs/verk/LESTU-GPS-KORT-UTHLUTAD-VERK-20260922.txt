@@ -1,0 +1,19 @@
+GLÖGGT – GPS-kort fyrir úthlutað Verk
+Dagsetning: 22.09.2026
+
+Markmið
+------
+Sama WorkTrackSession/WorkTrackPoint grunnur er notaður fyrir bæði sjálfstæða Dagbók og venjulegt úthlutað Verk. Fyrsta GPS-kortið var aðeins tengt Dagbókarfærslum. Þessi viðbót gerir starfsmanni kleift að opna sitt eigið GPS-track af WorkPartLaborFact inni á venjulegu Verki.
+
+Hegðun
+------
+- Í „Mín saga“ á Verkþætti birtist „Sjá GPS-kort“ þegar vinnufærsla á WorkTrackSession með a.m.k. einum punkti.
+- Tengillinn vísar á /mobile/verk/[workOrderId]/vinna/[laborFactId]/kort.
+- Server staðfestir companyId, employeeId, workOrderId og að færslan sé ekki ógild áður en punktar eru sýndir.
+- Kortið notar sama WorkTrackMap og Dagbókarkortið.
+- Sýnt er heiti Verks, Verkþáttur, punktatalning, track-vegalengd, upphaf/lok, verknúmer, verklykill og staður þegar gögn eru til.
+- Engin Prisma migration er nauðsynleg.
+
+Persónuvernd / aðgangur
+-----------------------
+Þessi Mobile-sýn sýnir aðeins GPS-vinnulotu núverandi starfsmanns innan virks fyrirtækis. Hún bætir ekki við stjórnendasýn eða almennri staðsetningarsýn.
