@@ -2,11 +2,11 @@ import Link from "next/link";
 
 import { getCompanyAccess, getEffectiveUser } from "@/lib/core/access-control";
 import { requireCompanyModule } from "@/lib/core/require-company-module";
-import { workResourceKindText, workResourceStatusText, workResourceText } from "@/lib/i18n/work-resources";
+import { workResourceKindText, workResourceStatusText, workResourceText, workResourceTravelModeText } from "@/lib/i18n/work-resources";
 import { workResourceOperationsText } from "@/lib/i18n/work-resource-operations";
 import { work10FormatCurrencyIsk, work10UnitText } from "@/lib/i18n/work10";
 import { prisma } from "@/lib/prisma";
-import { WORK10_EQUIPMENT_KINDS, WORK10_RESOURCE_STATUSES } from "@/lib/work10/resources";
+import { WORK10_EQUIPMENT_KINDS, WORK10_RESOURCE_STATUSES, WORK10_RESOURCE_TRAVEL_MODES } from "@/lib/work10/resources";
 import { deriveWorkMaintenanceState } from "@/lib/work10/maintenance";
 import { workResourceQrDataUrl } from "@/lib/work10/qr";
 import { signedWorkResourceMediaUrl } from "@/lib/work10/resource-media";
@@ -140,6 +140,18 @@ export default async function WorkResourcesPage({ searchParams }: WorkResourcesP
               <span>{t.meterUnit}</span>
               <input name="meterUnit" maxLength={40} className="rounded-lg border px-3 py-2" placeholder="HOUR / KM" />
             </label>
+            <label className="grid gap-1 text-sm font-medium text-slate-700">
+              <span>{t.travelMode}</span>
+              <select name="travelMode" defaultValue="" className="rounded-lg border bg-white px-3 py-2">
+                <option value="">{t.travelModeAuto}</option>
+                {WORK10_RESOURCE_TRAVEL_MODES.map((mode) => <option key={mode} value={mode}>{workResourceTravelModeText(mode, language)}</option>)}
+              </select>
+            </label>
+            <label className="grid gap-1 text-sm font-medium text-slate-700">
+              <span>{t.planningTravelSpeed}</span>
+              <input name="planningTravelSpeedKmh" inputMode="decimal" className="rounded-lg border px-3 py-2" placeholder="25" />
+            </label>
+            <p className="text-xs leading-5 text-slate-500 md:col-span-2 xl:col-span-4">{t.planningTravelSpeedHelp}</p>
             <div className="flex items-end">
               <button className="rounded-lg bg-blue-600 px-4 py-2 font-semibold text-white hover:bg-blue-700" type="submit">{t.create}</button>
             </div>
@@ -177,6 +189,13 @@ export default async function WorkResourcesPage({ searchParams }: WorkResourcesP
                     <div className="rounded-lg bg-slate-50 p-2"><div>{t.activeAssignments}</div><div className="mt-1 font-semibold text-slate-900">{resource.assignments.length}</div></div>
                     <div className="rounded-lg bg-slate-50 p-2"><div>{t.costRate}</div><div className="mt-1 font-semibold text-slate-900">{resource.costRateIsk !== null ? work10FormatCurrencyIsk(resource.costRateIsk, language) : "—"}</div></div>
                     <div className="rounded-lg bg-slate-50 p-2"><div>{t.saleRate}</div><div className="mt-1 font-semibold text-slate-900">{resource.saleRateIsk !== null ? work10FormatCurrencyIsk(resource.saleRateIsk, language) : "—"}</div></div>
+                  </div>
+                  <div className="mt-2 rounded-lg bg-slate-50 p-2 text-xs text-slate-600">
+                    <div>{t.travelMode}</div>
+                    <div className="mt-1 font-semibold text-slate-900">
+                      {workResourceTravelModeText(resource.travelMode, language)}
+                      {resource.planningTravelSpeedKmh !== null ? ` · ${resource.planningTravelSpeedKmh} ${t.speedUnit}` : ""}
+                    </div>
                   </div>
 
                   {access.canWrite && (
@@ -217,6 +236,17 @@ export default async function WorkResourcesPage({ searchParams }: WorkResourcesP
                           <span>{t.meterUnit}</span>
                           <input name="meterUnit" maxLength={40} defaultValue={resource.meterUnit ?? ""} className="rounded-lg border bg-white px-3 py-2 text-sm" />
                         </label>
+                        <label className="grid gap-1 text-xs font-medium text-slate-600">
+                          <span>{t.travelMode}</span>
+                          <select name="travelMode" defaultValue={resource.travelMode} className="rounded-lg border bg-white px-3 py-2 text-sm">
+                            {WORK10_RESOURCE_TRAVEL_MODES.map((mode) => <option key={mode} value={mode}>{workResourceTravelModeText(mode, language)}</option>)}
+                          </select>
+                        </label>
+                        <label className="grid gap-1 text-xs font-medium text-slate-600">
+                          <span>{t.planningTravelSpeed}</span>
+                          <input name="planningTravelSpeedKmh" inputMode="decimal" defaultValue={resource.planningTravelSpeedKmh ?? ""} className="rounded-lg border bg-white px-3 py-2 text-sm" />
+                        </label>
+                        <p className="text-xs leading-5 text-slate-500 sm:col-span-2">{t.planningTravelSpeedHelp}</p>
                         <p className="text-xs leading-5 text-slate-500 sm:col-span-2">{t.historicalCostHelp}</p>
                         <button type="submit" className="rounded-lg bg-slate-900 px-3 py-2 text-sm font-semibold text-white hover:bg-slate-800 sm:col-span-2">{t.saveDetails}</button>
                       </form>

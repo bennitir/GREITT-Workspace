@@ -681,6 +681,13 @@ activities?: {
   registeredAtRsk: boolean;
   isActive: boolean;
 }[];
+
+defaultWorkLocation?: {
+  name: string;
+  address: string;
+  postalCode: string;
+  city: string;
+};
   }
 ) {
   await requireEffectiveAdmin();
@@ -734,15 +741,93 @@ activities?: {
 
   const {
   activities,
+  defaultWorkLocation,
   ...companyData
 } = data;
 
 await prisma.$transaction(async (tx) => {
+  let defaultOperationalLocationId = currentCompany.defaultOperationalLocationId;
+
+  if (defaultWorkLocation) {
+    const baseName = defaultWorkLocation.name.trim();
+    const baseAddress = defaultWorkLocation.address.trim();
+    const basePostalCode = defaultWorkLocation.postalCode.trim();
+    const baseCity = defaultWorkLocation.city.trim();
+    const hasBaseData = Boolean(baseName || baseAddress || basePostalCode || baseCity);
+
+    if (hasBaseData) {
+      if (baseName.length > 160 || baseAddress.length > 240 || basePostalCode.length > 20 || baseCity.length > 120) {
+        throw new Error("Upplýsingar um sjálfgefna starfsstöð eru of langar.");
+      }
+
+      let baseLocation = defaultOperationalLocationId
+        ? await tx.operationalLocation.findFirst({
+            where: { id: defaultOperationalLocationId, companyId: id },
+            select: { id: true, code: true },
+          })
+        : null;
+
+      if (!baseLocation) {
+        baseLocation = await tx.operationalLocation.findFirst({
+          where: { companyId: id, locationKind: "BASE" },
+          select: { id: true, code: true },
+          orderBy: { id: "asc" },
+        });
+      }
+
+      if (baseLocation) {
+        await tx.operationalLocation.update({
+          where: { id: baseLocation.id },
+          data: {
+            name: baseName || currentCompany.name,
+            address: baseAddress || null,
+            postalCode: basePostalCode || null,
+            city: baseCity || null,
+            locationKind: "BASE",
+            isActive: true,
+          },
+        });
+        defaultOperationalLocationId = baseLocation.id;
+      } else {
+        const usedCodes = new Set(
+          (await tx.operationalLocation.findMany({
+            where: { companyId: id },
+            select: { code: true },
+          })).map((row) => row.code.toUpperCase()),
+        );
+        let code = "BASE";
+        let suffix = 2;
+        while (usedCodes.has(code)) {
+          code = `BASE-${suffix}`;
+          suffix += 1;
+        }
+
+        const createdBase = await tx.operationalLocation.create({
+          data: {
+            companyId: id,
+            code,
+            name: baseName || currentCompany.name,
+            address: baseAddress || null,
+            postalCode: basePostalCode || null,
+            city: baseCity || null,
+            locationKind: "BASE",
+            isActive: true,
+          },
+          select: { id: true },
+        });
+        defaultOperationalLocationId = createdBase.id;
+      }
+    }
+  }
+
   await tx.company.update({
     where: {
       id,
     },
-    data: companyData,
+    data: {
+      ...companyData,
+      defaultOperationalLocationId,
+    },
   });
 
   if (activities) {
@@ -870,6 +955,10 @@ await prisma.$transaction(async (tx) => {
   revalidatePath(
     `/fyrirtaeki/${id}/breyta`
   );
+  revalidatePath("/verk");
+  revalidatePath("/verk/nytt");
+  revalidatePath("/mobile/verk");
+  revalidatePath("/mobile/verk/dagbok");
   
 }
 

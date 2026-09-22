@@ -21,6 +21,10 @@ model Company {
   isActive          Boolean   @default(true)
   closedAt          DateTime?
 
+  // Sjálfgefin starfsstöð / rekstrargrunnur fyrirtækisins fyrir Verk og Mobile.
+  // Starfsmaður eða deild getur yfirskrifað þennan grunn með eigin rekstrarstað.
+  defaultOperationalLocationId Int?
+
   // VSK – stofngrunnur
   vatNumber           String?
   vatRegistered       Boolean?
@@ -90,7 +94,8 @@ model Company {
   workPartUsageFacts WorkPartUsageFact[]
   workEvidencePhotos WorkEvidencePhoto[]
   workResources WorkResource[]
-  operationalLocations OperationalLocation[]
+  operationalLocations OperationalLocation[] @relation("CompanyOperationalLocations")
+  defaultOperationalLocation OperationalLocation? @relation("CompanyDefaultOperationalLocation", fields: [defaultOperationalLocationId], references: [id], onDelete: SetNull)
   operationalTravelRoutes OperationalTravelRoute[]
   operationalTravelTimeWindows OperationalTravelTimeWindow[]
   workTravelPlanLegs WorkTravelPlanLeg[]
@@ -126,6 +131,8 @@ model Company {
   tasks CompanyTask[]
   userMobileFeatures UserCompanyMobileFeature[]
   notifications UserNotification[]
+
+  @@index([defaultOperationalLocationId])
 }
 
 
@@ -873,11 +880,13 @@ model OperationalLocation {
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
-  company Company @relation(fields: [companyId], references: [id], onDelete: Cascade)
+  company Company @relation("CompanyOperationalLocations", fields: [companyId], references: [id], onDelete: Cascade)
+  defaultForCompanies Company[] @relation("CompanyDefaultOperationalLocation")
   baseEmployees Employee[] @relation("EmployeeBaseOperationalLocation")
   departments CompanyDepartment[] @relation("DepartmentDefaultOperationalLocation")
   workOrders WorkOrder[] @relation("WorkOrderOperationalLocation")
-  workDiaryEntries EmployeeWorkDiaryEntry[]
+  workDiaryEntries EmployeeWorkDiaryEntry[] @relation("EmployeeWorkDiaryLocation")
+  travelFromDiaryEntries EmployeeWorkDiaryEntry[] @relation("EmployeeWorkDiaryTravelFrom")
   outgoingRoutes OperationalTravelRoute[] @relation("OperationalTravelRouteFrom")
   incomingRoutes OperationalTravelRoute[] @relation("OperationalTravelRouteTo")
   outgoingPlanLegs WorkTravelPlanLeg[] @relation("WorkTravelPlanLegFrom")
@@ -1866,6 +1875,12 @@ model WorkResource {
 
   meterUnit  String?
   meterValue Float?
+
+  // Ferðahegðun er notuð við Dagsmönnun. SELF_PROPELLED merkir að tækið
+  // fer sjálft á milli staða og getur því sett neðri mörk á ferðatíma.
+  travelMode             String @default("NONE") // NONE | ROAD | SELF_PROPELLED | TRANSPORTED
+  planningTravelSpeedKmh Float?
+
   qrToken    String? @unique
 
   isActive Boolean @default(true)
@@ -2058,9 +2073,21 @@ model EmployeeWorkDiaryEntry {
   workKeyId           Int?
 
   operationalLocationId Int?
-  locationText          String?
-  travelMinutes         Int?
-  travelKm              Float?
+  // Upphafsstaður ferðar er starfsstöðin sem gilti þegar Dagbókarfærsla hófst.
+  // operationalLocationId er áfangastaður/verkstaður. Textasnapshot varðveitir
+  // söguna þó heiti eða heimilisfang staðsetningar breytist síðar.
+  travelFromOperationalLocationId Int?
+  travelFromLabelSnapshot         String?
+  travelToLabelSnapshot           String?
+
+  // Áætlun og raunskráning eru aðskildar. estimated* kemur úr þekktri leið;
+  // travelMinutes/travelKm er það sem starfsmaður skráir sem raunverulega ferð.
+  estimatedTravelMinutes Int?
+  estimatedTravelKm      Float?
+  travelEstimateSource   String?
+  locationText           String?
+  travelMinutes          Int?
+  travelKm               Float?
 
   source String @default("MOBILE") // MOBILE | MANUAL | IMPORTED | API
 
@@ -2073,7 +2100,8 @@ model EmployeeWorkDiaryEntry {
 
   company             Company              @relation(fields: [companyId], references: [id], onDelete: Cascade)
   employee            Employee             @relation(fields: [employeeId], references: [id], onDelete: Cascade)
-  operationalLocation OperationalLocation? @relation(fields: [operationalLocationId], references: [id], onDelete: SetNull)
+  operationalLocation OperationalLocation? @relation("EmployeeWorkDiaryLocation", fields: [operationalLocationId], references: [id], onDelete: SetNull)
+  travelFromOperationalLocation OperationalLocation? @relation("EmployeeWorkDiaryTravelFrom", fields: [travelFromOperationalLocationId], references: [id], onDelete: SetNull)
   workKeyRecord       WorkKey?             @relation(fields: [workKeyId], references: [id], onDelete: SetNull)
   createdBy           User?                @relation("EmployeeWorkDiaryEntryCreatedBy", fields: [createdById], references: [id], onDelete: SetNull)
   voidedBy            User?                @relation("EmployeeWorkDiaryEntryVoidedBy", fields: [voidedById], references: [id], onDelete: SetNull)
@@ -2082,6 +2110,7 @@ model EmployeeWorkDiaryEntry {
   @@index([employeeId, workDate])
   @@index([companyId, employeeId, endedAt])
   @@index([operationalLocationId])
+  @@index([travelFromOperationalLocationId])
   @@index([workKeyId])
   @@index([source])
 }

@@ -53,6 +53,24 @@ function workDateFromNow(now: Date) {
   return new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate(), 12));
 }
 
+type OperationalLocationSnapshot = {
+  id: number;
+  code: string;
+  name: string;
+  address: string | null;
+  postalCode: string | null;
+  city: string | null;
+};
+
+function operationalLocationSnapshot(location: OperationalLocationSnapshot | null | undefined) {
+  if (!location) return null;
+  return [
+    location.name,
+    location.address,
+    [location.postalCode, location.city].filter(Boolean).join(" "),
+  ].filter(Boolean).join(" · ");
+}
+
 function effectivePhotoRequirement(partRequirement: string, workRequirement: string) {
   return partRequirement === "INHERIT" ? workRequirement : partRequirement;
 }
@@ -538,13 +556,62 @@ export async function startMobileDiaryEntry(formData: FormData) {
   }
   const workKey = selectedWorkKey?.code ?? null;
 
-  if (operationalLocationId) {
-    const location = await prisma.operationalLocation.findFirst({
-      where: { id: operationalLocationId, companyId: actor.companyId, isActive: true },
-      select: { id: true },
-    });
-    if (!location) throw new Error(t.errors.invalidDiaryLocation);
+  const destinationLocation: OperationalLocationSnapshot | null = operationalLocationId
+    ? await prisma.operationalLocation.findFirst({
+        where: { id: operationalLocationId, companyId: actor.companyId, isActive: true },
+        select: { id: true, code: true, name: true, address: true, postalCode: true, city: true },
+      })
+    : null;
+  if (operationalLocationId && !destinationLocation) {
+    throw new Error(t.errors.invalidDiaryLocation);
   }
+
+  const company = await prisma.company.findUnique({
+    where: { id: actor.companyId },
+    select: {
+      defaultOperationalLocation: {
+        select: { id: true, code: true, name: true, address: true, postalCode: true, city: true },
+      },
+    },
+  });
+  const travelFromLocation: OperationalLocationSnapshot | null =
+    actor.employee.baseOperationalLocation ??
+    actor.employee.departmentUnit?.defaultOperationalLocation ??
+    company?.defaultOperationalLocation ??
+    null;
+  const travelFromOperationalLocationId = travelFromLocation?.id ?? null;
+
+  let estimatedTravelMinutes: number | null = null;
+  let estimatedTravelKm: number | null = null;
+  let travelEstimateSource: string | null = null;
+
+  if (destinationLocation && travelFromLocation) {
+    if (destinationLocation.id === travelFromLocation.id) {
+      estimatedTravelMinutes = 0;
+      estimatedTravelKm = 0;
+      travelEstimateSource = "SAME_LOCATION";
+    } else {
+      const route = await prisma.operationalTravelRoute.findFirst({
+        where: {
+          companyId: actor.companyId,
+          fromLocationId: travelFromLocation.id,
+          toLocationId: destinationLocation.id,
+          isActive: true,
+        },
+        select: { distanceKm: true, defaultMinutes: true, source: true },
+      });
+      if (route) {
+        estimatedTravelMinutes = route.defaultMinutes;
+        estimatedTravelKm = route.distanceKm;
+        travelEstimateSource = route.source;
+      }
+    }
+  }
+
+  const travelFromLabelSnapshot = operationalLocationSnapshot(travelFromLocation);
+  const travelToLabelSnapshot = destinationLocation
+    ? operationalLocationSnapshot(destinationLocation)
+    : locationText;
 
   const [activeWork, activeDiary] = await Promise.all([
     prisma.workPartLaborFact.findFirst({
@@ -584,6 +651,12 @@ export async function startMobileDiaryEntry(formData: FormData) {
         workKey,
         workKeyId: selectedWorkKey?.id ?? null,
         operationalLocationId,
+        travelFromOperationalLocationId,
+        travelFromLabelSnapshot,
+        travelToLabelSnapshot,
+        estimatedTravelMinutes,
+        estimatedTravelKm,
+        travelEstimateSource,
         locationText,
         travelMinutes,
         travelKm,
@@ -610,6 +683,14 @@ export async function startMobileDiaryEntry(formData: FormData) {
           workKey,
           workKeyId: selectedWorkKey?.id ?? null,
           operationalLocationId,
+          travelFromOperationalLocationId,
+          travelFromLabelSnapshot,
+          travelToLabelSnapshot,
+          estimatedTravelMinutes,
+          estimatedTravelKm,
+          travelEstimateSource,
+          travelMinutes,
+          travelKm,
         },
       },
     });

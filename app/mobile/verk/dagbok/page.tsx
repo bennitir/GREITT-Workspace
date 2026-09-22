@@ -44,6 +44,19 @@ function workDateFromNow(now: Date) {
   return new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate(), 12));
 }
 
+function dateKey(value: Date) {
+  return value.toISOString().slice(0, 10);
+}
+
+function travelSummary(minutes: number | null, km: number | null, language: string) {
+  const parts: string[] = [];
+  if (km !== null) {
+    parts.push(`${new Intl.NumberFormat(localeFor(language), { maximumFractionDigits: 1 }).format(km)} km`);
+  }
+  if (minutes !== null) parts.push(formatMinutes(minutes, language));
+  return parts.join(" · ");
+}
+
 export default async function MobileWorkDiaryPage() {
   const actor = await getMobileWorkActor();
   const t = workMobileText(actor.language);
@@ -67,7 +80,7 @@ export default async function MobileWorkDiaryPage() {
   const now = new Date();
   const today = workDateFromNow(now);
 
-  const [locations, workKeys, entries, activeWork] = await Promise.all([
+  const [locations, workKeys, entries, activeWork, company] = await Promise.all([
     prisma.operationalLocation.findMany({
       where: { companyId: actor.companyId, isActive: true },
       select: { id: true, code: true, name: true },
@@ -86,6 +99,7 @@ export default async function MobileWorkDiaryPage() {
       },
       include: {
         operationalLocation: { select: { id: true, code: true, name: true } },
+        travelFromOperationalLocation: { select: { id: true, code: true, name: true } },
       },
       orderBy: { startedAt: "desc" },
       take: 30,
@@ -100,10 +114,25 @@ export default async function MobileWorkDiaryPage() {
       },
       select: { id: true },
     }),
+    prisma.company.findUnique({
+      where: { id: actor.companyId },
+      select: {
+        defaultOperationalLocation: {
+          select: { id: true, code: true, name: true, address: true, postalCode: true, city: true },
+        },
+      },
+    }),
   ]);
 
+  const defaultBaseLocation =
+    actor.employee.baseOperationalLocation ??
+    actor.employee.departmentUnit?.defaultOperationalLocation ??
+    company?.defaultOperationalLocation ??
+    null;
+
   const activeEntry = entries.find((entry) => !entry.endedAt) ?? null;
-  const todayEntries = entries.filter((entry) => entry.workDate.getTime() === today.getTime());
+  const todayKey = dateKey(now);
+  const todayEntries = entries.filter((entry) => dateKey(entry.workDate) === todayKey);
   const todayMinutes = todayEntries.reduce((sum, entry) => {
     if (entry.endedAt) return sum + entry.durationMinutes;
     return sum + Math.max(1, Math.round((now.getTime() - entry.startedAt.getTime()) / 60_000));
@@ -145,7 +174,18 @@ export default async function MobileWorkDiaryPage() {
             <h2 className="mt-1 text-xl font-bold text-emerald-950">{activeEntry.title}</h2>
             <p className="mt-1 text-sm text-emerald-900">{t.diaryStarted}: {displayTime(activeEntry.startedAt, actor.language)}</p>
             {activeEntry.workKey ? <p className="mt-2 text-sm text-emerald-900">{t.diaryWorkKey}: {activeEntry.workKey}</p> : null}
-            {activeEntry.operationalLocation ? <p className="mt-1 text-sm text-emerald-900">{t.diaryLocation}: {activeEntry.operationalLocation.name}</p> : activeEntry.locationText ? <p className="mt-1 text-sm text-emerald-900">{t.diaryLocation}: {activeEntry.locationText}</p> : null}
+            {activeEntry.travelFromLabelSnapshot || activeEntry.travelFromOperationalLocation ? (
+              <p className="mt-1 text-sm text-emerald-900">{t.diaryTravelFrom}: {activeEntry.travelFromLabelSnapshot ?? activeEntry.travelFromOperationalLocation?.name}</p>
+            ) : null}
+            {activeEntry.travelToLabelSnapshot || activeEntry.operationalLocation || activeEntry.locationText ? (
+              <p className="mt-1 text-sm text-emerald-900">{t.diaryLocation}: {activeEntry.travelToLabelSnapshot ?? activeEntry.operationalLocation?.name ?? activeEntry.locationText}</p>
+            ) : null}
+            {(activeEntry.estimatedTravelMinutes !== null || activeEntry.estimatedTravelKm !== null) ? (
+              <p className="mt-1 text-sm text-emerald-900">{t.diaryEstimatedTravel}: {travelSummary(activeEntry.estimatedTravelMinutes, activeEntry.estimatedTravelKm, actor.language)}</p>
+            ) : null}
+            {(activeEntry.travelMinutes !== null || activeEntry.travelKm !== null) ? (
+              <p className="mt-1 text-sm text-emerald-900">{t.diaryRecordedTravel}: {travelSummary(activeEntry.travelMinutes, activeEntry.travelKm, actor.language)}</p>
+            ) : null}
             {activeEntry.note ? <p className="mt-2 whitespace-pre-wrap text-sm leading-6 text-emerald-900">{activeEntry.note}</p> : null}
             <form action={stopMobileDiaryEntry} className="mt-4">
               <input type="hidden" name="entryId" value={activeEntry.id} />
@@ -157,6 +197,16 @@ export default async function MobileWorkDiaryPage() {
             <h2 className="text-lg font-bold text-slate-950">{t.diaryStartTitle}</h2>
             {activeWork ? <p className="mt-3 rounded-xl border border-amber-200 bg-amber-50 p-3 text-sm text-amber-900">{t.errors.alreadyActiveElsewhere}</p> : null}
             <form action={startMobileDiaryEntry} className="mt-4 grid gap-3">
+              <div className="rounded-xl border border-slate-200 bg-slate-50 p-3">
+                <p className="text-xs font-semibold uppercase tracking-wide text-slate-500">{t.diaryTravelFrom}</p>
+                <p className="mt-1 font-semibold text-slate-900">{defaultBaseLocation?.name ?? "—"}</p>
+                {defaultBaseLocation?.address ? (
+                  <p className="mt-1 text-xs leading-5 text-slate-600">
+                    {[defaultBaseLocation.address, defaultBaseLocation.postalCode, defaultBaseLocation.city].filter(Boolean).join(", ")}
+                  </p>
+                ) : null}
+                <p className="mt-1 text-xs leading-5 text-slate-500">{t.diaryDefaultBaseHelp}</p>
+              </div>
               <label className="grid gap-1 text-sm font-semibold text-slate-700">
                 <span>{t.diaryActivity}</span>
                 <input name="title" required maxLength={200} disabled={Boolean(activeWork)} placeholder={t.diaryActivityPlaceholder} className="rounded-xl border border-slate-300 px-3 py-3 text-base disabled:bg-slate-100" />
@@ -188,6 +238,7 @@ export default async function MobileWorkDiaryPage() {
                   <span>{t.diaryTravelKm}</span>
                   <input name="travelKm" type="number" min="0" step="0.1" disabled={Boolean(activeWork)} className="rounded-xl border border-slate-300 px-3 py-3 text-base disabled:bg-slate-100" />
                 </label>
+                <p className="col-span-2 text-xs leading-5 text-slate-500">{t.diaryTravelActualHelp}</p>
               </div>
               <label className="grid gap-1 text-sm font-semibold text-slate-700">
                 <span>{t.diaryNote}</span>
@@ -219,8 +270,18 @@ export default async function MobileWorkDiaryPage() {
                       <span className="shrink-0 rounded-full bg-slate-100 px-2.5 py-1 text-xs font-bold text-slate-700">{formatMinutes(duration, actor.language)}</span>
                     </div>
                     {entry.workKey ? <p className="mt-2 text-sm text-slate-700">{t.diaryWorkKey}: {entry.workKey}</p> : null}
-                    {entry.operationalLocation ? <p className="mt-1 text-sm text-slate-700">{t.diaryLocation}: {entry.operationalLocation.name}</p> : entry.locationText ? <p className="mt-1 text-sm text-slate-700">{t.diaryLocation}: {entry.locationText}</p> : null}
-                    {entry.travelMinutes !== null || entry.travelKm !== null ? <p className="mt-1 text-sm text-slate-700">{t.diaryTravelMinutes}: {entry.travelMinutes ?? 0} · {t.diaryTravelKm}: {entry.travelKm ?? 0}</p> : null}
+                    {entry.travelFromLabelSnapshot || entry.travelFromOperationalLocation ? (
+                      <p className="mt-1 text-sm text-slate-700">{t.diaryTravelFrom}: {entry.travelFromLabelSnapshot ?? entry.travelFromOperationalLocation?.name}</p>
+                    ) : null}
+                    {entry.travelToLabelSnapshot || entry.operationalLocation || entry.locationText ? (
+                      <p className="mt-1 text-sm text-slate-700">{t.diaryLocation}: {entry.travelToLabelSnapshot ?? entry.operationalLocation?.name ?? entry.locationText}</p>
+                    ) : null}
+                    {(entry.estimatedTravelMinutes !== null || entry.estimatedTravelKm !== null) ? (
+                      <p className="mt-1 text-sm text-slate-700">{t.diaryEstimatedTravel}: {travelSummary(entry.estimatedTravelMinutes, entry.estimatedTravelKm, actor.language)}</p>
+                    ) : null}
+                    {(entry.travelMinutes !== null || entry.travelKm !== null) ? (
+                      <p className="mt-1 text-sm text-slate-700">{t.diaryRecordedTravel}: {travelSummary(entry.travelMinutes, entry.travelKm, actor.language)}</p>
+                    ) : null}
                     {entry.note ? <p className="mt-2 whitespace-pre-wrap text-sm leading-6 text-slate-600">{entry.note}</p> : null}
                   </article>
                 );

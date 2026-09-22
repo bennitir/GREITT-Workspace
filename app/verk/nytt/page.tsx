@@ -27,6 +27,10 @@ async function createWorkOrder(formData: FormData) {
   const title = String(formData.get("title") ?? "").trim();
   const description = String(formData.get("description") ?? "").trim();
   const address = String(formData.get("address") ?? "").trim();
+  const requestedOperationalLocationId = Number(formData.get("operationalLocationId") ?? 0);
+  const operationalLocationId = Number.isInteger(requestedOperationalLocationId) && requestedOperationalLocationId > 0
+    ? requestedOperationalLocationId
+    : null;
   const priority = String(formData.get("priority") ?? "NORMAL");
   const requiredPeopleRaw = Number(formData.get("requiredPeople") ?? 1);
   const estimatedHours = Number(formData.get("estimatedHours") ?? 0);
@@ -90,6 +94,14 @@ async function createWorkOrder(formData: FormData) {
     throw new Error(workKeyT.errors.notFound);
   }
 
+  if (operationalLocationId) {
+    const location = await prisma.operationalLocation.findFirst({
+      where: { id: operationalLocationId, companyId, isActive: true },
+      select: { id: true },
+    });
+    if (!location) throw new Error("Valinn rekstrarstaður fannst ekki.");
+  }
+
   const created = await prisma.workOrder.create({
     data: {
       companyId,
@@ -101,6 +113,7 @@ async function createWorkOrder(formData: FormData) {
       title,
       description: description || null,
       address: address || null,
+      operationalLocationId,
       priority,
       requiredPeople: requiredPeopleRaw,
       estimatedMinutes: estimatedMinutes > 0 ? estimatedMinutes : null,
@@ -136,12 +149,25 @@ export default async function NýttVerkPage() {
   if (!Number.isInteger(companyId)) redirect("/fyrirtaeki");
   await requireCompanyWriteAccess(companyId);
   const effectiveUser = await getEffectiveUser();
-  const [userSettings, workKeys] = await Promise.all([
+  const [userSettings, workKeys, operationalLocations, companyContext] = await Promise.all([
     effectiveUser ? prisma.userSettings.findUnique({ where: { userId: effectiveUser.id }, select: { interfaceLanguage: true } }) : Promise.resolve(null),
     prisma.workKey.findMany({
       where: { companyId, isActive: true },
       select: { id: true, code: true, name: true },
       orderBy: [{ code: "asc" }],
+    }),
+    prisma.operationalLocation.findMany({
+      where: { companyId, isActive: true },
+      select: { id: true, code: true, name: true, locationKind: true },
+      orderBy: [{ locationKind: "asc" }, { name: "asc" }],
+    }),
+    prisma.company.findUnique({
+      where: { id: companyId },
+      select: {
+        defaultOperationalLocation: {
+          select: { id: true, code: true, name: true, address: true, postalCode: true, city: true },
+        },
+      },
     }),
   ]);
   const language = userSettings?.interfaceLanguage ?? "is";
@@ -169,7 +195,34 @@ export default async function NýttVerkPage() {
             </div>
           </div>
           <div><label htmlFor="title" className="block font-medium">{t.workTitle}</label><input id="title" name="title" type="text" required className="mt-2 w-full rounded-lg border px-4 py-3" placeholder={t.workTitlePlaceholder} /></div>
-          <div><label htmlFor="address" className="block font-medium">{t.address}</label><input id="address" name="address" type="text" className="mt-2 w-full rounded-lg border px-4 py-3" placeholder={t.addressPlaceholder} /></div>
+          <div className="rounded-xl border border-slate-200 bg-slate-50 p-4">
+            <p className="text-xs font-semibold uppercase tracking-wide text-slate-500">{t.companyWorkBase}</p>
+            <p className="mt-1 font-semibold text-slate-900">{companyContext?.defaultOperationalLocation?.name ?? t.companyWorkBaseMissing}</p>
+            {companyContext?.defaultOperationalLocation?.address ? (
+              <p className="mt-1 text-sm text-slate-600">
+                {[
+                  companyContext.defaultOperationalLocation.address,
+                  companyContext.defaultOperationalLocation.postalCode,
+                  companyContext.defaultOperationalLocation.city,
+                ].filter(Boolean).join(" · ")}
+              </p>
+            ) : null}
+          </div>
+          <div className="grid gap-4 md:grid-cols-2">
+            <div>
+              <label htmlFor="operationalLocationId" className="block font-medium">{t.operationalLocation}</label>
+              <select id="operationalLocationId" name="operationalLocationId" defaultValue="" className="mt-2 w-full rounded-lg border bg-white px-4 py-3">
+                <option value="">—</option>
+                {operationalLocations.map((location) => (
+                  <option key={location.id} value={location.id}>
+                    {location.name}{location.code ? ` · ${location.code}` : ""}
+                  </option>
+                ))}
+              </select>
+              <p className="mt-1 text-xs leading-5 text-slate-500">{t.operationalLocationHelp}</p>
+            </div>
+            <div><label htmlFor="address" className="block font-medium">{t.address}</label><input id="address" name="address" type="text" className="mt-2 w-full rounded-lg border px-4 py-3" placeholder={t.addressPlaceholder} /></div>
+          </div>
           <div><label htmlFor="description" className="block font-medium">{t.description}</label><textarea id="description" name="description" rows={5} className="mt-2 w-full rounded-lg border px-4 py-3" placeholder={t.descriptionPlaceholder} /></div>
           <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-4">
             <div><label htmlFor="requiredPeople" className="block font-medium">{t.requiredPeople}</label><input id="requiredPeople" name="requiredPeople" type="number" min={1} max={100} defaultValue={1} required className="mt-2 w-full rounded-lg border px-4 py-3" /><p className="mt-1 text-xs text-slate-500">{t.requiredPeopleHelp}</p></div>

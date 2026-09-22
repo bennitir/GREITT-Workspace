@@ -22,6 +22,16 @@ export async function getMobileWorkActor() {
         preferredLanguage: true,
         jobTitle: true,
         workExecutionMode: true,
+        baseOperationalLocation: {
+          select: { id: true, code: true, name: true, address: true, postalCode: true, city: true },
+        },
+        departmentUnit: {
+          select: {
+            defaultOperationalLocation: {
+              select: { id: true, code: true, name: true, address: true, postalCode: true, city: true },
+            },
+          },
+        },
       },
     }),
     prisma.userSettings.findUnique({

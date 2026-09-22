@@ -16,6 +16,7 @@ import {
   defaultResourceUnit,
   isWork10EquipmentKind,
   isWork10ResourceStatus,
+  isWork10ResourceTravelMode,
 } from "@/lib/work10/resources";
 
 type ResourceErrors = ReturnType<typeof workResourceText>["errors"];
@@ -84,8 +85,14 @@ export async function createWorkResource(formData: FormData) {
   const meterUnit = String(formData.get("meterUnit") ?? "").trim();
   const costRateIsk = optionalNumber(formData.get("costRateIsk"), t.errors);
   const saleRateIsk = optionalNumber(formData.get("saleRateIsk"), t.errors);
+  const requestedTravelMode = String(formData.get("travelMode") ?? "").trim();
+  const travelMode = requestedTravelMode || (kind === "MACHINE" ? "SELF_PROPELLED" : kind === "VEHICLE" ? "ROAD" : "NONE");
+  const parsedTravelSpeed = optionalNumber(formData.get("planningTravelSpeedKmh"), t.errors);
+  if (parsedTravelSpeed !== null && parsedTravelSpeed <= 0) throw new Error(t.errors.invalidNumber);
+  const planningTravelSpeedKmh = travelMode === "SELF_PROPELLED" || travelMode === "ROAD" ? parsedTravelSpeed : null;
 
   if (!isWork10EquipmentKind(kind)) throw new Error(t.errors.invalidKind);
+  if (!isWork10ResourceTravelMode(travelMode)) throw new Error(t.errors.invalidKind);
   if (!code || code.length > 60) throw new Error(t.errors.invalidCode);
   if (!name || name.length > 160) throw new Error(t.errors.invalidName);
   if (description.length > 1000) throw new Error(t.errors.descriptionTooLong);
@@ -116,6 +123,8 @@ export async function createWorkResource(formData: FormData) {
         costRateIsk,
         saleRateIsk,
         meterUnit: meterUnit || (kind === "MACHINE" || kind === "VEHICLE" ? baseUnit : null),
+        travelMode,
+        planningTravelSpeedKmh,
         qrToken: randomBytes(8).toString("hex"),
         createdById: userId,
         updatedById: userId,
@@ -130,7 +139,7 @@ export async function createWorkResource(formData: FormData) {
         action: "CREATED",
         source: "USER",
         description: t.auditCreated,
-        afterData: { kind, code, name, baseUnit },
+        afterData: { kind, code, name, baseUnit, travelMode, planningTravelSpeedKmh },
       },
     });
   });
@@ -150,8 +159,13 @@ export async function updateWorkResourceDetails(formData: FormData) {
   const meterUnit = String(formData.get("meterUnit") ?? "").trim();
   const costRateIsk = optionalNumber(formData.get("costRateIsk"), t.errors);
   const saleRateIsk = optionalNumber(formData.get("saleRateIsk"), t.errors);
+  const travelMode = String(formData.get("travelMode") ?? "NONE").trim();
+  const parsedTravelSpeed = optionalNumber(formData.get("planningTravelSpeedKmh"), t.errors);
+  if (parsedTravelSpeed !== null && parsedTravelSpeed <= 0) throw new Error(t.errors.invalidNumber);
+  const planningTravelSpeedKmh = travelMode === "SELF_PROPELLED" || travelMode === "ROAD" ? parsedTravelSpeed : null;
 
   if (!Number.isInteger(resourceId)) throw new Error(t.errors.invalidResource);
+  if (!isWork10ResourceTravelMode(travelMode)) throw new Error(t.errors.invalidKind);
   if (!code || code.length > 60) throw new Error(t.errors.invalidCode);
   if (!name || name.length > 160) throw new Error(t.errors.invalidName);
   if (description.length > 1000) throw new Error(t.errors.descriptionTooLong);
@@ -172,6 +186,8 @@ export async function updateWorkResourceDetails(formData: FormData) {
       costRateIsk: true,
       saleRateIsk: true,
       meterUnit: true,
+      travelMode: true,
+      planningTravelSpeedKmh: true,
     },
   });
   if (!resource) throw new Error(t.errors.resourceNotFound);
@@ -191,6 +207,8 @@ export async function updateWorkResourceDetails(formData: FormData) {
     costRateIsk,
     saleRateIsk,
     meterUnit: meterUnit || null,
+    travelMode,
+    planningTravelSpeedKmh,
   };
 
   await prisma.$transaction(async (tx) => {

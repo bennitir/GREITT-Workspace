@@ -42,6 +42,7 @@ export default async function BreytaFyrirtaekiPage({
     id: companyId,
   },
   include: {
+    defaultOperationalLocation: true,
     activities: {
       orderBy: [
         {

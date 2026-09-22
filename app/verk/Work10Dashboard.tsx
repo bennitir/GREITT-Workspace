@@ -35,6 +35,8 @@ type AssignedResourceData = {
   name: string;
   status: string;
   qualificationCode: string | null;
+  travelMode: string;
+  planningTravelSpeedKmh: number | null;
 };
 
 type StaffingRequirementData = {
@@ -145,6 +147,8 @@ type ResourceData = {
   customUnit: string | null;
   meterValue: number | null;
   meterUnit: string | null;
+  travelMode: string;
+  planningTravelSpeedKmh: number | null;
   activeAssignmentCount: number;
   memberCount: number;
   memberEmployeeIds: number[];
@@ -785,6 +789,15 @@ function assignedResourcesForWork(work: WorkOrderData) {
   return [...byId.values()];
 }
 
+function travelSpeedLimitForWork(work: WorkOrderData) {
+  const speeds = assignedResourcesForWork(work)
+    .filter((resource) => ["MACHINE", "VEHICLE"].includes(resource.kind))
+    .filter((resource) => resource.travelMode === "SELF_PROPELLED" || resource.travelMode === "ROAD")
+    .map((resource) => resource.planningTravelSpeedKmh)
+    .filter((speed): speed is number => speed !== null && Number.isFinite(speed) && speed > 0);
+  return speeds.length > 0 ? Math.min(...speeds) : null;
+}
+
 function blockedResourcesForWork(work: WorkOrderData) {
   return assignedResourcesForWork(work).filter((resource) =>
     ["MAINTENANCE", "OUT_OF_SERVICE", "INACTIVE"].includes(resource.status),
@@ -1026,7 +1039,13 @@ export default function Work10Dashboard({ data }: { data: Work10DashboardData })
     }
     return names;
   }, [data.people, data.travelRoutes, data.workOrders]);
-  const travelEstimateFor = (fromLocationId: number | null | undefined, toLocationId: number | null | undefined, departureMinutes: number, dateIso: string = selectedDateIso) => {
+  const travelEstimateFor = (
+    fromLocationId: number | null | undefined,
+    toLocationId: number | null | undefined,
+    departureMinutes: number,
+    dateIso: string = selectedDateIso,
+    work: WorkOrderData | null = null,
+  ) => {
     if (!fromLocationId || !toLocationId) return null;
     if (fromLocationId === toLocationId) {
       const name = operationalLocationNameById.get(fromLocationId) ?? t.unknown;
@@ -1042,11 +1061,18 @@ export default function Work10Dashboard({ data }: { data: Work10DashboardData })
       (item.dayType === "ALL" || item.dayType === dayType) &&
       departureMinutes >= item.startMinutes && departureMinutes < item.endMinutes,
     ) ?? null;
+    const routeMinutes = window?.travelMinutes ?? route.defaultMinutes;
+    const travelSpeedLimit = work ? travelSpeedLimitForWork(work) : null;
+    const speedLimitedMinutes =
+      travelSpeedLimit && route.distanceKm > 0
+        ? Math.ceil((route.distanceKm / travelSpeedLimit) * 60)
+        : 0;
+    const resourceSpeedControls = speedLimitedMinutes > routeMinutes;
     return {
       fromLocationId, fromLocationName: route.fromLocationName, toLocationId, toLocationName: route.toLocationName,
       distanceKm: route.distanceKm,
-      travelMinutes: window?.travelMinutes ?? route.defaultMinutes,
-      source: window?.source ?? route.source,
+      travelMinutes: Math.max(routeMinutes, speedLimitedMinutes),
+      source: resourceSpeedControls ? "RESOURCE_SPEED" : window?.source ?? route.source,
       trafficRuleCode: window?.ruleCode ?? null,
     } satisfies TravelEstimate;
   };
@@ -1600,7 +1626,7 @@ export default function Work10Dashboard({ data }: { data: Work10DashboardData })
             if (assumedMinute === null || !context.projectedLocationByEmployeeId || !work.operationalLocationId) return true;
             const fromLocationId = context.projectedLocationByEmployeeId.get(candidate.person.id) ?? candidate.person.baseOperationalLocationId;
             if (!fromLocationId || fromLocationId === work.operationalLocationId) return true;
-            return travelEstimateFor(fromLocationId, work.operationalLocationId, assumedMinute, context.planningDateIso ?? selectedDateIso) !== null;
+            return travelEstimateFor(fromLocationId, work.operationalLocationId, assumedMinute, context.planningDateIso ?? selectedDateIso, work) !== null;
           });
         candidatesByPosition.set(position.key, options);
       }
@@ -1641,7 +1667,7 @@ export default function Work10Dashboard({ data }: { data: Work10DashboardData })
             .map((candidate) => {
               const fromLocationId = context.projectedLocationByEmployeeId?.get(candidate.person.id) ?? candidate.person.baseOperationalLocationId;
               const travelEstimate = assumedMinute !== null
-                ? travelEstimateFor(fromLocationId, work.operationalLocationId, assumedMinute, context.planningDateIso ?? selectedDateIso)
+                ? travelEstimateFor(fromLocationId, work.operationalLocationId, assumedMinute, context.planningDateIso ?? selectedDateIso, work)
                 : null;
               const travelScore = travelEstimate
                 ? travelEstimate.travelMinutes === 0
@@ -1715,7 +1741,7 @@ export default function Work10Dashboard({ data }: { data: Work10DashboardData })
             const availableAt = context.projectedAvailableAt?.get(candidate.person.id) ?? 24 * 60;
             if (availableAt <= assumedMinute || availableAt > assumedMinute + INCIDENTAL_AUTO_WAIT_MINUTES) return false;
             const fromLocationId = context.projectedLocationByEmployeeId?.get(candidate.person.id) ?? candidate.person.baseOperationalLocationId;
-            const travel = travelEstimateFor(fromLocationId, work.operationalLocationId, availableAt, context.planningDateIso ?? selectedDateIso);
+            const travel = travelEstimateFor(fromLocationId, work.operationalLocationId, availableAt, context.planningDateIso ?? selectedDateIso, work);
             if (fromLocationId && work.operationalLocationId && !travel) return false;
             return availableAt + (travel?.travelMinutes ?? 0) <= assumedMinute + INCIDENTAL_AUTO_WAIT_MINUTES;
           })
@@ -1738,7 +1764,7 @@ export default function Work10Dashboard({ data }: { data: Work10DashboardData })
             if (assumedMinute === null || !context.projectedLocationByEmployeeId || !work.operationalLocationId) return true;
             const fromLocationId = context.projectedLocationByEmployeeId.get(candidate.person.id) ?? candidate.person.baseOperationalLocationId;
             if (!fromLocationId || fromLocationId === work.operationalLocationId) return true;
-            return travelEstimateFor(fromLocationId, work.operationalLocationId, assumedMinute, context.planningDateIso ?? selectedDateIso) !== null;
+            return travelEstimateFor(fromLocationId, work.operationalLocationId, assumedMinute, context.planningDateIso ?? selectedDateIso, work) !== null;
           });
 
       const candidates = candidatePool.map((candidate) => {
@@ -1805,7 +1831,7 @@ export default function Work10Dashboard({ data }: { data: Work10DashboardData })
         const historicalPairingBonus = Math.min(60, historicalPairing * 10);
         const fromLocationId = context.projectedLocationByEmployeeId?.get(candidate.person.id) ?? candidate.person.baseOperationalLocationId;
         const travelEstimate = assumedMinute !== null
-          ? travelEstimateFor(fromLocationId, work.operationalLocationId, assumedMinute, context.planningDateIso ?? selectedDateIso)
+          ? travelEstimateFor(fromLocationId, work.operationalLocationId, assumedMinute, context.planningDateIso ?? selectedDateIso, work)
           : null;
         const travelScore = travelEstimate
           ? travelEstimate.travelMinutes === 0
@@ -2269,11 +2295,11 @@ export default function Work10Dashboard({ data }: { data: Work10DashboardData })
       ),
     );
 
-    const returnProjectionFor = (person: PersonData, fromLocationId: number | null | undefined, departureMinutes: number) => {
+    const returnProjectionFor = (person: PersonData, fromLocationId: number | null | undefined, departureMinutes: number, work: WorkOrderData | null = null) => {
       const baseLocationId = person.baseOperationalLocationId;
       if (!fromLocationId || !baseLocationId) return null;
       let departure = departureMinutes;
-      let estimate = travelEstimateFor(fromLocationId, baseLocationId, departure, planningDateIso);
+      let estimate = travelEstimateFor(fromLocationId, baseLocationId, departure, planningDateIso, work);
       if (!estimate) return null;
       const taken = personTakenBreakCodes.get(person.id) ?? new Set<string>();
       for (const pause of workdayBreaksForPerson(person)) {
@@ -2281,7 +2307,7 @@ export default function Work10Dashboard({ data }: { data: Work10DashboardData })
         const arrival = departure + estimate.travelMinutes;
         if (pause.targetStartMinutes < departure || pause.targetStartMinutes >= arrival) continue;
         departure = Math.max(departure, pause.targetStartMinutes) + pause.durationMinutes;
-        estimate = travelEstimateFor(fromLocationId, baseLocationId, departure, planningDateIso);
+        estimate = travelEstimateFor(fromLocationId, baseLocationId, departure, planningDateIso, work);
         if (!estimate) return null;
       }
       return { departureMinutes: departure, arrivalMinutes: departure + estimate.travelMinutes, estimate };
@@ -2294,7 +2320,7 @@ export default function Work10Dashboard({ data }: { data: Work10DashboardData })
       const currentWorkMinutes = personPlannedWorkMinutes.get(person.id) ?? 0;
       const currentTravelMinutes = personPlannedTravelMinutes.get(person.id) ?? 0;
       const fromLocationId = personProjectedLocation.get(person.id) ?? person.baseOperationalLocationId;
-      const outbound = travelEstimateFor(fromLocationId, work.operationalLocationId, dispatchMinute, planningDateIso);
+      const outbound = travelEstimateFor(fromLocationId, work.operationalLocationId, dispatchMinute, planningDateIso, work);
       if (fromLocationId && work.operationalLocationId && !outbound) {
         return { allowed: false, projectedUsedMinutes: Number.MAX_SAFE_INTEGER, utilizationPercent: 100, scoreAdjustment: -1000 };
       }
@@ -2308,7 +2334,7 @@ export default function Work10Dashboard({ data }: { data: Work10DashboardData })
       });
       const effectiveEnd = Math.max(projection.endMinutes, projectionAvailabilityEnd(projection) ?? projection.endMinutes);
       const returnProjection = work.operationalLocationId && person.baseOperationalLocationId
-        ? returnProjectionFor(person, work.operationalLocationId, effectiveEnd)
+        ? returnProjectionFor(person, work.operationalLocationId, effectiveEnd, work)
         : null;
       const projectedUsedMinutes = currentWorkMinutes + currentTravelMinutes +
         Math.max(0, work.estimatedMinutes ?? 0) +
@@ -2370,7 +2396,7 @@ export default function Work10Dashboard({ data }: { data: Work10DashboardData })
         if (!work.operationalLocationId || !candidate.person.baseOperationalLocationId) {
           return effectiveEnd <= requiredArrivalLimit;
         }
-        const returnProjection = returnProjectionFor(candidate.person, work.operationalLocationId, effectiveEnd);
+        const returnProjection = returnProjectionFor(candidate.person, work.operationalLocationId, effectiveEnd, work);
         return Boolean(returnProjection && returnProjection.arrivalMinutes <= requiredArrivalLimit);
       });
     };
@@ -2413,7 +2439,7 @@ export default function Work10Dashboard({ data }: { data: Work10DashboardData })
             if ((personAvailableAt.get(person.id) ?? 24 * 60) > minute) continue;
             const fromLocationId = personProjectedLocation.get(person.id) ?? person.baseOperationalLocationId;
             if (!fromLocationId) continue;
-            const outbound = travelEstimateFor(fromLocationId, work.operationalLocationId, minute, planningDateIso);
+            const outbound = travelEstimateFor(fromLocationId, work.operationalLocationId, minute, planningDateIso, work);
             if (!outbound) continue;
 
             const projectedStart = roundUpToFiveMinutes(minute + outbound.travelMinutes);
@@ -2427,7 +2453,7 @@ export default function Work10Dashboard({ data }: { data: Work10DashboardData })
               projection.endMinutes,
               projectionAvailabilityEnd(projection) ?? projection.endMinutes,
             );
-            const returnProjection = returnProjectionFor(person, work.operationalLocationId, projectedEnd);
+            const returnProjection = returnProjectionFor(person, work.operationalLocationId, projectedEnd, work);
             const normalEnd = workdayEndForPerson(person);
             const returnTravelMinutes = returnProjection?.estimate.travelMinutes ?? 0;
             const arrivalAtBase = returnProjection?.arrivalMinutes ?? projectedEnd;
@@ -2686,7 +2712,7 @@ export default function Work10Dashboard({ data }: { data: Work10DashboardData })
             if (!work.operationalLocationId || !candidate.person.baseOperationalLocationId) {
               return effectiveEnd <= requiredArrivalLimit;
             }
-            const returnProjection = returnProjectionFor(candidate.person, work.operationalLocationId, effectiveEnd);
+            const returnProjection = returnProjectionFor(candidate.person, work.operationalLocationId, effectiveEnd, work);
             return Boolean(returnProjection && returnProjection.arrivalMinutes <= requiredArrivalLimit);
           });
           if (!fits) continue;
@@ -2782,7 +2808,7 @@ export default function Work10Dashboard({ data }: { data: Work10DashboardData })
       const person = planningPeople.find((candidate) => candidate.id === employeeId);
       const work = activeWorkOrders.find((candidate) => candidate.id === item.workId);
       if (!person || !work?.operationalLocationId || !person.baseOperationalLocationId || item.projectedAvailableMinutes === null) continue;
-      const returnProjection = returnProjectionFor(person, work.operationalLocationId, item.projectedAvailableMinutes);
+      const returnProjection = returnProjectionFor(person, work.operationalLocationId, item.projectedAvailableMinutes, work);
       if (!returnProjection) continue;
       item.returnFromLocationId = returnProjection.estimate.fromLocationId;
       item.returnFromLocationName = returnProjection.estimate.fromLocationName;
@@ -4234,7 +4260,7 @@ export default function Work10Dashboard({ data }: { data: Work10DashboardData })
             const estimatedWorkMinutes = Math.max(0, work.estimatedMinutes ?? 0);
             if (!includeTravel) return state.usedWithoutReturnMinutes + estimatedWorkMinutes <= maxUsedMinutes;
 
-            const outbound = travelEstimateFor(state.currentLocationId, work.operationalLocationId, state.availableAtMinutes, dateIso);
+            const outbound = travelEstimateFor(state.currentLocationId, work.operationalLocationId, state.availableAtMinutes, dateIso, work);
             if (state.currentLocationId && work.operationalLocationId && !outbound) return false;
             const workStartMinutes = roundUpToFiveMinutes(state.availableAtMinutes + (outbound?.travelMinutes ?? 0));
             const projection = projectWorkWindowWithBreaks({
@@ -4251,7 +4277,7 @@ export default function Work10Dashboard({ data }: { data: Work10DashboardData })
             let returnMinutes = 0;
             let arrivalAtBase = effectiveEnd;
             if (work.operationalLocationId && person.baseOperationalLocationId) {
-              const back = travelEstimateFor(work.operationalLocationId, person.baseOperationalLocationId, effectiveEnd, dateIso);
+              const back = travelEstimateFor(work.operationalLocationId, person.baseOperationalLocationId, effectiveEnd, dateIso, work);
               if (!back) return false;
               returnMinutes = back.travelMinutes;
               arrivalAtBase = effectiveEnd + returnMinutes;

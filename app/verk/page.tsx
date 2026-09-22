@@ -18,7 +18,7 @@ export default async function Verk10Page() {
   const companyId = await requireCompanyModule("verk");
   const effectiveUser = await getEffectiveUser();
 
-  const [workOrders, companyEmployees, workResources, workCapabilitySettings, assignmentHistory, userSettings, workplaceScheduleProfiles, laborAgreementProfiles, operationalTravelRoutes, workDiaryEntries] = await Promise.all([
+  const [workOrders, companyEmployees, workResources, workCapabilitySettings, assignmentHistory, userSettings, workplaceScheduleProfiles, laborAgreementProfiles, operationalTravelRoutes, workDiaryEntries, companyWorkBase] = await Promise.all([
     prisma.workOrder.findMany({
       where: { companyId },
       include: {
@@ -56,7 +56,15 @@ export default async function Verk10Page() {
                 resourceKind: true,
                 workResourceId: true,
                 workResource: {
-                  select: { id: true, kind: true, name: true, status: true, description: true },
+                  select: {
+                    id: true,
+                    kind: true,
+                    name: true,
+                    status: true,
+                    description: true,
+                    travelMode: true,
+                    planningTravelSpeedKmh: true,
+                  },
                 },
               },
             },
@@ -171,6 +179,14 @@ export default async function Verk10Page() {
         workKey: true,
       },
       orderBy: [{ workDate: "desc" }, { startedAt: "desc" }],
+    }),
+    prisma.company.findUnique({
+      where: { id: companyId },
+      select: {
+        defaultOperationalLocation: {
+          select: { id: true, code: true, name: true },
+        },
+      },
     }),
   ]);
 
@@ -329,6 +345,8 @@ export default async function Verk10Page() {
                 name: assignment.workResource!.name,
                 status: assignment.workResource!.status,
                 qualificationCode: match?.[1]?.toUpperCase() ?? null,
+                travelMode: assignment.workResource!.travelMode,
+                planningTravelSpeedKmh: assignment.workResource!.planningTravelSpeedKmh,
               };
             }),
         ]),
@@ -449,6 +467,8 @@ export default async function Verk10Page() {
       customUnit: resource.customUnit,
       meterValue: resource.meterValue,
       meterUnit: resource.meterUnit,
+      travelMode: resource.travelMode,
+      planningTravelSpeedKmh: resource.planningTravelSpeedKmh,
       activeAssignmentCount: resource.assignments.length,
       memberCount: resource.members.length,
       memberEmployeeIds: resource.members.map((member) => member.employeeId),
@@ -464,9 +484,9 @@ export default async function Verk10Page() {
       fixedTeamIds: employee.teamMemberships.map((row) => row.teamId),
       fixedTeamNames: employee.teamMemberships.map((row) => row.team.name),
       primaryFixedTeamId: employee.teamMemberships.find((row) => row.isPrimary)?.teamId ?? null,
-      baseOperationalLocationId: employee.baseOperationalLocation?.id ?? employee.departmentUnit?.defaultOperationalLocation?.id ?? null,
-      baseOperationalLocationCode: employee.baseOperationalLocation?.code ?? employee.departmentUnit?.defaultOperationalLocation?.code ?? null,
-      baseOperationalLocationName: employee.baseOperationalLocation?.name ?? employee.departmentUnit?.defaultOperationalLocation?.name ?? null,
+      baseOperationalLocationId: employee.baseOperationalLocation?.id ?? employee.departmentUnit?.defaultOperationalLocation?.id ?? companyWorkBase?.defaultOperationalLocation?.id ?? null,
+      baseOperationalLocationCode: employee.baseOperationalLocation?.code ?? employee.departmentUnit?.defaultOperationalLocation?.code ?? companyWorkBase?.defaultOperationalLocation?.code ?? null,
+      baseOperationalLocationName: employee.baseOperationalLocation?.name ?? employee.departmentUnit?.defaultOperationalLocation?.name ?? companyWorkBase?.defaultOperationalLocation?.name ?? null,
       userId: employee.userId,
       workplaceScheduleProfileId: employee.workplaceScheduleProfileId,
       laborAgreementProfileId: employee.laborAgreementProfileId,

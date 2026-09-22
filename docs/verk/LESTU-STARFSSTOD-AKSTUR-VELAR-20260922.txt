@@ -1,0 +1,121 @@
+GLÖGGT – Starfsstöð, akstur og ferðahraði tækja
+Dagsetning: 22.09.2026
+
+Markmið
+-------
+Þessi lota tengir saman sjálfgefna starfsstöð fyrirtækis, Verk/Dagbók,
+akstursgrunn og ferðahraða vinnuvéla/farartækja án þess að rugla saman
+áætlun og raunverulegri framkvæmd.
+
+Grunnreglur
+-----------
+1. Fyrirtæki getur haft sjálfgefna starfsstöð fyrir Verk/Mobile.
+2. Starfsmaður eða deild getur áfram yfirskrifað fyrirtækisgrunninn.
+3. Sjálfgefin starfsstöð er upphafspunktur ferðar – ekki sjálfkrafa verkstaður.
+4. Verkstaður er áfram OperationalLocation á Verki/Dagbók þegar hann er þekktur.
+5. Áætluð ferð og raunskráður akstur eru aðskilin gögn.
+6. Dagbókarfærsla varðveitir textasnapshot af upphafs- og áfangastað.
+7. Dagsmönnun má nota viðmiðunarhraða úthlutaðrar vinnuvélar/farartækis
+   sem neðri mörk á ferðatíma, en breytir aldrei raunverulegum skráðum tíma.
+8. Vél sem er flutt á kerru er TRANSPORTED og takmarkar því ekki ferðatímann
+   með eigin hraða.
+
+Ný gögn
+-------
+Company.defaultOperationalLocationId
+
+WorkResource.travelMode:
+- NONE
+- ROAD
+- SELF_PROPELLED
+- TRANSPORTED
+
+WorkResource.planningTravelSpeedKmh
+
+EmployeeWorkDiaryEntry:
+- travelFromOperationalLocationId
+- travelFromLabelSnapshot
+- travelToLabelSnapshot
+- estimatedTravelMinutes
+- estimatedTravelKm
+- travelEstimateSource
+
+Fyrri travelMinutes/travelKm eru áfram skráður/raunverulegur akstur og eru ekki
+yfirskrifuð með áætlun úr leiðatöflu.
+
+Dagbók í dag
+-------------
+Lagaður var dagsetningarsamanburður fyrir @db.Date. Virk Dagbókarfærsla á nú
+að teljast með í „Dagbók í dag“ í stað þess að geta birst í sögunni en samt
+gefið 0 mínútur í samantektinni.
+
+Fyrirtækjaskrá
+--------------
+Á breytingasíðu fyrirtækis er hægt að skrá sjálfgefna starfsstöð:
+- heiti
+- heimilisfang
+- póstnúmer
+- staður
+
+Við fyrstu vistun er BASE OperationalLocation stofnuð ef engin er til.
+Lögheimili fyrirtækis er ekki sjálfkrafa gert að starfsstöð; notandi staðfestir
+starfsstöðina með vistun.
+
+Nýtt Verk
+---------
+Nýtt Verk sýnir sjálfgefna starfsstöð fyrirtækis sem ferðagrunn og býður
+jafnframt að velja þekktan rekstrarstað/verkstað. Þetta eru tvö aðskilin hugtök.
+
+Mobile Dagbók
+-------------
+Upphafsstaður er valinn í þessari forgangsröð:
+1. starfsstöð starfsmanns
+2. starfsstöð deildar
+3. sjálfgefin starfsstöð fyrirtækis
+
+Ef þekkt OperationalTravelRoute er til frá grunninum á verkstaðinn er áætluð
+vegalengd og ferðatími snapshot-aður sérstaklega. Handvirkt skráður akstur
+heldur sér í travelMinutes/travelKm.
+
+Dagsmönnun og ferðahraði
+------------------------
+Dagsmönnun notar áfram þekktar OperationalTravelRoute leiðir. Ef úthlutað
+MACHINE eða VEHICLE er með travelMode ROAD eða SELF_PROPELLED og jákvæðan
+planningTravelSpeedKmh, má ferðatíminn aldrei vera styttri en:
+
+  vegalengd / viðmiðunarhraði
+
+Ef fleiri en eitt slíkt tæki fylgir Verki ræður hægasti viðmiðunarhraðinn.
+TRANSPORTED tæki takmarkar ekki ferðatímann með eigin hraða.
+
+Mikilvægt: þessi lota bætir ekki við korta-/leiða-API eða sjálfvirkri geocoding.
+Heimilisföng og staðsetningargrunnur eru nú til staðar, en sjálfvirk vegalengd
+krefst áfram þekktrar OperationalTravelRoute þar til slíkt ytra leiðalag verður
+sett inn síðar.
+
+Migration
+---------
+20260922093000_add_company_work_base_and_resource_travel
+
+Próf fyrir push
+---------------
+cd C:\GLÖGGT
+npx prisma validate
+npx prisma generate
+npx tsc --noEmit
+npx prisma migrate deploy
+
+Handvirkt próf
+--------------
+1. Fyrirtæki -> Breyta: skrá sjálfgefna starfsstöð og vista.
+2. Opna Nýtt Verk: staðfesta að starfsstöðin sjáist sem grunnur.
+3. Velja þekktan verkstað á nýju Verki.
+4. Mobile -> Verk -> Dagbók: staðfesta að grunnurinn sjáist sem upphafsstaður.
+5. Hefja Dagbókarfærslu og staðfesta að „Dagbók í dag“ telji virka færslu með.
+6. Ef leið er til milli grunns og verkstaðar: staðfesta að áætlaður akstur
+   birtist aðskilinn frá raunskráðum akstri.
+7. Verk -> Tækjalisti: setja vinnuvél á SELF_PROPELLED, t.d. 25 km/klst.
+8. Úthluta vélinni á Verk með þekktri leið og skoða Dagsmönnun.
+9. Staðfesta að ferðatími sé ekki styttri en vegalengd / 25 km/klst.
+10. Breyta sömu vél í TRANSPORTED og staðfesta að eigin hraði vélarinnar
+    takmarki ekki ferðatímann.

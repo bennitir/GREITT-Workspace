@@ -17,6 +17,10 @@ const text = {
     costRate: "Innra kostnaðarverð / einingu (valfrjálst)",
     saleRate: "Söluverð án VSK / einingu (valfrjálst)",
     meterUnit: "Mælieining mælis",
+    travelMode: "Ferðamáti",
+    travelModeAuto: "Sjálfgefið eftir tegund tækis",
+    planningTravelSpeed: "Viðmiðunarhraði í ferð (km/klst.)", speedUnit: "km/klst.",
+    planningTravelSpeedHelp: "Ef vinnuvél fer sjálf á milli staða notar Dagsmönnun þennan hraða sem neðri mörk á ferðatíma. Vél á kerru á að vera merkt flutt.",
     create: "Stofna tæki",
     resources: "Tæki",
     noResources: "Engin tæki hafa verið stofnuð.",
@@ -85,6 +89,12 @@ const text = {
       noteTooLong: "Athugasemd er of löng.",
       meterUnsupported: "Auðlindin fannst ekki eða styður ekki mælastöðu.",
     },
+    travelModes: {
+      NONE: "Ekki notað í akstri",
+      ROAD: "Venjulegt ökutæki / leiðartími",
+      SELF_PROPELLED: "Keyrir sjálft – hraði stýrir lágmarksferðatíma",
+      TRANSPORTED: "Flutt á öðru farartæki",
+    },
     resourceKinds: {
       TEAM: "Teymi",
       MACHINE: "Vinnuvél",
@@ -116,6 +126,10 @@ const text = {
     costRate: "Internal cost / unit (optional)",
     saleRate: "Sales price excl. VAT / unit (optional)",
     meterUnit: "Meter unit",
+    travelMode: "Travel mode",
+    travelModeAuto: "Default for equipment type",
+    planningTravelSpeed: "Planning travel speed (km/h)", speedUnit: "km/h",
+    planningTravelSpeedHelp: "When a machine moves under its own power, daily scheduling uses this speed as a lower bound for travel time. Equipment carried on a trailer should be marked as transported.",
     create: "Create equipment",
     resources: "Equipment",
     noResources: "No equipment has been created.",
@@ -184,6 +198,7 @@ const text = {
       noteTooLong: "Note is too long.",
       meterUnsupported: "Resource not found or does not support meter readings.",
     },
+    travelModes: { NONE: "Not used for travel", ROAD: "Normal road vehicle / route time", SELF_PROPELLED: "Self-propelled – speed limits travel time", TRANSPORTED: "Transported by another vehicle" },
     resourceKinds: { TEAM: "Team", MACHINE: "Machine", VEHICLE: "Vehicle", TOOL: "Equipment / tool", CONTRACTOR: "Contractor" },
     statuses: { AVAILABLE: "Available", IN_USE: "In use", MAINTENANCE: "Maintenance", OUT_OF_SERVICE: "Out of service", INACTIVE: "Inactive" },
   },
@@ -203,6 +218,10 @@ const text = {
     costRate: "Koszt wewnętrzny / jednostkę (opcjonalnie)",
     saleRate: "Cena sprzedaży bez VAT / jednostkę (opcjonalnie)",
     meterUnit: "Jednostka licznika",
+    travelMode: "Sposób przemieszczania",
+    travelModeAuto: "Domyślnie według typu sprzętu",
+    planningTravelSpeed: "Prędkość planistyczna (km/h)", speedUnit: "km/h",
+    planningTravelSpeedHelp: "Gdy maszyna przemieszcza się o własnych siłach, plan dnia używa tej prędkości jako dolnej granicy czasu przejazdu. Sprzęt przewożony na przyczepie oznacz jako transportowany.",
     create: "Utwórz sprzęt",
     resources: "Sprzęt",
     noResources: "Nie utworzono jeszcze sprzętu.",
@@ -271,6 +290,7 @@ const text = {
       noteTooLong: "Notatka jest zbyt długa.",
       meterUnsupported: "Nie znaleziono zasobu lub nie obsługuje on odczytów licznika.",
     },
+    travelModes: { NONE: "Nie używa się do przejazdu", ROAD: "Zwykły pojazd / czas trasy", SELF_PROPELLED: "Jedzie samodzielnie – prędkość ogranicza czas", TRANSPORTED: "Przewożony innym pojazdem" },
     resourceKinds: { TEAM: "Zespół", MACHINE: "Maszyna", VEHICLE: "Pojazd", TOOL: "Sprzęt / narzędzie", CONTRACTOR: "Wykonawca" },
     statuses: { AVAILABLE: "Dostępny", IN_USE: "W użyciu", MAINTENANCE: "W serwisie", OUT_OF_SERVICE: "Wyłączony", INACTIVE: "Nieaktywny" },
   },
@@ -290,6 +310,10 @@ const text = {
     costRate: "Интерни трошак / јединици (опционо)",
     saleRate: "Продајна цена без ПДВ-а / јединици (опционо)",
     meterUnit: "Јединица бројила",
+    travelMode: "Начин путовања",
+    travelModeAuto: "Подразумевано према врсти опреме",
+    planningTravelSpeed: "Планска брзина путовања (km/h)", speedUnit: "km/h",
+    planningTravelSpeedHelp: "Када се машина креће сопственим погоном, дневно планирање користи ову брзину као доњу границу времена путовања. Опрему која се превози на приколици означите као транспортовану.",
     create: "Креирај опрему",
     resources: "Опрема",
     noResources: "Нема креиране опреме.",
@@ -358,6 +382,7 @@ const text = {
       noteTooLong: "Напомена је предугачка.",
       meterUnsupported: "Ресурс није пронађен или не подржава очитавање бројила.",
     },
+    travelModes: { NONE: "Не користи се за путовање", ROAD: "Обично друмско возило / време руте", SELF_PROPELLED: "Креће се самостално – брзина ограничава време", TRANSPORTED: "Превози се другим возилом" },
     resourceKinds: { TEAM: "Тим", MACHINE: "Машина", VEHICLE: "Возило", TOOL: "Опрема / алат", CONTRACTOR: "Извођач" },
     statuses: { AVAILABLE: "Доступан", IN_USE: "У употреби", MAINTENANCE: "На одржавању", OUT_OF_SERVICE: "Ван употребе", INACTIVE: "Неактиван" },
   },
@@ -376,3 +401,9 @@ export function workResourceStatusText(status: string, language: string | null |
   const t = workResourceText(language).statuses;
   return t[status as keyof typeof t] ?? status;
 }
+
+export function workResourceTravelModeText(mode: string, language: string | null | undefined) {
+  const t = workResourceText(language).travelModes;
+  return t[mode as keyof typeof t] ?? mode;
+}
+

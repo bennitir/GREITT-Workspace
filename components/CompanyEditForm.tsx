@@ -20,6 +20,15 @@ type Company = {
   email: string;
   contact: string;
 
+  defaultOperationalLocation: {
+    id: number;
+    code: string;
+    name: string;
+    address: string | null;
+    postalCode: string | null;
+    city: string | null;
+  } | null;
+
   vatNumber: string | null;
   vatRegistered: boolean | null;
   vatRegistrationDate: Date | null;
@@ -232,6 +241,13 @@ export default function CompanyEditForm({
 
       contact: String(formData.get("contact")),
 
+      defaultWorkLocation: {
+        name: String(formData.get("defaultWorkLocationName") ?? "").trim(),
+        address: String(formData.get("defaultWorkLocationAddress") ?? "").trim(),
+        postalCode: String(formData.get("defaultWorkLocationPostalCode") ?? "").trim(),
+        city: String(formData.get("defaultWorkLocationCity") ?? "").trim(),
+      },
+
       vatNumber: hasVatRegistration
         ? String(formData.get("vatNumber") || "") ||
           null
@@ -393,6 +409,54 @@ export default function CompanyEditForm({
         name="contact"
         defaultValue={company.contact}
       />
+
+      <div className="border-t pt-5">
+        <h2 className="text-lg font-semibold">{t.workBaseTitle}</h2>
+        <p className="mt-1 text-sm leading-6 text-slate-600">{t.workBaseHelp}</p>
+
+        <div className="mt-4 grid gap-4 sm:grid-cols-2">
+          <label className="grid gap-1 sm:col-span-2">
+            <span className="font-medium">{t.workBaseName}</span>
+            <input
+              name="defaultWorkLocationName"
+              maxLength={160}
+              defaultValue={company.defaultOperationalLocation?.name ?? ""}
+              placeholder={t.workBaseNamePlaceholder}
+              className="rounded border p-2"
+            />
+          </label>
+
+          <label className="grid gap-1 sm:col-span-2">
+            <span className="font-medium">{t.workBaseAddress}</span>
+            <input
+              name="defaultWorkLocationAddress"
+              maxLength={240}
+              defaultValue={company.defaultOperationalLocation?.address ?? company.address}
+              className="rounded border p-2"
+            />
+          </label>
+
+          <label className="grid gap-1">
+            <span className="font-medium">{t.workBasePostalCode}</span>
+            <input
+              name="defaultWorkLocationPostalCode"
+              maxLength={20}
+              defaultValue={company.defaultOperationalLocation?.postalCode ?? ""}
+              className="rounded border p-2"
+            />
+          </label>
+
+          <label className="grid gap-1">
+            <span className="font-medium">{t.workBaseCity}</span>
+            <input
+              name="defaultWorkLocationCity"
+              maxLength={120}
+              defaultValue={company.defaultOperationalLocation?.city ?? ""}
+              className="rounded border p-2"
+            />
+          </label>
+        </div>
+      </div>
 
       <div className="border-t pt-5">
         <h2 className="mb-4 text-lg font-semibold">

@@ -24,6 +24,20 @@ export type Work10ResourceStatus = (typeof WORK10_RESOURCE_STATUSES)[number];
 
 export const WORK10_RESOURCE_UNITS = ["HOUR", "KM", "PCS", "CUSTOM"] as const;
 
+
+export const WORK10_RESOURCE_TRAVEL_MODES = [
+  "NONE",
+  "ROAD",
+  "SELF_PROPELLED",
+  "TRANSPORTED",
+] as const;
+
+export type Work10ResourceTravelMode = (typeof WORK10_RESOURCE_TRAVEL_MODES)[number];
+
+export function isWork10ResourceTravelMode(value: string): value is Work10ResourceTravelMode {
+  return (WORK10_RESOURCE_TRAVEL_MODES as readonly string[]).includes(value);
+}
+
 export function isWork10PersistentResourceKind(value: string): value is Work10PersistentResourceKind {
   return (WORK10_RESOURCE_KINDS as readonly string[]).includes(value);
 }

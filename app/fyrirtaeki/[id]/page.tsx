@@ -55,6 +55,7 @@ export default async function FyrirtaekiDetailPage({
       id: companyId,
     },
     include: {
+      defaultOperationalLocation: true,
       accounts: {
         orderBy: {
           number: "asc",
@@ -133,6 +134,18 @@ export default async function FyrirtaekiDetailPage({
         <p>
           <strong>Tengiliður:</strong>{" "}
           {company.contact}
+        </p>
+
+        <p>
+          <strong>Sjálfgefin starfsstöð Verks:</strong>{" "}
+          {company.defaultOperationalLocation
+            ? [
+                company.defaultOperationalLocation.name,
+                company.defaultOperationalLocation.address,
+                company.defaultOperationalLocation.postalCode,
+                company.defaultOperationalLocation.city,
+              ].filter(Boolean).join(" · ")
+            : "Ekki skráð"}
         </p>
 
         <div className="mt-8 rounded-lg border p-4">
