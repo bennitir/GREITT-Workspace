@@ -1,0 +1,79 @@
+GLÖGGT – Verk shell Phase 2
+Dagsetning: 22.09.2026
+
+Markmið
+-------
+Hreinsa fyrstu útgáfu tveggja laga vinnusvæðaskeljar og færa Verk nær samþykktri
+arkitektúrreglu: aðalleiðarkerfið flytur milli vinnusvæða; hliðarstikan leiðir innan
+virka vinnusvæðisins.
+
+Breytingar
+----------
+1. Ysta vinnusvæðastikan er nú hrein icon-rail.
+   - Engir klipptir textar.
+   - Engin lárétt scrollbar.
+   - Tooltip/heiti fæst með title/aria-label.
+   - Heildarbreidd vinstri skeljar minnkar miðað við Phase 1.
+
+2. Verk-hliðarstika er endurröðuð:
+   - Dagskipulag
+   - Verkabanki
+   - Kort
+   - Tæki og búnaður
+   - sérstakur kafli: Stillingar Verks
+     - Verklyklar
+     - Vinnutími
+
+3. Verkalisti + Raðverk eru ekki lengur tvö jafnhá aðalviðmót.
+   - Raunverulega virka Verkalista-/mönnunarvinnan fær heitið Verkabanki.
+   - Gamli Raðverk-placeholderinn er fjarlægður úr aðalnavigation.
+
+4. Innri fliparöðin efst í Work10Dashboard er fjarlægð.
+   - Engin tvítekning milli nýju hliðarstikunnar og gamla Verk-navigation.
+   - Verklyklar og Vinnutími eru ekki lengur tvítekin sem efri aðgerðahnappar.
+
+5. Neðri global spjöld sem birtust undir öllum Verk-sýnum eru fjarlægð:
+   - óvirkt Nýtt verk form
+   - gamalt Raðverk-spjald
+   - tvítekin Staða dagsins
+   - Fljótlegar aðgerðir
+   Þessi atriði voru annaðhvort tvítekin eða barn eldri Verk-skeljar.
+
+6. Dagskipulag / Verkabanki / Kort skipta sýn án nýrrar server-sóknar.
+   - Notaðir eru URL-hashar (#dagskipulag, #verkabanki, #kort).
+   - Þannig helst sama /verk gögnasafn í minni og navigation kallar ekki á nýjan
+     server request eingöngu vegna sýnaskipta.
+
+7. Fjöltyngi:
+   - ný heiti Verkabanki, Kort og Stillingar Verks bætt við íslensku, ensku,
+     pólsku og serbnesku.
+
+Ekki breytt
+-----------
+- GPS-söfnun
+- GPS-gagnalíkan
+- Prisma schema / migration
+- Verk-aðgerðir / server actions
+- route-slóðir
+- mönnunarvél
+- gagnasókn /verk (kemur í sérstökum afkastaáfanga)
+
+Prófun
+------
+1. npx tsc --noEmit
+2. Opna /verk
+3. Smella í vinstri Verk-hliðarstiku á:
+   - Dagskipulag
+   - Verkabanki
+   - Kort
+   Staðfesta að sýnin skiptist án fullrar page-refresh.
+4. Opna Tæki og búnað, Verklykla og Vinnutíma og staðfesta route-navigation.
+5. Staðfesta að ysta vinnusvæðastikan fái ekki horizontal scrollbar.
+6. Prófa Heim og Bókhald til að staðfesta að contextual sidebar breytist rétt.
+
+Næst eftir samþykkt Phase 2
+---------------------------
+- request-scoped session/company/module context til að draga úr endurteknum DB-sóknum
+- skipta Work10Dashboard upp í minni einingar
+- færa mönnunartillögu inn í Dagskipulag sem staðfestan vinnuferil
+- raunveruleg drag/drop tímasetning Verka á tímalínu

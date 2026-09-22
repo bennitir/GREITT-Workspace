@@ -1,0 +1,59 @@
+GLÖGGT – vinnusvæði + contextual hliðarstika – 22.09.2026
+
+Markmið
+-------
+Fyrsta framkvæmanlega útgáfa af eldri samþykktri UI-arkitektúrreglu:
+
+  Aðalleiðarkerfið flytur notanda milli vinnusvæða.
+  Hliðarstikan leiðir innan vinnusvæðisins.
+
+Þessi pakki breytir EKKI route-slóðum, gagnalíkani, GPS-söfnun eða heimildareglum.
+Hann breytir eingöngu desktop navigation-skelinni.
+
+Breyting
+--------
+1. Sidebar verður tvískipt:
+   - mjó vinnusvæðastika vinstra megin;
+   - contextual hliðarstika fyrir valið vinnusvæði.
+
+2. Virkt fyrirtæki er áfram stöðugt vinnusamhengi og fyrirtækjakortið opnar /fyrirtaeki.
+
+3. Vinnusvæði birtast eftir núverandi CompanyModule entitlement og heimildum:
+   Heim, Bókhald, Verk, Vinnustundir, Sala, Birgðir, Laun, Innsýn,
+   Stjórnun og GLÖGGT Admin þar sem við á.
+
+4. Dæmi um contextual Verk-hliðarstiku:
+   - Dagskipulag
+   - Tæki og búnaður
+   - Verklyklar
+   - Vinnutími
+
+5. Dæmi um contextual Bókhald:
+   - Óunnin fylgiskjöl
+   - Skjalasafn
+   - Banki
+   - VSK og skil
+
+6. Gamla tvítekningin þar sem Óunnin/Bókuð/Banki/VSK stóðu öll jafnhátt
+   í aðal-sidebar er því tekin út úr aðalleiðarkerfinu.
+
+Skrár
+-----
+components/Sidebar.tsx
+lib/i18n/navigation.ts
+
+Prófun
+------
+- npx tsc --noEmit
+- prófa með virku fyrirtæki og án virks fyrirtækis
+- prófa ADMIN
+- prófa VIEWER/venjulegan notanda ef tiltækt
+- fara milli Heim, Bókhald, Verk, Innsýn og Stjórnun
+- staðfesta að entitlement-falin vinnusvæði birtist ekki
+- Mobile á að vera ósnert því RootLayout sýnir ekki desktop shell á /mobile
+
+Athugun
+-------
+Þetta er Phase 1 shell. Verkabanki hefur ekki enn sjálfstæða route-slóð og er því
+EKKI settur inn sem falskur linkur. Hann kemur þegar Verk er klofið úr núverandi
+Work10Dashboard monolith í næsta áfanga.

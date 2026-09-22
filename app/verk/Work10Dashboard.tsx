@@ -2,12 +2,10 @@
 
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { useEffect, useMemo, useRef, useState, type DragEvent, type FormEvent, type ReactNode, type UIEvent } from "react";
+import { useEffect, useMemo, useRef, useState, type DragEvent, type FormEvent, type UIEvent } from "react";
 import { applyWorkdayStaffingPlan, assignPersonToWorkPart, persistLegacyFirstWorkPart, updateWorkOrderPlanning } from "@/app/verk/[id]/actions";
 import { work10FormatDate, work10PriorityText, work10StatusText, work10Text } from "@/lib/i18n/work10";
-import { workTimeText } from "@/lib/i18n/work-time";
 import { workResourceKindText, workResourceStatusText, workResourceText } from "@/lib/i18n/work-resources";
-import { workKeyText } from "@/lib/i18n/work-keys";
 import { work10ClockFromMinutes, work10ScheduleRangesOverlap } from "@/lib/work10/scheduling";
 import { resourceTravelSpeedLimitsRoute } from "@/lib/work10/resources";
 import { projectWorkWindowWithBreaks, resolveWorkdayBreaks, type ProjectedBreak } from "@/lib/work10/workday-policy";
@@ -522,19 +520,6 @@ function isInsideVisibleTimeline(startMinutes: number | null, timelineStartMinut
   return startMinutes !== null && startMinutes >= timelineStartMinutes && startMinutes < timelineEndMinutes;
 }
 
-function TabButton({ active, children, onClick }: { active: boolean; children: ReactNode; onClick: () => void }) {
-  return (
-    <button
-      type="button"
-      onClick={onClick}
-      className={`border-b-2 px-4 py-3 text-sm font-medium transition-colors ${
-        active ? "border-blue-600 text-blue-700" : "border-transparent text-slate-600 hover:text-slate-950"
-      }`}
-    >
-      {children}
-    </button>
-  );
-}
 
 function StatusDot({ status }: { status: PersonAvailability }) {
   const color = status === "working" ? "bg-emerald-500" : status === "assigned" ? "bg-amber-400" : "bg-slate-400";
@@ -889,12 +874,21 @@ function yieldToBrowser() {
 export default function Work10Dashboard({ data }: { data: Work10DashboardData }) {
   const router = useRouter();
   const t = work10Text(data.language);
-  const workTimeT = workTimeText(data.language);
   const resourceT = workResourceText(data.language);
-  const workKeyT = workKeyText(data.language);
   const [mainTab, setMainTab] = useState<MainTab>("schedule");
   const [resourceTab, setResourceTab] = useState<ResourceTab>("people");
   const [calendarMode, setCalendarMode] = useState<CalendarMode>("day");
+
+  useEffect(() => {
+    const syncMainTabFromHash = () => {
+      if (window.location.hash === "#verkabanki") setMainTab("list");
+      else if (window.location.hash === "#kort") setMainTab("map");
+      else setMainTab("schedule");
+    };
+    syncMainTabFromHash();
+    window.addEventListener("hashchange", syncMainTabFromHash);
+    return () => window.removeEventListener("hashchange", syncMainTabFromHash);
+  }, []);
   const activeWorkOrders = useMemo(
     () =>
       data.workOrders
@@ -3071,14 +3065,6 @@ export default function Work10Dashboard({ data }: { data: Work10DashboardData })
     void assignEmployeeToPart(employeeId, work, part);
   };
 
-  const inProgressCount = data.workOrders.filter((work) => work.status === "IN_PROGRESS").length;
-  const newCount = data.workOrders.filter(
-    (work) => work.status === "DRAFT" || work.status === "READY",
-  ).length;
-  const completedCount = data.workOrders.filter((work) => work.status === "COMPLETED").length;
-  const uniqueLoggedPeople = new Set(selectedDayLabor.map((entry) => entry.employeeId).filter((id): id is number => id !== null)).size;
-  const machineResourceCount = data.resources.filter((resource) => ["MACHINE", "VEHICLE", "TOOL"].includes(resource.kind)).length;
-
   const shiftDate = (days: number) => {
     setSelectedDate((current) => {
       const next = new Date(current);
@@ -3104,13 +3090,7 @@ export default function Work10Dashboard({ data }: { data: Work10DashboardData })
               </label>
             </div>
             <div className="flex items-center gap-3 text-sm text-slate-600">
-              <Link href="/verk/vinnutimi" className="rounded-lg border px-3 py-2 font-semibold text-slate-700 hover:bg-slate-50">
-                {workTimeT.nav}
-              </Link>
-              <Link href="/verk/lyklar" className="rounded-lg border px-3 py-2 font-semibold text-slate-700 hover:bg-slate-50">
-                {workKeyT.nav}
-              </Link>
-              <Link href="/verk/nytt" className="rounded-lg border px-3 py-2 font-semibold text-blue-700 hover:bg-blue-50">
+              <Link href="/verk/nytt" className="rounded-lg border border-blue-200 bg-blue-50 px-3 py-2 font-semibold text-blue-700 hover:bg-blue-100">
                 ＋ {t.newWork}
               </Link>
             </div>
@@ -3154,28 +3134,6 @@ export default function Work10Dashboard({ data }: { data: Work10DashboardData })
               </div>
             </div>
 
-            <div className="mt-4 flex overflow-x-auto border-b">
-              <TabButton active={mainTab === "schedule"} onClick={() => setMainTab("schedule")}>{t.tabs.schedule}</TabButton>
-              <TabButton active={mainTab === "list"} onClick={() => setMainTab("list")}>{t.tabs.list}</TabButton>
-              <TabButton active={mainTab === "queue"} onClick={() => setMainTab("queue")}>{t.tabs.queue}</TabButton>
-              <TabButton active={mainTab === "map"} onClick={() => setMainTab("map")}>{t.tabs.map}</TabButton>
-              <Link
-                href="/verk/tilfong"
-                className="whitespace-nowrap border-b-2 border-transparent px-4 py-3 text-sm font-medium text-slate-600 transition-colors hover:text-slate-950"
-              >
-                {resourceT.equipmentNav}
-              </Link>
-              {machinesEnabled && (
-                <TabButton
-                  active={mainTab === "machines"}
-                  onClick={() => setMainTab("machines")}
-                >
-                  {t.tabs.machines}
-                </TabButton>
-              )}
-              <TabButton active={mainTab === "docs"} onClick={() => setMainTab("docs")}>{t.tabs.docs}</TabButton>
-              <TabButton active={mainTab === "reports"} onClick={() => setMainTab("reports")}>{t.tabs.reports}</TabButton>
-            </div>
           </div>
 
           {mainTab === "schedule" ? (
@@ -3774,10 +3732,13 @@ export default function Work10Dashboard({ data }: { data: Work10DashboardData })
           ) : (
             <div className="p-5">
               <div className="rounded-2xl border bg-slate-50 p-6">
-                <h2 className="text-xl font-bold text-slate-950">
-                  {mainTab === "list" ? t.tabs.list : mainTab === "queue" ? t.tabs.queue : mainTab === "map" ? t.tabs.map : mainTab === "machines" ? t.tabs.machines : mainTab === "docs" ? t.tabs.docs : t.tabs.reports}
-                </h2>
-                {mainTab !== "list" && mainTab !== "machines" && mainTab !== "map" ? <p className="mt-2 max-w-3xl text-sm leading-6 text-slate-600">{t.tabPlaceholder}</p> : null}
+                <div className="flex flex-col gap-1 sm:flex-row sm:items-end sm:justify-between">
+                  <div>
+                    <p className="text-[11px] font-bold uppercase tracking-[0.12em] text-slate-400">{t.title}</p>
+                    <h2 className="text-xl font-bold text-slate-950">{mainTab === "map" ? t.tabs.map : t.tabs.list}</h2>
+                  </div>
+                  {mainTab === "list" ? <p className="text-xs text-slate-500">{filteredActiveWorkOrders.length} · {t.currentData}</p> : null}
+                </div>
                 {mainTab === "map" ? (
                   <CompanyWorkTrackMap
                     dateIso={isoDateFromDate(selectedDate)}
@@ -3912,93 +3873,7 @@ export default function Work10Dashboard({ data }: { data: Work10DashboardData })
           )}
         </section>
 
-        <section
-          className={`grid gap-4 ${
-            machinesEnabled
-              ? "xl:grid-cols-[1.15fr_1fr_1fr_0.95fr]"
-              : "xl:grid-cols-[1.25fr_1fr_1fr]"
-          }`}
-        >
-          <div className="rounded-2xl border bg-white p-4 shadow-sm">
-            <div className="flex items-center justify-between"><h2 className="font-bold text-slate-950">{t.newWork}</h2><span className="rounded-full bg-blue-100 px-2 py-1 text-[11px] font-bold text-blue-700">{t.basicInfoStep}</span></div>
-            <div className="mt-4 grid gap-3 md:grid-cols-2">
-              <label className="text-xs font-medium text-slate-600">{t.workTitle}<input disabled placeholder={t.workTitlePlaceholder} className="mt-1 w-full rounded-lg border bg-slate-50 px-3 py-2 text-sm" /></label>
-              <label className="text-xs font-medium text-slate-600">{t.description}<input disabled placeholder={t.shortDescription} className="mt-1 w-full rounded-lg border bg-slate-50 px-3 py-2 text-sm" /></label>
-              <label className="text-xs font-medium text-slate-600">{t.workKey}<input disabled placeholder={t.selectedLater} className="mt-1 w-full rounded-lg border bg-slate-50 px-3 py-2 text-sm" /></label>
-              <label className="text-xs font-medium text-slate-600">{t.priority}<input disabled value={work10PriorityText("NORMAL", data.language)} readOnly className="mt-1 w-full rounded-lg border bg-slate-50 px-3 py-2 text-sm" /></label>
-            </div>
-            <div className="mt-4 flex items-center justify-between gap-3"><p className="text-xs text-slate-500">{t.saveDisabled}</p><button disabled className="rounded-xl bg-blue-600 px-4 py-2 text-sm font-semibold text-white opacity-50">{t.nextStep}</button></div>
-          </div>
 
-          <div className="rounded-2xl border bg-white p-4 shadow-sm">
-            <div className="flex items-center justify-between"><h2 className="font-bold text-slate-950">{t.tabs.queue}</h2><span className="text-xs text-slate-400">{completedCount} {t.completedSuffix}</span></div>
-            <div className="mt-3 space-y-2">
-              {activeWorkOrders.slice(0, 6).map((work, index) => (
-                <Link key={work.id} href={`/verk/${work.id}`} className="flex w-full items-center gap-3 rounded-lg px-2 py-2 text-left hover:bg-slate-50">
-                  <span className={`flex h-6 w-6 items-center justify-center rounded-md text-xs font-bold ${work.status === "COMPLETED" ? "bg-emerald-100 text-emerald-700" : work.status === "IN_PROGRESS" ? "bg-blue-100 text-blue-700" : "bg-slate-100 text-slate-600"}`}>{work.status === "COMPLETED" ? "✓" : index + 1}</span>
-                  <span className="min-w-0 flex-1 truncate text-sm font-medium text-slate-800">{work.title}</span>
-                  <span className={`text-[11px] ${work.readyToClose ? "font-semibold text-amber-700" : "text-slate-400"}`}>{work.readyToClose ? t.readyToCloseBadge : work10StatusText(work.status, data.language)}</span>
-                </Link>
-              ))}
-              {activeWorkOrders.length === 0 && <p className="rounded-xl border border-dashed p-4 text-sm text-slate-500">{t.noWorkToShow}</p>}
-            </div>
-          </div>
-
-          {machinesEnabled && (
-            <div className="rounded-2xl border bg-white p-4 shadow-sm">
-              <div className="flex items-center justify-between">
-                <h2 className="font-bold text-slate-950">{t.tabs.machines}</h2>
-                <button
-                  type="button"
-                  className="text-xs font-semibold text-blue-700"
-                  onClick={() => setMainTab("machines")}
-                >
-                  {t.seeAll}
-                </button>
-              </div>
-              {machineResourceCount === 0 ? (
-                <div className="mt-4 rounded-xl border border-dashed bg-slate-50 p-5 text-sm leading-6 text-slate-500">{t.machinesEmpty}</div>
-              ) : (
-                <div className="mt-4 space-y-2">
-                  {data.resources.filter((resource) => ["MACHINE", "VEHICLE", "TOOL"].includes(resource.kind)).slice(0, 5).map((resource) => (
-                    <Link key={resource.id} href="/verk/tilfong" className="flex items-center justify-between gap-3 rounded-xl border px-3 py-2 hover:bg-slate-50">
-                      <div className="min-w-0"><p className="truncate text-sm font-semibold text-slate-900">{resource.name}</p><p className="text-xs text-slate-500">{workResourceKindText(resource.kind, data.language)} · {resource.code}</p></div>
-                      <span className="shrink-0 text-xs font-semibold text-slate-600">{workResourceStatusText(resource.status, data.language)}</span>
-                    </Link>
-                  ))}
-                </div>
-              )}
-            </div>
-          )}
-
-          <div className="space-y-4">
-            <div className="rounded-2xl border bg-white p-4 shadow-sm">
-              <div className="flex items-center justify-between"><h2 className="font-bold text-slate-950">{t.todayStatus}</h2><span className="text-[11px] text-slate-400">{t.currentData}</span></div>
-              <div className="mt-4 grid grid-cols-2 gap-2">
-                <div className="rounded-xl bg-blue-50 p-3"><p className="text-2xl font-bold text-blue-700">{inProgressCount}</p><p className="text-xs text-blue-700">{t.worksInProgress}</p></div>
-                <div className="rounded-xl bg-red-50 p-3"><p className="text-2xl font-bold text-red-700">{newCount}</p><p className="text-xs text-red-700">{t.newWorks}</p></div>
-                <div className="rounded-xl bg-emerald-50 p-3"><p className="text-2xl font-bold text-emerald-700">{uniqueLoggedPeople}/{data.people.length}</p><p className="text-xs text-emerald-700">{t.peopleWithTimeToday}</p></div>
-                {machinesEnabled && (
-                  <div className="rounded-xl bg-slate-100 p-3">
-                    <p className="text-2xl font-bold text-slate-700">{machineResourceCount}</p>
-                    <p className="text-xs text-slate-600">{t.machinesConnected}</p>
-                  </div>
-                )}
-              </div>
-            </div>
-
-            <div className="rounded-2xl border bg-white p-4 shadow-sm">
-              <h2 className="font-bold text-slate-950">{t.quickActions}</h2>
-              <div className="mt-3 grid grid-cols-2 gap-2 text-xs font-semibold">
-                <Link href="/verk/nytt" className="rounded-xl border px-3 py-3 text-center text-blue-700 hover:bg-blue-50">＋ {t.newWork}</Link>
-                <button disabled className="rounded-xl border px-3 py-3 text-slate-400">☷ {t.newQueue}</button>
-                <Link href="/starfsmenn" className="rounded-xl border px-3 py-3 text-center text-blue-700 hover:bg-blue-50">＋ {t.addEmployee}</Link>
-                <Link href="/verk/tilfong" className="rounded-xl border px-3 py-3 text-center text-violet-700 hover:bg-violet-50">＋ {resourceT.manageResources}</Link>
-                <button type="button" onClick={() => setMainTab("map")} className="rounded-xl border px-3 py-3 text-blue-700 hover:bg-blue-50">⌖ {t.viewMap}</button>
-              </div>
-            </div>
-          </div>
-        </section>
       </div>
 
       {staffingWork ? (() => {

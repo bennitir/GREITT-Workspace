@@ -1,0 +1,9 @@
+GLÖGGT – Verk shell client-side view switch
+22.09.2026
+
+Lagfæring á Phase 2:
+- Dagskipulag / Verkabanki / Kort skipta nú sýn strax þegar notandi er þegar á /verk.
+- Engin page reload og engin ný server-sókn þarf við innri sýnaskipti.
+- URL hash er áfram uppfært fyrir bookmark/back/forward samhengi.
+- Navigation frá öðrum Verk-undirsíðum yfir á /verk#... notar áfram Next Link eðlilega.
+- GPS-söfnun er ósnert.
