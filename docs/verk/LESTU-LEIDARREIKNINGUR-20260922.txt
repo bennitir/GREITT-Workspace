@@ -1,0 +1,32 @@
+GLÖGGT – sjálfvirkur leiðarreikningur úr HMS-hnitum
+Dagsetning: 22.09.2026
+
+Markmið
+- Reikna raunhæfa vegalengd og grunnferðatíma frá starfsstöð að verkstað.
+- Nota HMS-hnit sem þegar eru í GLÖGGT.
+- Vista niðurstöðuna í núverandi OperationalTravelRoute svo Mobile og Dagsmönnun lesi sömu leið.
+- Halda raunskráðum akstri starfsmanns algjörlega aðskildum frá áætlun.
+
+Flæði
+1. Upphafsstaður og verkstaður eru OperationalLocation.
+2. Ef hnit vantar á eldri/manuelt skráðan stað reynir GLÖGGT fyrst að para heimilisfangið við staðbundna HMS Staðfangaskrá og fylla hnit.
+3. Ef bæði hnit liggja fyrir er vegleið sótt með Valhalla/OpenStreetMap.
+4. distanceKm og defaultMinutes eru vistuð/cached í OperationalTravelRoute.
+5. Mobile Dagbók notar leiðina við upphaf færslu.
+6. Ef valin vinnuvél/farartæki keyrir sjálft og ferðahraði þess gefur lengri tíma en venjuleg vegleið, ræður hægari tíminn.
+7. Nýtt Verk reiknar/cachar leið frá sjálfgefinni starfsstöð að verkstað, svo Dagsmönnun geti lesið hana.
+
+Mikilvægt
+- Engin ný migration fylgir þessari breytingu; núverandi OperationalTravelRoute er notuð.
+- Bilun eða timeout hjá leiðarveitu má ekki stöðva stofnun Verks eða Dagbókarfærslu.
+- Handvirkar/importaðar leiðir eru ekki yfirskrifaðar af sjálfvirka reikningnum.
+- Sjálfvirkar leiðir eru merktar source=VALHALLA_OSM.
+- Valhalla demo þjónustan er aðeins hentug fyrir þróun/pilot og sanngjarna notkun. Fyrir almenna sölu þarf síðar annaðhvort eigin Valhalla/OSRM þjónustu eða samningsbundna leiðarveitu.
+
+Stillingar
+- GLOGGT_ROUTING_BASE_URL getur bent á eigin Valhalla þjónustu.
+- GLOGGT_ROUTING_DISABLED=1 slekkur á sjálfvirkum leiðarköllum.
+
+Gögn fyrst
+- Leið er aðeins sótt þegar hún vantar eða þegar eldri sjálfvirk leið má endurnýjast.
+- Vistaðar leiðir eru endurnýttar í stað þess að kalla á leiðarveitu við hverja skjábirtingu.

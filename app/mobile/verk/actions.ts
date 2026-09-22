@@ -11,6 +11,7 @@ import { removeWorkEvidenceMedia, saveWorkEvidencePhoto } from "@/lib/work10/wor
 import { requireMobileWorkEmployee } from "@/lib/work10/mobile-access";
 import { operationalLocationLabel } from "@/lib/work10/location-format";
 import { resolveHmsOperationalLocation } from "@/lib/work10/iceland-address";
+import { ensureOperationalTravelRoute } from "@/lib/work10/routing";
 import {
   defaultResourceUnit,
   isWork10PersistentResourceKind,
@@ -621,14 +622,10 @@ export async function startMobileDiaryEntry(formData: FormData) {
       estimatedTravelKm = 0;
       travelEstimateSource = "SAME_LOCATION";
     } else {
-      const route = await prisma.operationalTravelRoute.findFirst({
-        where: {
-          companyId: actor.companyId,
-          fromLocationId: travelFromLocation.id,
-          toLocationId: destinationLocation.id,
-          isActive: true,
-        },
-        select: { distanceKm: true, defaultMinutes: true, source: true },
+      const route = await ensureOperationalTravelRoute({
+        companyId: actor.companyId,
+        fromLocationId: travelFromLocation.id,
+        toLocationId: destinationLocation.id,
       });
       if (route) {
         estimatedTravelMinutes = route.defaultMinutes;

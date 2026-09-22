@@ -262,7 +262,10 @@ export default async function MobileWorkDiaryPage() {
               <p className="mt-1 text-sm text-emerald-900">{t.diaryLocation}: {activeEntry.travelToLabelSnapshot ?? activeEntry.operationalLocation?.name ?? activeEntry.locationText}</p>
             ) : null}
             {(activeEntry.estimatedTravelMinutes !== null || activeEntry.estimatedTravelKm !== null) ? (
-              <p className="mt-1 text-sm text-emerald-900">{t.diaryEstimatedTravel}: {travelSummary(activeEntry.estimatedTravelMinutes, activeEntry.estimatedTravelKm, actor.language)}</p>
+              <>
+                <p className="mt-1 text-sm text-emerald-900">{t.diaryEstimatedTravel}: {travelSummary(activeEntry.estimatedTravelMinutes, activeEntry.estimatedTravelKm, actor.language)}</p>
+                {activeEntry.travelEstimateSource === "VALHALLA_OSM" ? <p className="mt-1 text-xs text-emerald-800">{t.routeDataCredit}</p> : null}
+              </>
             ) : null}
             {(activeEntry.travelMinutes !== null || activeEntry.travelKm !== null) ? (
               <p className="mt-1 text-sm text-emerald-900">{t.diaryRecordedTravel}: {travelSummary(activeEntry.travelMinutes, activeEntry.travelKm, actor.language)}</p>
@@ -370,7 +373,10 @@ export default async function MobileWorkDiaryPage() {
                       <p className="mt-1 text-sm text-slate-700">{t.diaryLocation}: {entry.travelToLabelSnapshot ?? entry.operationalLocation?.name ?? entry.locationText}</p>
                     ) : null}
                     {(entry.estimatedTravelMinutes !== null || entry.estimatedTravelKm !== null) ? (
-                      <p className="mt-1 text-sm text-slate-700">{t.diaryEstimatedTravel}: {travelSummary(entry.estimatedTravelMinutes, entry.estimatedTravelKm, actor.language)}</p>
+                      <>
+                        <p className="mt-1 text-sm text-slate-700">{t.diaryEstimatedTravel}: {travelSummary(entry.estimatedTravelMinutes, entry.estimatedTravelKm, actor.language)}</p>
+                        {entry.travelEstimateSource === "VALHALLA_OSM" ? <p className="mt-1 text-xs text-slate-500">{t.routeDataCredit}</p> : null}
+                      </>
                     ) : null}
                     {(entry.travelMinutes !== null || entry.travelKm !== null) ? (
                       <p className="mt-1 text-sm text-slate-700">{t.diaryRecordedTravel}: {travelSummary(entry.travelMinutes, entry.travelKm, actor.language)}</p>

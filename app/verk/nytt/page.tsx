@@ -16,6 +16,7 @@ import { normalizeUiLanguage } from "@/lib/i18n/ui";
 import { parseWork10CompletionDeadline, parseWork10PlannedDate, parseWork10PlannedStartParts } from "@/lib/work10/scheduling";
 import { operationalLocationAddress, operationalLocationLabel } from "@/lib/work10/location-format";
 import { resolveHmsOperationalLocation } from "@/lib/work10/iceland-address";
+import { ensureCompanyBaseRoute } from "@/lib/work10/routing";
 
 async function createWorkOrder(formData: FormData) {
   "use server";
@@ -195,6 +196,14 @@ async function createWorkOrder(formData: FormData) {
 
     return work;
   });
+
+  // Leiðin er reiknuð utan gagnagrunnstransaction. Bilun hjá leiðarveitu má
+  // ekki koma í veg fyrir að Verk stofnist; Dagsmönnun getur þá áfram unnið
+  // án leiðar þar til hún fæst síðar.
+  if (operationalLocationId) {
+    await ensureCompanyBaseRoute({ companyId, toLocationId: operationalLocationId });
+  }
+
   revalidatePath("/verk");
   redirect("/verk");
 }
