@@ -5,6 +5,7 @@ import MobileGpsTracker from "@/components/work/MobileGpsTracker";
 import OperationalLocationAutocomplete, { type LocationOption } from "@/components/work/OperationalLocationAutocomplete";
 import MobileDiaryWorkKeyRequirements from "@/components/work/MobileDiaryWorkKeyRequirements";
 
+import { workGpsText } from "@/lib/i18n/work-gps";
 import { workMobileText } from "@/lib/i18n/work-mobile";
 import { workResourceKindText, workResourceTravelModeText } from "@/lib/i18n/work-resources";
 import { prisma } from "@/lib/prisma";
@@ -112,6 +113,7 @@ function diaryResourceSummary(entry: {
 export default async function MobileWorkDiaryPage() {
   const actor = await getMobileWorkActor();
   const t = workMobileText(actor.language);
+  const gps = workGpsText(actor.language);
 
   if (!actor.employee) {
     return (
@@ -178,6 +180,7 @@ export default async function MobileWorkDiaryPage() {
         operationalLocation: { select: { id: true, code: true, name: true } },
         travelFromOperationalLocation: { select: { id: true, code: true, name: true } },
         workResource: { select: { id: true, code: true, name: true, travelMode: true, planningTravelSpeedKmh: true } },
+        workTrackSession: { select: { id: true, pointCount: true, totalDistanceM: true, endedAt: true } },
       },
       orderBy: { startedAt: "desc" },
       take: 30,
@@ -430,6 +433,14 @@ export default async function MobileWorkDiaryPage() {
                       <p className="mt-1 text-sm text-slate-700">{t.diaryRecordedTravel}: {travelSummary(entry.travelMinutes, entry.travelKm, actor.language)}</p>
                     ) : null}
                     {entry.note ? <p className="mt-2 whitespace-pre-wrap text-sm leading-6 text-slate-600">{entry.note}</p> : null}
+                    {entry.workTrackSession && entry.workTrackSession.pointCount > 0 ? (
+                      <Link
+                        href={`/mobile/verk/dagbok/${entry.id}/kort`}
+                        className="mt-3 inline-flex min-h-11 w-full items-center justify-center rounded-xl border border-blue-200 bg-blue-50 px-4 text-sm font-bold text-blue-800"
+                      >
+                        {gps.openMap} · {entry.workTrackSession.pointCount} {gps.points}
+                      </Link>
+                    ) : null}
                   </article>
                 );
               })}

@@ -1,0 +1,30 @@
+GLÖGGT – GPS-kort fyrir eina vinnulotu – 22.09.2026
+
+Markmið
+- Sýna raunverulegt GPS-track lokaðrar Dagbókarvinnulotu á korti.
+- Nota núverandi WorkTrackSession / WorkTrackPoint gögn; engin migration.
+- Halda þessum fyrsta áfanga afmörkuðum áður en sameiginlegt verkstjórakort fyrir margar vélar er byggt.
+
+Komið
+- Ný síða: /mobile/verk/dagbok/[id]/kort
+- Aðgangur bundinn við sama fyrirtæki og sama Employee og Dagbókarfærslan.
+- Lokaðar Dagbókarfærslur með GPS-punktum fá hnapp á Nýleg Dagbók.
+- Kortið passar sjálfkrafa utan um trackið.
+- Grænn punktur = upphaf; rauður punktur = lok.
+- Zoom + / - og Fit.
+- Sýnir punktatalningu, skráða track-vegalengd, upphaf/lok, verklykil, tæki og verkstað þegar gögn eru til.
+- Kortagögn: OpenStreetMap; trackið sjálft kemur úr GLÖGGT WorkTrackPoint.
+- NEXT_PUBLIC_GLOGGT_MAP_TILE_URL má nota síðar til að skipta um tile-provider án þess að breyta kortakomponentinum.
+
+Mikilvæg mörk
+- Þetta er kort fyrir eina vinnulotu, ekki enn sameiginlegt rauntímakort margra véla.
+- Engin mynd er enn fest við stað á trackinu; það verður sér næsta lag.
+- Engin leið/svæði er enn merkt sem búið/eftir; það kemur með coverage-plan / verkstjórakorti.
+- Fyrir umfangsmikla production-notkun þarf að velja korta/tile-þjónustu með viðeigandi afkastagetu og skilmálum. Núverandi sjálfgefið tile-endpoint hentar fyrst og fremst prófun og lítilli notkun.
+
+Prófun
+1. Ljúka GPS-virkri Dagbókarvinnulotu.
+2. Opna Nýleg Dagbók.
+3. Smella GPS-kort á færslunni.
+4. Staðfesta að trackið birtist og að upphaf/lok passi við raunleið.
+5. Prófa +, -, Fit og aftur í Dagbók.
