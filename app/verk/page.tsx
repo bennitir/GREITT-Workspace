@@ -18,7 +18,7 @@ export default async function Verk10Page() {
   const companyId = await requireCompanyModule("verk");
   const effectiveUser = await getEffectiveUser();
 
-  const [workOrders, companyEmployees, workResources, workCapabilitySettings, assignmentHistory, userSettings, workplaceScheduleProfiles, laborAgreementProfiles, operationalTravelRoutes] = await Promise.all([
+  const [workOrders, companyEmployees, workResources, workCapabilitySettings, assignmentHistory, userSettings, workplaceScheduleProfiles, laborAgreementProfiles, operationalTravelRoutes, workDiaryEntries] = await Promise.all([
     prisma.workOrder.findMany({
       where: { companyId },
       include: {
@@ -106,6 +106,7 @@ export default async function Verk10Page() {
           select: { workScopeId: true },
         },
         incidentalWorkMode: true,
+        workExecutionMode: true,
         qualifications: {
           select: { title: true, qualificationCodes: true, validUntil: true },
           orderBy: { createdAt: "asc" },
@@ -156,6 +157,21 @@ export default async function Verk10Page() {
       },
       orderBy: [{ fromLocationId: "asc" }, { toLocationId: "asc" }],
     }),
+    prisma.employeeWorkDiaryEntry.findMany({
+      where: { companyId, voidedAt: null },
+      select: {
+        id: true,
+        employeeId: true,
+        workDate: true,
+        startedAt: true,
+        endedAt: true,
+        durationMinutes: true,
+        title: true,
+        operationalLocationId: true,
+        workKey: true,
+      },
+      orderBy: [{ workDate: "desc" }, { startedAt: "desc" }],
+    }),
   ]);
 
   const employeeByUserId = new Map(
@@ -202,6 +218,21 @@ export default async function Verk10Page() {
     capabilities: {
       machines: isWorkCapabilityEnabled("machines", workCapabilitySettings),
     },
+    independentLabor: workDiaryEntries.map((entry) => ({
+      id: `diary-${entry.id}`,
+      userId: null,
+      employeeId: entry.employeeId,
+      userName: null,
+      workDate: entry.workDate.toISOString(),
+      startedAt: entry.startedAt.toISOString(),
+      endedAt: iso(entry.endedAt),
+      durationMinutes: entry.durationMinutes,
+      description: entry.title,
+      source: "EMPLOYEE_WORK_DIARY" as const,
+      workPartId: null,
+      operationalLocationId: entry.operationalLocationId,
+      workKey: entry.workKey,
+    })),
     workdayProfiles: workplaceScheduleProfiles.map((profile) => ({
       id: profile.id,
       name: profile.name,
@@ -442,6 +473,7 @@ export default async function Verk10Page() {
       staffingRoleIds: employee.staffingRoles.map((row) => row.staffingRoleId),
       workScopeIds: employee.workScopes.map((row) => row.workScopeId),
       incidentalWorkMode: employee.incidentalWorkMode,
+      workExecutionMode: employee.workExecutionMode,
       qualificationCodes: employee.qualifications
         .filter((qualification) => !qualification.validUntil || qualification.validUntil >= new Date())
         .flatMap((qualification) => (qualification.qualificationCodes ?? "").split(/[;,\s]+/))

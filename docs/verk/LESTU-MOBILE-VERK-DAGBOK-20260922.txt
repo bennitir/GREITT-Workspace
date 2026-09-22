@@ -1,0 +1,111 @@
+GLÖGGT – Mobile + Verk + Dagbók
+22. september 2026
+
+Markmið
+------
+Tengja sjálfstæða og blandaða vinnu við sama raunverulega rekstrarsannleik og Verk án þess að búa til gervi-Verk fyrir tiltekt, undirbúning, lager, búnað eða önnur sjálfstýrð störf.
+
+Meginregla
+----------
+Úthlutað Verk:
+  Verk -> Verkþáttur -> WorkPartLaborFact
+
+Sjálfstýrð vinna:
+  Employee -> EmployeeWorkDiaryEntry
+
+Bæði eru raunverulegar vinnustaðreyndir. Verk/Dagsmönnun má lesa bæði til að sjá hvað starfsmaður er raunverulega að gera, en Dagbókarfærsla verður ekki sjálfkrafa að WorkOrder eða bókun.
+
+Vinnuhamir starfsmanns
+----------------------
+Nýr Employee.workExecutionMode:
+- ASSIGNED: úthlutuð vinna. Dagbók er ekki virk.
+- SELF_DIRECTED: sjálfstæð vinna / Dagbók. Starfsmaður fer ekki sjálfkrafa inn í Dagsmönnun.
+- MIXED: bæði úthlutuð Verk og sjálfstæð Dagbók. Starfsmaður má áfram vera sjálfvirkur kandídat í Dagsmönnun.
+
+Mikilvægt:
+SELF_DIRECTED er ekki bann við handvirkri úthlutun. Ef stjórnandi úthlutar slíkum starfsmanni meðvitað á Verk telst sú úthlutun áfram raunveruleg. Hamurinn kemur aðeins í veg fyrir sjálfvirka úthlutun.
+
+Mobile Dagbók v1
+-----------------
+Ný síða:
+/mobile/verk/dagbok
+
+Starfsmaður í SELF_DIRECTED eða MIXED getur:
+- hafið sjálfstæða vinnu,
+- skráð hvað er verið að gera,
+- skráð verklykil sem samhengi,
+- valið rekstrarstað eða skrifað frjálsa staðsetningu,
+- skráð akstur í mínútum og km,
+- skráð athugasemd,
+- stöðvað vinnu og vistað raunverulegan tíma,
+- séð nýlegar dagbókarfærslur og heild dagsins.
+
+Ein virk tímamæling
+-------------------
+Mobile leyfir ekki að sami starfsmaður hafi samtímis:
+- virkan WorkPartLaborFact tímamæli og virka Dagbók,
+- tvær virkar Dagbókarfærslur.
+
+WorkPart-start athugar nú einnig virka Dagbók og Dagbókar-start athugar virkan WorkPart-tímamæli.
+
+Verk / Dagsmönnun
+------------------
+Desktop Verk les EmployeeWorkDiaryEntry sem independentLabor.
+Dagbókarvinna:
+- birtist í raunvinnu/tímalínu starfsmanns,
+- merkir starfsmann sem virkan meðan tímamælir gengur,
+- tekur þátt í raunverulegu uppteknitímabili þegar dagsáætlun er endurreiknuð,
+- getur fært rekstrarlegan síðasta stað starfsmanns ef rekstrarstaður er skráður,
+- birtist í vinnustundasögu starfsmanns.
+
+Sjálfstýrðir starfsmenn eru teknir út úr sjálfvirkum Dagsmönnunar-kandídötum og úr sjálfvirkri skipulagsgetu/tímabilsnýtingu. Þannig líta þeir ekki út fyrir að vera vannýttir bara vegna þess að kerfið úthlutaði þeim fáum Verkum.
+
+Starfsmannaspjald
+-----------------
+Vinnuhamur er stilltur á starfsmannaspjaldi undir vinnufyrirkomulagi.
+Raunmínútur á starfsmannaspjaldi telja bæði WorkPartLaborFact og EmployeeWorkDiaryEntry.
+
+Fjöltyngi
+---------
+Nýir Dagbókar- og vinnuhamstextar eru í is/en/pl/sr.
+Employee.preferredLanguage hefur forgang í Mobile; UserSettings.interfaceLanguage er fallback.
+
+Prisma
+------
+Ný migration:
+prisma/migrations/20260922080000_add_employee_work_diary/migration.sql
+
+Hún bætir við:
+- Employee.workExecutionMode
+- EmployeeWorkDiaryEntry
+- tengingum við Company, Employee, OperationalLocation og Audit User
+- indexum og grunn-check constraints.
+
+Ekki í þessum fyrsta Dagbókarpakka
+----------------------------------
+Dagbók v1 festir sannleikslagið og Mobile <-> Verk tenginguna fyrst. Eftir stendur að tengja sjálfstæða Dagbók nánar við:
+- myndir,
+- efnisnotkun,
+- tæki/auðlindanotkun,
+- leiðréttingu/ógildingu dagbókarfærslu,
+- samþykkt/frágang þar sem fyrirtæki þarf slíkt ferli.
+
+Þeir hlutir eiga að tengjast EmployeeWorkDiaryEntry eða sameiginlegum rekstraratburðum; ekki á að búa til gervi-Verk til að fá þá virkni.
+
+Uppsetning / prófun
+-------------------
+Eftir að pakkinn er afritaður yfir C:\GLÖGGT:
+
+1. npx prisma validate
+2. npx prisma generate
+3. npx prisma migrate deploy
+4. npx tsc --noEmit
+
+Síðan raunpróf:
+1. Velja starfsmann og stilla ASSIGNED. Dagbók á að vera óvirk.
+2. Stilla SELF_DIRECTED. Dagbók á að vera virk og starfsmaður á ekki að koma sjálfkrafa í Dagsmönnun.
+3. Hefja Dagbók í Mobile. Starfsmaður á að sjást sem virkur í Verk.
+4. Reyna að hefja Verk á meðan Dagbók gengur. Það á að stöðvast með skýrri villu.
+5. Stöðva Dagbók. Tíminn á að birtast í vinnustundasögu starfsmanns og teljast með raunmínútum.
+6. Stilla MIXED. Starfsmaður á bæði að geta skráð Dagbók og komið til greina í sjálfvirkri Dagsmönnun þegar enginn virkur tímamælir stangast á.
+7. Keyra Dagsmönnun/Tímabilsmönnun og staðfesta að SELF_DIRECTED starfsmaður sé ekki sjálfvirkt úthlutaður og ekki sýndur sem laus skipulagsgeta.

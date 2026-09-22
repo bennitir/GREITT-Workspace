@@ -21,6 +21,7 @@ export async function getMobileWorkActor() {
         fullName: true,
         preferredLanguage: true,
         jobTitle: true,
+        workExecutionMode: true,
       },
     }),
     prisma.userSettings.findUnique({
@@ -34,7 +35,7 @@ export async function getMobileWorkActor() {
   }
 
   const language = normalizeUiLanguage(
-    settings?.interfaceLanguage || employee?.preferredLanguage || "is",
+    employee?.preferredLanguage || settings?.interfaceLanguage || "is",
   );
 
   const teamMemberships = employee

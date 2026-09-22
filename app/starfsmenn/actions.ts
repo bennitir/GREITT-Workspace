@@ -11,6 +11,7 @@ const QUALIFICATION_TYPES = new Set(["EDUCATION", "DRIVING_LICENSE", "MACHINE", 
 const LANGUAGES = new Set(["is", "en", "pl", "sr"]);
 const WORK_SCHEDULE_TYPES = new Set(["DAY", "DAY_FIXED_OVERTIME", "SHIFT", "ROLLING_SHIFT", "FLEXIBLE", "OTHER"]);
 const INCIDENTAL_WORK_MODES = new Set(["NEVER", "MANUAL_ONLY", "AUTO_IF_NEEDED"]);
+const WORK_EXECUTION_MODES = new Set(["ASSIGNED", "SELF_DIRECTED", "MIXED"]);
 
 async function requireEmployeeManager() {
   const companyId = await requireActiveCompanyReadAccess();
@@ -168,6 +169,7 @@ export async function updateEmployee(formData: FormData) {
   const laborAgreementProfileId = optionalId(formData.get("laborAgreementProfileId"));
   const shiftPatternId = optionalId(formData.get("shiftPatternId"));
   const incidentalWorkModeRaw = String(formData.get("incidentalWorkMode") ?? "NEVER");
+  const workExecutionModeRaw = String(formData.get("workExecutionMode") ?? "ASSIGNED");
   const departmentId = optionalId(formData.get("departmentId"));
   const selectedTeamIds = Array.from(new Set(formData.getAll("teamIds").map((value) => Number(value)).filter((value) => Number.isInteger(value) && value > 0)));
   const primaryTeamId = optionalId(formData.get("primaryTeamId"));
@@ -276,6 +278,7 @@ export async function updateEmployee(formData: FormData) {
         workScheduleNotes: clean(formData.get("workScheduleNotes")),
         incidentalWorkMode: INCIDENTAL_WORK_MODES.has(incidentalWorkModeRaw) ? incidentalWorkModeRaw : "NEVER",
         incidentalWorkNotes: clean(formData.get("incidentalWorkNotes")),
+        workExecutionMode: WORK_EXECUTION_MODES.has(workExecutionModeRaw) ? workExecutionModeRaw : "ASSIGNED",
         notes: clean(formData.get("notes")),
         updatedById: userId,
       },

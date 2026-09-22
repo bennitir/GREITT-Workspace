@@ -85,6 +85,7 @@ model Company {
   workPartAssignments WorkPartAssignment[]
   workPartStaffingRequirements WorkPartStaffingRequirement[]
   workPartLaborFacts WorkPartLaborFact[]
+  employeeWorkDiaryEntries EmployeeWorkDiaryEntry[]
   workPartUsageFacts WorkPartUsageFact[]
   workEvidencePhotos WorkEvidencePhoto[]
   workResources WorkResource[]
@@ -467,6 +468,8 @@ model User {
   performedWorkPartLaborFacts     WorkPartLaborFact[] @relation("WorkPartLaborFactUser")
   createdWorkPartLaborFacts       WorkPartLaborFact[] @relation("WorkPartLaborFactCreatedBy")
   voidedWorkPartLaborFacts        WorkPartLaborFact[] @relation("WorkPartLaborFactVoidedBy")
+  createdEmployeeWorkDiaryEntries EmployeeWorkDiaryEntry[] @relation("EmployeeWorkDiaryEntryCreatedBy")
+  voidedEmployeeWorkDiaryEntries  EmployeeWorkDiaryEntry[] @relation("EmployeeWorkDiaryEntryVoidedBy")
   createdWorkPartLaborFactTranslations WorkPartLaborFactTranslation[] @relation("WorkPartLaborFactTranslationCreatedBy")
   createdWorkPartUsageFacts       WorkPartUsageFact[] @relation("WorkPartUsageFactCreatedBy")
   voidedWorkPartUsageFacts        WorkPartUsageFact[] @relation("WorkPartUsageFactVoidedBy")
@@ -705,6 +708,12 @@ model Employee {
   incidentalWorkMode String @default("NEVER") // NEVER | MANUAL_ONLY | AUTO_IF_NEEDED
   incidentalWorkNotes String?
 
+  // Hvernig dagleg framkvæmd er skipulögð í Mobile/Verk.
+  // ASSIGNED = GLÖGGT/verkstjóri úthlutar vinnu.
+  // SELF_DIRECTED = starfsmaður stýrir deginum sjálfur og skráir Dagbók.
+  // MIXED = úthlutuð Verk og sjálfstæð Dagbók geta lifað saman.
+  workExecutionMode String @default("ASSIGNED") // ASSIGNED | SELF_DIRECTED | MIXED
+
   // Rekstrarlegur upphafsstaður dags. Þetta er ekki heimilisfang starfsmanns.
   // Dagskipulag notar þennan stað (eða sjálfgefinn stað deildar) sem grunn
   // fyrir ferðatíma og km þegar engin nýrri staðsetning liggur fyrir.
@@ -733,6 +742,7 @@ model Employee {
   breakEvents EmployeeBreakEvent[]
   workPartAssignments WorkPartAssignment[]
   workPartLaborFacts WorkPartLaborFact[]
+  workDiaryEntries EmployeeWorkDiaryEntry[]
   workResourceMemberships WorkResourceMember[]
 
   @@index([companyId, userId])
@@ -745,6 +755,7 @@ model Employee {
   @@index([departmentId])
   @@index([workScheduleType])
   @@index([incidentalWorkMode])
+  @@index([workExecutionMode])
   @@index([baseOperationalLocationId])
   @@index([kennitala])
 }
@@ -863,6 +874,7 @@ model OperationalLocation {
   baseEmployees Employee[] @relation("EmployeeBaseOperationalLocation")
   departments CompanyDepartment[] @relation("DepartmentDefaultOperationalLocation")
   workOrders WorkOrder[] @relation("WorkOrderOperationalLocation")
+  workDiaryEntries EmployeeWorkDiaryEntry[]
   outgoingRoutes OperationalTravelRoute[] @relation("OperationalTravelRouteFrom")
   incomingRoutes OperationalTravelRoute[] @relation("OperationalTravelRouteTo")
   outgoingPlanLegs WorkTravelPlanLeg[] @relation("WorkTravelPlanLegFrom")
@@ -1983,6 +1995,53 @@ model WorkPartLaborFact {
   @@index([source])
 }
 
+
+// Sjálfstæð vinna / Dagbók starfsmanns.
+// Þetta er raunveruleg vinnustaðreynd utan WorkPart og má því ekki búa til
+// gervi-Verk eingöngu til að halda utan um tíma. Úthlutað Verk heldur áfram
+// að nota WorkPartLaborFact sem canonical sannleik.
+// Dagbókin er hins vegar jafn raunveruleg fyrir nýtingu/dagsögu starfsmanns.
+model EmployeeWorkDiaryEntry {
+  id         Int @id @default(autoincrement())
+  companyId  Int
+  employeeId Int
+
+  workDate        DateTime @db.Date
+  startedAt       DateTime
+  endedAt         DateTime?
+  durationMinutes Int @default(0)
+
+  title              String
+  note               String?
+  noteSourceLanguage String @default("is")
+  workKey             String?
+
+  operationalLocationId Int?
+  locationText          String?
+  travelMinutes         Int?
+  travelKm              Float?
+
+  source String @default("MOBILE") // MOBILE | MANUAL | IMPORTED | API
+
+  createdById Int?
+  voidedAt    DateTime?
+  voidedById  Int?
+  voidReason  String?
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  company             Company              @relation(fields: [companyId], references: [id], onDelete: Cascade)
+  employee            Employee             @relation(fields: [employeeId], references: [id], onDelete: Cascade)
+  operationalLocation OperationalLocation? @relation(fields: [operationalLocationId], references: [id], onDelete: SetNull)
+  createdBy           User?                @relation("EmployeeWorkDiaryEntryCreatedBy", fields: [createdById], references: [id], onDelete: SetNull)
+  voidedBy            User?                @relation("EmployeeWorkDiaryEntryVoidedBy", fields: [voidedById], references: [id], onDelete: SetNull)
+
+  @@index([companyId, workDate])
+  @@index([employeeId, workDate])
+  @@index([companyId, employeeId, endedAt])
+  @@index([operationalLocationId])
+  @@index([source])
+}
 
 model WorkEvidencePhoto {
   id          Int      @id @default(autoincrement())

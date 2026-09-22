@@ -54,6 +54,7 @@ export default async function EmployeeDetailPage({ params }: Props) {
       },
       workPartAssignments: { where: { removedAt: null, resourceKind: "PERSON" }, select: { id: true } },
       workPartLaborFacts: { where: { voidedAt: null }, select: { durationMinutes: true } },
+      workDiaryEntries: { where: { voidedAt: null }, select: { durationMinutes: true } },
     },
   });
   if (!employee) notFound();
@@ -76,7 +77,9 @@ export default async function EmployeeDetailPage({ params }: Props) {
 
   const now = new Date();
   const currentCompensation = employee.compensations.find((row) => row.validFrom <= now && (!row.validTo || row.validTo >= now)) ?? employee.compensations[0] ?? null;
-  const totalMinutes = employee.workPartLaborFacts.reduce((sum, row) => sum + row.durationMinutes, 0);
+  const totalMinutes =
+    employee.workPartLaborFacts.reduce((sum, row) => sum + row.durationMinutes, 0) +
+    employee.workDiaryEntries.reduce((sum, row) => sum + row.durationMinutes, 0);
   const membership = employee.user?.companies[0] ?? null;
 
   const money = (value: number | null) => value === null ? "—" : new Intl.NumberFormat(locale, { style: "currency", currency: "ISK", maximumFractionDigits: 0 }).format(value);
@@ -173,6 +176,15 @@ export default async function EmployeeDetailPage({ params }: Props) {
                 <option value="FLEXIBLE">{t.workScheduleTypes.FLEXIBLE}</option>
                 <option value="OTHER">{t.workScheduleTypes.OTHER}</option>
               </select>
+            </label>
+            <label className="grid gap-1 text-sm">
+              <span>{t.workExecutionMode}</span>
+              <select name="workExecutionMode" defaultValue={employee.workExecutionMode} className="rounded-lg border px-3 py-2">
+                <option value="ASSIGNED">{t.workExecutionModes.ASSIGNED}</option>
+                <option value="SELF_DIRECTED">{t.workExecutionModes.SELF_DIRECTED}</option>
+                <option value="MIXED">{t.workExecutionModes.MIXED}</option>
+              </select>
+              <span className="text-xs leading-5 text-slate-500">{t.workExecutionModeHelp}</span>
             </label>
             <label className="grid gap-1 text-sm">
               <span>{t.workplaceProfile}</span>

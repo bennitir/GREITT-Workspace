@@ -39,6 +39,16 @@ function nonNegativeNumber(value: FormDataEntryValue | null) {
   return Number.isFinite(parsed) && parsed >= 0 ? parsed : null;
 }
 
+function textField(value: FormDataEntryValue | null, maxLength: number) {
+  const text = String(value ?? "").trim();
+  if (!text) return null;
+  return text.slice(0, maxLength);
+}
+
+function diaryEnabled(workExecutionMode: string) {
+  return workExecutionMode === "SELF_DIRECTED" || workExecutionMode === "MIXED";
+}
+
 function workDateFromNow(now: Date) {
   return new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate(), 12));
 }
@@ -194,16 +204,29 @@ export async function startMobileWorkPart(formData: FormData) {
     if (!startPhoto) throw new Error(t.errors.requiredPhotoMissing);
   }
 
-  const active = await prisma.workPartLaborFact.findFirst({
-    where: {
-      companyId: actor.companyId,
-      employeeId: actor.employee.id,
-      voidedAt: null,
-      startedAt: { not: null },
-      endedAt: null,
-    },
-    select: { id: true, workPartId: true },
-  });
+  const [active, activeDiary] = await Promise.all([
+    prisma.workPartLaborFact.findFirst({
+      where: {
+        companyId: actor.companyId,
+        employeeId: actor.employee.id,
+        voidedAt: null,
+        startedAt: { not: null },
+        endedAt: null,
+      },
+      select: { id: true, workPartId: true },
+    }),
+    prisma.employeeWorkDiaryEntry.findFirst({
+      where: {
+        companyId: actor.companyId,
+        employeeId: actor.employee.id,
+        voidedAt: null,
+        endedAt: null,
+      },
+      select: { id: true },
+    }),
+  ]);
+
+  if (activeDiary) throw new Error(t.errors.alreadyActiveElsewhere);
 
   if (active?.workPartId === workPartId) {
     revalidateMobileWork(workOrderId);
@@ -469,6 +492,166 @@ export async function recordMobileWorkEvidencePhoto(formData: FormData) {
   }
 
   revalidateMobileWork(workOrderId);
+}
+
+
+function revalidateMobileDiary(employeeId: number) {
+  revalidatePath("/mobile/verk");
+  revalidatePath("/mobile/verk/dagbok");
+  revalidatePath("/verk");
+  revalidatePath(`/starfsmenn/${employeeId}`);
+}
+
+export async function startMobileDiaryEntry(formData: FormData) {
+  const actor = await requireMobileWorkEmployee();
+  const t = workMobileText(actor.language);
+
+  if (!diaryEnabled(actor.employee.workExecutionMode)) {
+    throw new Error(t.errors.diaryNotAllowed);
+  }
+
+  const title = textField(formData.get("title"), 200);
+  if (!title) throw new Error(t.errors.diaryTitleRequired);
+
+  const workKey = textField(formData.get("workKey"), 100);
+  const note = textField(formData.get("note"), 2000);
+  const locationText = textField(formData.get("locationText"), 240);
+  const operationalLocationId = numberField(formData, "operationalLocationId");
+
+  const rawTravelMinutes = String(formData.get("travelMinutes") ?? "").trim();
+  const rawTravelKm = String(formData.get("travelKm") ?? "").trim();
+  const travelMinutesValue = rawTravelMinutes ? nonNegativeNumber(formData.get("travelMinutes")) : null;
+  const travelKm = rawTravelKm ? nonNegativeNumber(formData.get("travelKm")) : null;
+  if ((rawTravelMinutes && travelMinutesValue === null) || (rawTravelKm && travelKm === null)) {
+    throw new Error(t.errors.invalidDiaryTravel);
+  }
+  const travelMinutes = travelMinutesValue === null ? null : Math.round(travelMinutesValue);
+
+  if (operationalLocationId) {
+    const location = await prisma.operationalLocation.findFirst({
+      where: { id: operationalLocationId, companyId: actor.companyId, isActive: true },
+      select: { id: true },
+    });
+    if (!location) throw new Error(t.errors.invalidDiaryLocation);
+  }
+
+  const [activeWork, activeDiary] = await Promise.all([
+    prisma.workPartLaborFact.findFirst({
+      where: {
+        companyId: actor.companyId,
+        employeeId: actor.employee.id,
+        voidedAt: null,
+        startedAt: { not: null },
+        endedAt: null,
+      },
+      select: { id: true },
+    }),
+    prisma.employeeWorkDiaryEntry.findFirst({
+      where: {
+        companyId: actor.companyId,
+        employeeId: actor.employee.id,
+        voidedAt: null,
+        endedAt: null,
+      },
+      select: { id: true },
+    }),
+  ]);
+  if (activeWork || activeDiary) throw new Error(t.errors.alreadyActiveElsewhere);
+
+  const now = new Date();
+  await prisma.$transaction(async (tx) => {
+    const entry = await tx.employeeWorkDiaryEntry.create({
+      data: {
+        companyId: actor.companyId,
+        employeeId: actor.employee.id,
+        workDate: workDateFromNow(now),
+        startedAt: now,
+        durationMinutes: 0,
+        title,
+        note,
+        noteSourceLanguage: actor.language,
+        workKey,
+        operationalLocationId,
+        locationText,
+        travelMinutes,
+        travelKm,
+        source: "MOBILE",
+        createdById: actor.user.id,
+      },
+    });
+
+    await tx.auditEvent.create({
+      data: {
+        companyId: actor.companyId,
+        userId: actor.user.id,
+        entityType: "EMPLOYEE_WORK_DIARY_ENTRY",
+        entityId: entry.id,
+        parentEntityType: "EMPLOYEE",
+        parentEntityId: actor.employee.id,
+        action: "MOBILE_DIARY_STARTED",
+        source: "MOBILE",
+        description: t.audit.diaryStarted,
+        afterData: {
+          employeeId: actor.employee.id,
+          startedAt: now.toISOString(),
+          title,
+          workKey,
+          operationalLocationId,
+        },
+      },
+    });
+  });
+
+  revalidateMobileDiary(actor.employee.id);
+}
+
+export async function stopMobileDiaryEntry(formData: FormData) {
+  const actor = await requireMobileWorkEmployee();
+  const t = workMobileText(actor.language);
+  const entryId = numberField(formData, "entryId");
+  if (!entryId) throw new Error(t.errors.diaryEntryMissing);
+
+  const entry = await prisma.employeeWorkDiaryEntry.findFirst({
+    where: {
+      id: entryId,
+      companyId: actor.companyId,
+      employeeId: actor.employee.id,
+      voidedAt: null,
+      endedAt: null,
+    },
+  });
+  if (!entry) throw new Error(t.errors.diaryEntryMissing);
+
+  const now = new Date();
+  const elapsed = Math.max(1, Math.round((now.getTime() - entry.startedAt.getTime()) / 60_000));
+
+  await prisma.$transaction(async (tx) => {
+    await tx.employeeWorkDiaryEntry.update({
+      where: { id: entry.id },
+      data: {
+        endedAt: now,
+        durationMinutes: elapsed,
+      },
+    });
+
+    await tx.auditEvent.create({
+      data: {
+        companyId: actor.companyId,
+        userId: actor.user.id,
+        entityType: "EMPLOYEE_WORK_DIARY_ENTRY",
+        entityId: entry.id,
+        parentEntityType: "EMPLOYEE",
+        parentEntityId: actor.employee.id,
+        action: "MOBILE_DIARY_STOPPED",
+        source: "MOBILE",
+        description: t.audit.diaryStopped,
+        beforeData: { endedAt: null, durationMinutes: entry.durationMinutes },
+        afterData: { endedAt: now.toISOString(), durationMinutes: elapsed },
+      },
+    });
+  });
+
+  revalidateMobileDiary(actor.employee.id);
 }
 
 export async function recordMobileMaterialUsage(formData: FormData) {

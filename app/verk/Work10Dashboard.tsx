@@ -22,8 +22,10 @@ type ActualLaborData = {
   endedAt: string | null;
   durationMinutes: number;
   description: string | null;
-  source: "WORK_PART_FACT" | "LEGACY_WORK_LOG";
+  source: "WORK_PART_FACT" | "LEGACY_WORK_LOG" | "EMPLOYEE_WORK_DIARY";
   workPartId: number | null;
+  operationalLocationId?: number | null;
+  workKey?: string | null;
 };
 
 type AssignedResourceData = {
@@ -127,6 +129,7 @@ type PersonData = {
   staffingRoleIds: number[];
   workScopeIds: number[];
   incidentalWorkMode: string;
+  workExecutionMode: string;
   qualificationCodes: string[];
   qualificationTitles: string[];
 };
@@ -224,6 +227,7 @@ export type Work10DashboardData = {
     machines: boolean;
   };
   workOrders: WorkOrderData[];
+  independentLabor: ActualLaborData[];
   people: PersonData[];
   resources: ResourceData[];
   pairings: PairingData[];
@@ -279,7 +283,7 @@ type StaffingCandidate = {
   reasons: string[];
 };
 
-type DayLaborEntry = ActualLaborData & { workId: number; workTitle: string };
+type DayLaborEntry = ActualLaborData & { workId: number | null; workTitle: string };
 
 type StaffingSelectionContext = {
   projectedAvailableAt?: Map<number, number>;
@@ -1127,13 +1131,26 @@ export default function Work10Dashboard({ data }: { data: Work10DashboardData })
   );
 
   const selectedDayLabor = useMemo(
-    () =>
-      data.workOrders.flatMap((work) =>
+    () => [
+      ...data.workOrders.flatMap((work) =>
         work.actualLabor
           .filter((entry) => sameLocalDay(entry.workDate, selectedDate))
-          .map((entry) => ({ ...entry, workId: work.id, workTitle: work.title }))
+          .map((entry) => ({
+            ...entry,
+            workId: work.id,
+            workTitle: work.title,
+            operationalLocationId: work.operationalLocationId,
+          }))
       ),
-    [data.workOrders, selectedDate],
+      ...data.independentLabor
+        .filter((entry) => sameLocalDay(entry.workDate, selectedDate))
+        .map((entry) => ({
+          ...entry,
+          workId: null,
+          workTitle: entry.description ?? t.diaryTimeSource,
+        })),
+    ],
+    [data.independentLabor, data.workOrders, selectedDate, t.diaryTimeSource],
   );
 
   const timelineLabor = useMemo(
@@ -1143,14 +1160,18 @@ export default function Work10Dashboard({ data }: { data: Work10DashboardData })
 
   const activeEmployeeIds = useMemo(
     () => new Set(
-      data.workOrders.flatMap((work) =>
-        work.actualLabor
+      [
+        ...data.workOrders.flatMap((work) =>
+          work.actualLabor
+            .filter((entry) => entry.startedAt && !entry.endedAt)
+            .map((entry) => entry.employeeId),
+        ),
+        ...data.independentLabor
           .filter((entry) => entry.startedAt && !entry.endedAt)
-          .map((entry) => entry.employeeId)
-          .filter((id): id is number => id !== null),
-      ),
+          .map((entry) => entry.employeeId),
+      ].filter((id): id is number => id !== null),
     ),
-    [data.workOrders],
+    [data.independentLabor, data.workOrders],
   );
 
   const personWorkRows = useMemo(() => {
@@ -1289,20 +1310,30 @@ export default function Work10Dashboard({ data }: { data: Work10DashboardData })
 
   const selectedPersonLabor = useMemo(() => {
     if (!selectedPersonId) return [];
-    return data.workOrders
-      .flatMap((work) =>
-        work.actualLabor
-          .filter((entry) => entry.employeeId === selectedPersonId)
-          .map((entry) => {
-            const workPartTitle = entry.workPartId
-              ? work.workParts.find((part) => part.source.kind === "WORK_PART" && Number(part.source.sourceId) === entry.workPartId)?.title ?? null
-              : null;
-            return { ...entry, workId: work.id, workTitle: work.title, workNumber: work.workNumber, workPartTitle };
-          }),
-      )
+    const workLabor = data.workOrders.flatMap((work) =>
+      work.actualLabor
+        .filter((entry) => entry.employeeId === selectedPersonId)
+        .map((entry) => {
+          const workPartTitle = entry.workPartId
+            ? work.workParts.find((part) => part.source.kind === "WORK_PART" && Number(part.source.sourceId) === entry.workPartId)?.title ?? null
+            : null;
+          return { ...entry, workId: work.id as number | null, workTitle: work.title, workNumber: work.workNumber as string | null, workPartTitle };
+        }),
+    );
+    const diaryLabor = data.independentLabor
+      .filter((entry) => entry.employeeId === selectedPersonId)
+      .map((entry) => ({
+        ...entry,
+        workId: null as number | null,
+        workTitle: entry.description ?? t.diaryTimeSource,
+        workNumber: entry.workKey ?? null,
+        workPartTitle: null as string | null,
+      }));
+
+    return [...workLabor, ...diaryLabor]
       .filter((entry) => laborMatchesPeriod(entry.workDate, selectedDate, laborPeriod))
       .sort((a, b) => new Date(b.workDate).getTime() - new Date(a.workDate).getTime());
-  }, [data.workOrders, laborPeriod, selectedDate, selectedPersonId]);
+  }, [data.independentLabor, data.workOrders, laborPeriod, selectedDate, selectedPersonId, t.diaryTimeSource]);
 
   const selectedPersonLaborMinutes = selectedPersonLabor.reduce((sum, entry) => sum + (entry.durationMinutes ?? 0), 0);
 
@@ -1432,7 +1463,7 @@ export default function Work10Dashboard({ data }: { data: Work10DashboardData })
       .filter((person) => workScopeMatchForPerson(person, position) !== "blocked")
       .map((person) => {
         const workScopeMatch = workScopeMatchForPerson(person, position) as WorkScopeMatch;
-        const autoEligible = workScopeMatch !== "incidental_manual";
+        const autoEligible = person.workExecutionMode !== "SELF_DIRECTED" && workScopeMatch !== "incidental_manual";
         const availability = candidateAvailabilityForWork(person.id, work, assumedMinute, context);
         const personCodes = new Set(person.qualificationCodes.map((code) => code.toUpperCase()));
         const matchedQualificationCodes = requiredCodes.filter((code) => personCodes.has(code));
@@ -1945,11 +1976,25 @@ export default function Work10Dashboard({ data }: { data: Work10DashboardData })
 
   const dayLaborForDate = (dateIso: string): DayLaborEntry[] => {
     const date = dateFromIsoDate(dateIso);
-    return data.workOrders.flatMap((work) =>
-      work.actualLabor
+    return [
+      ...data.workOrders.flatMap((work) =>
+        work.actualLabor
+          .filter((entry) => sameLocalDay(entry.workDate, date))
+          .map((entry) => ({
+            ...entry,
+            workId: work.id,
+            workTitle: work.title,
+            operationalLocationId: work.operationalLocationId,
+          })),
+      ),
+      ...data.independentLabor
         .filter((entry) => sameLocalDay(entry.workDate, date))
-        .map((entry) => ({ ...entry, workId: work.id, workTitle: work.title })),
-    );
+        .map((entry) => ({
+          ...entry,
+          workId: null,
+          workTitle: entry.description ?? t.diaryTimeSource,
+        })),
+    ];
   };
 
   const scheduledWorksForDate = (dateIso: string) => activeWorkOrders.filter(
@@ -2055,7 +2100,10 @@ export default function Work10Dashboard({ data }: { data: Work10DashboardData })
   );
 
   const morningUnassignedPeopleCount = useMemo(() =>
-    data.people.filter((person) => personAvailabilityAtMinute(person.id, morningMinute) === "available").length,
+    data.people.filter((person) =>
+      person.workExecutionMode !== "SELF_DIRECTED" &&
+      personAvailabilityAtMinute(person.id, morningMinute) === "available"
+    ).length,
     [data.people, morningMinute, personWorkRows, scheduledForSelectedDay, selectedDayLabor],
   );
 
@@ -2065,6 +2113,11 @@ export default function Work10Dashboard({ data }: { data: Work10DashboardData })
   ): StaffingPlanBuildResult => {
     const startMinute = parseClockText(morningTimeInput);
     if (startMinute === null) return { plan: [], worksNeedPeople: [] };
+
+    // Sjálfstæður vinnuhamur er skráður í Mobile Dagbók og á ekki að
+    // fá sjálfvirka úthlutun. MIXED heldur áfram að vera fullgildur
+    // kandídat í Dagsmönnun og getur jafnframt skráð Dagbók.
+    const planningPeople = data.people.filter((person) => person.workExecutionMode !== "SELF_DIRECTED");
     const planningDayLabor = dayLaborForDate(planningDateIso);
     const planningScheduledWorks = scheduledWorksForDate(planningDateIso);
     const planningWorksNeedPeople = worksNeedPeopleForDate(planningDateIso, startMinute, excludedWorkIds);
@@ -2083,7 +2136,7 @@ export default function Work10Dashboard({ data }: { data: Work10DashboardData })
     const personPlanningCapacityMinutes = new Map<number, number>();
     const personPlannedWorkMinutes = new Map<number, number>();
     const personPlannedTravelMinutes = new Map<number, number>();
-    for (const person of data.people) {
+    for (const person of planningPeople) {
       const workplace = workdayProfileForPerson(person);
       const fullDayStart = workplace?.dayStartMinutes ?? 8 * 60;
       const fullDayEnd = workdayEndForPerson(person);
@@ -2116,9 +2169,10 @@ export default function Work10Dashboard({ data }: { data: Work10DashboardData })
         if (entry.employeeId !== person.id || !entry.endedAt) continue;
         const endedMinute = minuteOfDayFromIso(entry.endedAt);
         if (endedMinute > startMinute || endedMinute <= latestLocationMinute) continue;
-        const completedWork = data.workOrders.find((work) => work.id === entry.workId);
-        if (!completedWork?.operationalLocationId) continue;
-        projectedLocationId = completedWork.operationalLocationId;
+        const completedWork = entry.workId === null ? null : data.workOrders.find((work) => work.id === entry.workId);
+        const actualLocationId = entry.operationalLocationId ?? completedWork?.operationalLocationId ?? null;
+        if (!actualLocationId) continue;
+        projectedLocationId = actualLocationId;
         latestLocationMinute = endedMinute;
       }
       for (const work of planningScheduledWorks) {
@@ -2152,7 +2206,7 @@ export default function Work10Dashboard({ data }: { data: Work10DashboardData })
         coverageStatsByLocationId.set(work.operationalLocationId, byEmployee);
       }
 
-      for (const person of data.people) {
+      for (const person of planningPeople) {
         if (!departmentAllowsPerson(person, work)) continue;
         const matchingPositions = positions.filter((position) => {
           const scopeMatch = workScopeMatchForPerson(person, position);
@@ -2199,7 +2253,7 @@ export default function Work10Dashboard({ data }: { data: Work10DashboardData })
     const plannedWorkIds = new Set<number>();
     const normalMaxShiftEnd = Math.min(
       24 * 60,
-      Math.max(startMinute + 60, ...data.people.map((person) => workdayEndForPerson(person))),
+      Math.max(startMinute + 60, ...planningPeople.map((person) => workdayEndForPerson(person))),
     );
     const sameDayExceptionDeadlines = candidateWorks
       .filter((work) => work.allowAfterWorkdayEnd && work.completionDeadlineDate === planningDateIso && work.completionDeadlineMinutes !== null)
@@ -2320,7 +2374,7 @@ export default function Work10Dashboard({ data }: { data: Work10DashboardData })
     };
 
     const consumeIdleBreaks = (minute: number) => {
-      for (const person of data.people) {
+      for (const person of planningPeople) {
         const availableAt = personAvailableAt.get(person.id) ?? 24 * 60;
         if (availableAt > minute) continue;
         const taken = personTakenBreakCodes.get(person.id) ?? new Set<string>();
@@ -2352,7 +2406,7 @@ export default function Work10Dashboard({ data }: { data: Work10DashboardData })
           const travelRanks: number[] = [];
           const packingRanks: number[] = [];
 
-          for (const person of data.people) {
+          for (const person of planningPeople) {
             if (!departmentAllowsPerson(person, work)) continue;
             if ((personAvailableAt.get(person.id) ?? 24 * 60) > minute) continue;
             const fromLocationId = personProjectedLocation.get(person.id) ?? person.baseOperationalLocationId;
@@ -2455,13 +2509,13 @@ export default function Work10Dashboard({ data }: { data: Work10DashboardData })
           if (openPositions.length === 0) continue;
 
           const reserved = new Set<number>(
-            data.people
+            planningPeople
               .filter((person) => (personAvailableAt.get(person.id) ?? 24 * 60) > minute)
               .map((person) => person.id),
           );
           const locationPreferredEmployeeIds = work.operationalLocationId
             ? new Set<number>(
-                data.people
+                planningPeople
                   .filter((person) => (personProjectedLocation.get(person.id) ?? person.baseOperationalLocationId) === work.operationalLocationId)
                   .map((person) => person.id),
               )
@@ -2471,7 +2525,7 @@ export default function Work10Dashboard({ data }: { data: Work10DashboardData })
             : new Map<number, number>();
           const locationDeparturePenaltyByEmployeeId = new Map<number, number>();
           if (work.operationalLocationId) {
-            for (const person of data.people) {
+            for (const person of planningPeople) {
               const currentLocationId = personProjectedLocation.get(person.id) ?? person.baseOperationalLocationId;
               if (!currentLocationId || currentLocationId === work.operationalLocationId || currentLocationId === person.baseOperationalLocationId) continue;
               const remainingHere = remainingCoverageWorkIdsByLocationId.get(currentLocationId)?.get(person.id)?.size ?? 0;
@@ -2484,7 +2538,7 @@ export default function Work10Dashboard({ data }: { data: Work10DashboardData })
           }
           const loadAllowedEmployeeIds = new Set<number>();
           const loadScoreAdjustmentByEmployeeId = new Map<number, number>();
-          for (const person of data.people) {
+          for (const person of planningPeople) {
             const loadProjection = projectedLoadForWork(person, work, minute);
             if (loadProjection.allowed) loadAllowedEmployeeIds.add(person.id);
             loadScoreAdjustmentByEmployeeId.set(person.id, loadProjection.scoreAdjustment);
@@ -2511,7 +2565,7 @@ export default function Work10Dashboard({ data }: { data: Work10DashboardData })
           let suggestion: StaffingCandidate[] = [];
           if (locationPreferredEmployeeIds.size > 0) {
             const anchorReserved = new Set<number>(reserved);
-            for (const person of data.people) {
+            for (const person of planningPeople) {
               if (!locationPreferredEmployeeIds.has(person.id)) anchorReserved.add(person.id);
             }
             const anchorSuggestion = selectSuggestedStaffingTeam(work, minute, anchorReserved, selectionContext);
@@ -2544,7 +2598,7 @@ export default function Work10Dashboard({ data }: { data: Work10DashboardData })
             let canWaitForExistingLocationTeam = false;
             for (const readyMinute of futureAnchorMinutes) {
               const futureReserved = new Set<number>();
-              for (const person of data.people) {
+              for (const person of planningPeople) {
                 const isAnchor = locationPreferredEmployeeIds.has(person.id);
                 const availableAt = personAvailableAt.get(person.id) ?? 24 * 60;
                 if (!isAnchor || availableAt > readyMinute) futureReserved.add(person.id);
@@ -2562,7 +2616,7 @@ export default function Work10Dashboard({ data }: { data: Work10DashboardData })
             // og deadline krefst þess ekki í dag, látum við Verkið bíða frekar en
             // að stofna aðra langa ferð. Brýnt Verk fær þó alltaf að reyna nýja ferð.
             const potentialReserved = new Set<number>(
-              data.people
+              planningPeople
                 .filter((person) => !locationPreferredEmployeeIds.has(person.id))
                 .map((person) => person.id),
             );
@@ -2723,7 +2777,7 @@ export default function Work10Dashboard({ data }: { data: Work10DashboardData })
     }
     for (const [employeeId, index] of lastPlanIndexByEmployee) {
       const item = plan[index];
-      const person = data.people.find((candidate) => candidate.id === employeeId);
+      const person = planningPeople.find((candidate) => candidate.id === employeeId);
       const work = activeWorkOrders.find((candidate) => candidate.id === item.workId);
       if (!person || !work?.operationalLocationId || !person.baseOperationalLocationId || item.projectedAvailableMinutes === null) continue;
       const returnProjection = returnProjectionFor(person, work.operationalLocationId, item.projectedAvailableMinutes);
@@ -3415,7 +3469,7 @@ export default function Work10Dashboard({ data }: { data: Work10DashboardData })
                                       <button
                                         key={log.id}
                                         type="button"
-                                        onClick={() => setSelectedWorkId(log.workId)}
+                                        onClick={() => { if (log.workId !== null) setSelectedWorkId(log.workId); }}
                                         style={{ left: pos.left, width: pos.width, minWidth: "12px" }}
                                         className={`absolute top-9 h-7 overflow-hidden rounded-md border px-1.5 text-left text-[9px] shadow-sm ${
                                           index % 3 === 0 ? "border-emerald-300 bg-emerald-100" : index % 3 === 1 ? "border-sky-300 bg-sky-100" : "border-violet-300 bg-violet-100"
@@ -4009,6 +4063,7 @@ export default function Work10Dashboard({ data }: { data: Work10DashboardData })
       {periodStaffingOpen ? (() => {
         const workById = new Map(activeWorkOrders.map((work) => [work.id, work] as const));
         const personById = new Map(data.people.map((person) => [person.id, person] as const));
+        const autoPlanningPeople = data.people.filter((person) => person.workExecutionMode !== "SELF_DIRECTED");
         const plannedWorkIds = new Set(periodPlan.flatMap((day) => day.plan.map((item) => item.workId)));
         const remainingWorks = activeWorkOrders.filter((work) =>
           !work.readyToClose &&
@@ -4020,7 +4075,7 @@ export default function Work10Dashboard({ data }: { data: Work10DashboardData })
         const periodRows = periodPlanningBusy ? [] : periodPlan.map((day) => {
           const dayLabor = dayLaborForDate(day.dateIso);
           const scheduledWorks = scheduledWorksForDate(day.dateIso);
-          const availablePeople = data.people.filter((person) =>
+          const availablePeople = autoPlanningPeople.filter((person) =>
             personAvailabilityAtMinuteForDay(person.id, morningMinute, day.dateIso, dayLabor, scheduledWorks) === "available",
           );
           const capacityMinutes = availablePeople.reduce((sum, person) => {
@@ -4085,7 +4140,7 @@ export default function Work10Dashboard({ data }: { data: Work10DashboardData })
             const dayLabor = dayLaborForDate(day.dateIso);
             const scheduledWorks = scheduledWorksForDate(day.dateIso);
 
-            for (const person of data.people) {
+            for (const person of autoPlanningPeople) {
               const workplace = workdayProfileForPerson(person);
               const fullDayStart = workplace?.dayStartMinutes ?? morningMinute;
               const fullDayEnd = workdayEndForPerson(person);
@@ -4150,7 +4205,7 @@ export default function Work10Dashboard({ data }: { data: Work10DashboardData })
                 ...(position.roleCode === "ASSISTANT" ? [] : resourceCodes),
               ]);
               requiredCodes.forEach((code) => qualificationCounts.set(code, (qualificationCounts.get(code) ?? 0) + 1));
-              return data.people
+              return autoPlanningPeople
                 .filter((person) => !assignedHere.has(person.id))
                 .filter((person) => departmentAllowsPerson(person, work))
                 .filter((person) => {
@@ -4220,7 +4275,7 @@ export default function Work10Dashboard({ data }: { data: Work10DashboardData })
             if (positions.length === 0) return "DATA";
 
             const assignedHere = new Set(assignedEmployeeIdsForWork(work));
-            const departmentPeople = data.people.filter((person) => !assignedHere.has(person.id) && departmentAllowsPerson(person, work));
+            const departmentPeople = autoPlanningPeople.filter((person) => !assignedHere.has(person.id) && departmentAllowsPerson(person, work));
             if (departmentPeople.length === 0) return "DEPARTMENT";
 
             const hardCandidateIds = hardCandidatesForWork(work, positions);
@@ -4312,7 +4367,7 @@ export default function Work10Dashboard({ data }: { data: Work10DashboardData })
             const dayLabor = dayLaborForDate(day.dateIso);
             const scheduledWorks = scheduledWorksForDate(day.dateIso);
 
-            for (const person of data.people) {
+            for (const person of autoPlanningPeople) {
               if (personAvailabilityAtMinuteForDay(person.id, morningMinute, day.dateIso, dayLabor, scheduledWorks) !== "available") continue;
               const workdayEnd = workdayEndForPerson(person);
               const grossMinutes = Math.max(0, workdayEnd - morningMinute);
@@ -4396,7 +4451,7 @@ export default function Work10Dashboard({ data }: { data: Work10DashboardData })
             const dayLabor = dayLaborForDate(day.dateIso);
             const scheduledWorks = scheduledWorksForDate(day.dateIso);
 
-            for (const person of data.people) {
+            for (const person of autoPlanningPeople) {
               if (personAvailabilityAtMinuteForDay(person.id, morningMinute, day.dateIso, dayLabor, scheduledWorks) !== "available") continue;
               const workdayEnd = workdayEndForPerson(person);
               const grossMinutes = Math.max(0, workdayEnd - morningMinute);
@@ -4410,7 +4465,7 @@ export default function Work10Dashboard({ data }: { data: Work10DashboardData })
               row.capacityMinutes += capacityMinutes;
             }
 
-            for (const person of data.people) {
+            for (const person of autoPlanningPeople) {
               const items = day.plan
                 .filter((item) => item.employeeId === person.id)
                 .slice()
@@ -5183,10 +5238,17 @@ export default function Work10Dashboard({ data }: { data: Work10DashboardData })
                       {selectedPersonLabor.map((entry) => (
                         <tr key={entry.id} className="hover:bg-slate-50">
                           <td className="whitespace-nowrap px-3 py-3 text-slate-600">{new Date(entry.workDate).toLocaleDateString(data.language === "is" ? "is-IS" : data.language)}</td>
-                          <td className="px-3 py-3"><Link href={`/verk/${entry.workId}`} className="font-semibold text-blue-700 hover:underline">{entry.workTitle}</Link><div className="text-xs text-slate-400">#{entry.workNumber}</div></td>
+                          <td className="px-3 py-3">
+                            {entry.workId !== null ? (
+                              <Link href={`/verk/${entry.workId}`} className="font-semibold text-blue-700 hover:underline">{entry.workTitle}</Link>
+                            ) : (
+                              <span className="font-semibold text-slate-900">{entry.workTitle}</span>
+                            )}
+                            {entry.workNumber ? <div className="text-xs text-slate-400">#{entry.workNumber}</div> : null}
+                          </td>
                           <td className="px-3 py-3 text-slate-600">{entry.workPartTitle ?? "—"}</td>
                           <td className="whitespace-nowrap px-3 py-3 font-semibold text-slate-900">{formatMinutesDuration(entry.durationMinutes, t.hoursShort, t.minutesShort)}</td>
-                          <td className="px-3 py-3 text-slate-600">{entry.source === "WORK_PART_FACT" ? t.workPartFactSource : t.legacyTimeSource}</td>
+                          <td className="px-3 py-3 text-slate-600">{entry.source === "WORK_PART_FACT" ? t.workPartFactSource : entry.source === "EMPLOYEE_WORK_DIARY" ? t.diaryTimeSource : t.legacyTimeSource}</td>
                         </tr>
                       ))}
                     </tbody>

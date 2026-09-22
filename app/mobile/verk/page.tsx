@@ -46,7 +46,7 @@ export default async function MobileVerkPage({ searchParams }: Props) {
   const workT = work10Text(actor.language);
   const ops = workResourceOperationsText(actor.language);
 
-  const [workOrders, activeFact] = await Promise.all([
+  const [workOrders, activeFact, activeDiary] = await Promise.all([
     prisma.workOrder.findMany({
       where: actor.access.canManage
         ? {
@@ -104,6 +104,23 @@ export default async function MobileVerkPage({ searchParams }: Props) {
                 workOrder: { select: { id: true, title: true } },
               },
             },
+          },
+          orderBy: { startedAt: "desc" },
+        })
+      : Promise.resolve(null),
+    actor.employee
+      ? prisma.employeeWorkDiaryEntry.findFirst({
+          where: {
+            companyId: actor.companyId,
+            employeeId: actor.employee.id,
+            voidedAt: null,
+            endedAt: null,
+          },
+          select: {
+            id: true,
+            title: true,
+            startedAt: true,
+            workKey: true,
           },
           orderBy: { startedAt: "desc" },
         })
@@ -194,6 +211,11 @@ export default async function MobileVerkPage({ searchParams }: Props) {
       })()
     : null;
 
+  const diaryEnabled = Boolean(
+    actor.employee &&
+    (actor.employee.workExecutionMode === "SELF_DIRECTED" || actor.employee.workExecutionMode === "MIXED"),
+  );
+
   const renderCard = (card: (typeof cards)[number]) => (
     <Link
       key={card.id}
@@ -271,6 +293,35 @@ export default async function MobileVerkPage({ searchParams }: Props) {
               <p className="font-bold text-slate-900">{t.managerView}</p>
               <p className="mt-1 text-sm text-slate-600">{t.allWorkVisible}</p>
             </div>
+          ) : null}
+
+          {actor.employee ? (
+            <Link
+              href="/mobile/verk/dagbok"
+              className={`mt-4 block rounded-2xl border p-4 ${
+                activeDiary
+                  ? "border-emerald-200 bg-emerald-50"
+                  : diaryEnabled
+                    ? "border-blue-200 bg-blue-50"
+                    : "border-slate-200 bg-slate-50"
+              }`}
+            >
+              <div className="flex items-start justify-between gap-3">
+                <div>
+                  <p className={`text-sm font-bold ${activeDiary ? "text-emerald-800" : diaryEnabled ? "text-blue-800" : "text-slate-600"}`}>
+                    {activeDiary ? t.diaryActive : t.diary}
+                  </p>
+                  <p className={`mt-1 font-bold ${activeDiary ? "text-emerald-950" : "text-slate-950"}`}>
+                    {activeDiary?.title ?? t.executionModes[actor.employee.workExecutionMode as keyof typeof t.executionModes] ?? actor.employee.workExecutionMode}
+                  </p>
+                  {activeDiary?.workKey ? <p className="mt-1 text-sm text-emerald-900">{t.diaryWorkKey}: {activeDiary.workKey}</p> : null}
+                  {!activeDiary ? <p className="mt-1 text-sm leading-5 text-slate-600">{diaryEnabled ? t.diaryHelp : t.diaryNotEnabledHelp}</p> : null}
+                </div>
+                <span className={`shrink-0 rounded-full px-2.5 py-1 text-xs font-semibold ${activeDiary ? "bg-white text-emerald-800" : "bg-white text-slate-600"}`}>
+                  {t.diaryOpen} →
+                </span>
+              </div>
+            </Link>
           ) : null}
 
           {activeFact ? (
