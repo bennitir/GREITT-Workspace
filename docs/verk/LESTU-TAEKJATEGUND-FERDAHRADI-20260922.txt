@@ -1,0 +1,42 @@
+GLÖGGT – Tækjategund og ferðahraði – 22.09.2026
+
+Markmið
+-------
+Tækjaspjaldið á aðeins að spyrja um ferðahraða þegar upplýsingin hefur raunverulegt gildi fyrir áætlanir.
+
+Reglur
+------
+1. Vinnuvél (MACHINE)
+   - Spurt: „Fer vélin sjálf á milli verkstaða?“
+   - Val: „Keyrir sjálf“ eða „Flutt á öðru farartæki“.
+   - Ferðahraði vélar birtist aðeins þegar „Keyrir sjálf“ er valið.
+   - Sá hraði getur sett neðri mörk á áætlaðan ferðatíma.
+
+2. Ökutæki (VEHICLE)
+   - Engin spurning um fastan ferðahraða á tækjaspjaldinu.
+   - travelMode er sjálfkrafa ROAD.
+   - planningTravelSpeedKmh er ekki notað.
+   - Leiðarreikningur notar venjulegan vegaleiðartíma.
+
+3. Tæki / verkfæri (TOOL)
+   - Engin spurning um ferðamáta eða ferðahraða.
+   - travelMode er sjálfkrafa NONE.
+   - planningTravelSpeedKmh er ekki notað.
+
+Bakendavörn
+-----------
+Server action normalíserar ferðagögn eftir tækjategund, þannig að fölsuð eða gömul formgildi geta ekki látið fólksbíl eða verkfæri setja fastan ferðahraða í skipulagningu.
+
+Samhæfi við eldri gögn
+----------------------
+Engin Prisma migration er nauðsynleg. Eldri VEHICLE-færslur geta enn innihaldið planningTravelSpeedKmh í gagnagrunni, en ný skipulagning og Mobile nota það ekki nema auðlind sé MACHINE + SELF_PROPELLED. Þegar ökutæki er næst vistað úr tækjaspjaldi er hraðagildið hreinsað.
+
+Prófun
+------
+- Stofna Vinnuvél: spurning um sjálfkeyrslu birtist; hraði aðeins fyrir „Keyrir sjálf“.
+- Stofna Ökutæki: engin ferðaspurning og enginn hraðareitur.
+- Stofna Tæki / verkfæri: engin ferðaspurning og enginn hraðareitur.
+- Breyta fyrirliggjandi KY645: Keyrir sjálf + 25 km/klst. varðveitist.
+- Dagsmönnun/Mobile: aðeins MACHINE + SELF_PROPELLED getur takmarkað ferðatíma með planningTravelSpeedKmh.
+
+Engin gagnagrunnsmigration fylgir þessari breytingu.

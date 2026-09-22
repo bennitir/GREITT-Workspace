@@ -13,10 +13,12 @@ import { nextMaintenanceDueValue } from "@/lib/work10/maintenance";
 import { removeWorkResourceMedia, saveWorkResourceMeterPhoto } from "@/lib/work10/resource-media";
 import {
   WORK10_RESOURCE_UNITS,
+  defaultResourceTravelMode,
   defaultResourceUnit,
   isWork10EquipmentKind,
+  isWork10MachineTravelMode,
   isWork10ResourceStatus,
-  isWork10ResourceTravelMode,
+  resourceTravelSpeedLimitsRoute,
 } from "@/lib/work10/resources";
 
 type ResourceErrors = ReturnType<typeof workResourceText>["errors"];
@@ -85,14 +87,20 @@ export async function createWorkResource(formData: FormData) {
   const meterUnit = String(formData.get("meterUnit") ?? "").trim();
   const costRateIsk = optionalNumber(formData.get("costRateIsk"), t.errors);
   const saleRateIsk = optionalNumber(formData.get("saleRateIsk"), t.errors);
-  const requestedTravelMode = String(formData.get("travelMode") ?? "").trim();
-  const travelMode = requestedTravelMode || (kind === "MACHINE" ? "SELF_PROPELLED" : kind === "VEHICLE" ? "ROAD" : "NONE");
-  const parsedTravelSpeed = optionalNumber(formData.get("planningTravelSpeedKmh"), t.errors);
-  if (parsedTravelSpeed !== null && parsedTravelSpeed <= 0) throw new Error(t.errors.invalidNumber);
-  const planningTravelSpeedKmh = travelMode === "SELF_PROPELLED" || travelMode === "ROAD" ? parsedTravelSpeed : null;
-
   if (!isWork10EquipmentKind(kind)) throw new Error(t.errors.invalidKind);
-  if (!isWork10ResourceTravelMode(travelMode)) throw new Error(t.errors.invalidKind);
+
+  const requestedTravelMode = String(formData.get("travelMode") ?? "").trim();
+  const travelMode = kind === "MACHINE"
+    ? (requestedTravelMode || "SELF_PROPELLED")
+    : defaultResourceTravelMode(kind);
+  if (kind === "MACHINE" && !isWork10MachineTravelMode(travelMode)) throw new Error(t.errors.invalidKind);
+
+  const parsedTravelSpeed = resourceTravelSpeedLimitsRoute(kind, travelMode)
+    ? optionalNumber(formData.get("planningTravelSpeedKmh"), t.errors)
+    : null;
+  if (parsedTravelSpeed !== null && parsedTravelSpeed <= 0) throw new Error(t.errors.invalidNumber);
+  const planningTravelSpeedKmh = parsedTravelSpeed;
+
   if (!code || code.length > 60) throw new Error(t.errors.invalidCode);
   if (!name || name.length > 160) throw new Error(t.errors.invalidName);
   if (description.length > 1000) throw new Error(t.errors.descriptionTooLong);
@@ -159,13 +167,9 @@ export async function updateWorkResourceDetails(formData: FormData) {
   const meterUnit = String(formData.get("meterUnit") ?? "").trim();
   const costRateIsk = optionalNumber(formData.get("costRateIsk"), t.errors);
   const saleRateIsk = optionalNumber(formData.get("saleRateIsk"), t.errors);
-  const travelMode = String(formData.get("travelMode") ?? "NONE").trim();
-  const parsedTravelSpeed = optionalNumber(formData.get("planningTravelSpeedKmh"), t.errors);
-  if (parsedTravelSpeed !== null && parsedTravelSpeed <= 0) throw new Error(t.errors.invalidNumber);
-  const planningTravelSpeedKmh = travelMode === "SELF_PROPELLED" || travelMode === "ROAD" ? parsedTravelSpeed : null;
+  const requestedTravelMode = String(formData.get("travelMode") ?? "").trim();
 
   if (!Number.isInteger(resourceId)) throw new Error(t.errors.invalidResource);
-  if (!isWork10ResourceTravelMode(travelMode)) throw new Error(t.errors.invalidKind);
   if (!code || code.length > 60) throw new Error(t.errors.invalidCode);
   if (!name || name.length > 160) throw new Error(t.errors.invalidName);
   if (description.length > 1000) throw new Error(t.errors.descriptionTooLong);
@@ -178,6 +182,7 @@ export async function updateWorkResourceDetails(formData: FormData) {
     where: { id: resourceId, companyId },
     select: {
       id: true,
+      kind: true,
       code: true,
       name: true,
       description: true,
@@ -191,6 +196,17 @@ export async function updateWorkResourceDetails(formData: FormData) {
     },
   });
   if (!resource) throw new Error(t.errors.resourceNotFound);
+
+  const travelMode = resource.kind === "MACHINE"
+    ? (requestedTravelMode || "SELF_PROPELLED")
+    : defaultResourceTravelMode(resource.kind);
+  if (resource.kind === "MACHINE" && !isWork10MachineTravelMode(travelMode)) throw new Error(t.errors.invalidKind);
+
+  const parsedTravelSpeed = resourceTravelSpeedLimitsRoute(resource.kind, travelMode)
+    ? optionalNumber(formData.get("planningTravelSpeedKmh"), t.errors)
+    : null;
+  if (parsedTravelSpeed !== null && parsedTravelSpeed <= 0) throw new Error(t.errors.invalidNumber);
+  const planningTravelSpeedKmh = parsedTravelSpeed;
 
   const duplicateCode = await prisma.workResource.findFirst({
     where: { companyId, code, id: { not: resourceId } },

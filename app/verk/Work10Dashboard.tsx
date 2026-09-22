@@ -9,6 +9,7 @@ import { workTimeText } from "@/lib/i18n/work-time";
 import { workResourceKindText, workResourceStatusText, workResourceText } from "@/lib/i18n/work-resources";
 import { workKeyText } from "@/lib/i18n/work-keys";
 import { work10ClockFromMinutes, work10ScheduleRangesOverlap } from "@/lib/work10/scheduling";
+import { resourceTravelSpeedLimitsRoute } from "@/lib/work10/resources";
 import { projectWorkWindowWithBreaks, resolveWorkdayBreaks, type ProjectedBreak } from "@/lib/work10/workday-policy";
 import IcelandicDateInput from "@/components/ui/IcelandicDateInput";
 import IcelandicTimeInput from "@/components/ui/IcelandicTimeInput";
@@ -791,8 +792,7 @@ function assignedResourcesForWork(work: WorkOrderData) {
 
 function travelSpeedLimitForWork(work: WorkOrderData) {
   const speeds = assignedResourcesForWork(work)
-    .filter((resource) => ["MACHINE", "VEHICLE"].includes(resource.kind))
-    .filter((resource) => resource.travelMode === "SELF_PROPELLED" || resource.travelMode === "ROAD")
+    .filter((resource) => resourceTravelSpeedLimitsRoute(resource.kind, resource.travelMode))
     .map((resource) => resource.planningTravelSpeedKmh)
     .filter((speed): speed is number => speed !== null && Number.isFinite(speed) && speed > 0);
   return speeds.length > 0 ? Math.min(...speeds) : null;

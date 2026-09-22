@@ -34,6 +34,24 @@ export const WORK10_RESOURCE_TRAVEL_MODES = [
 
 export type Work10ResourceTravelMode = (typeof WORK10_RESOURCE_TRAVEL_MODES)[number];
 
+export const WORK10_MACHINE_TRAVEL_MODES = ["SELF_PROPELLED", "TRANSPORTED"] as const;
+
+export type Work10MachineTravelMode = (typeof WORK10_MACHINE_TRAVEL_MODES)[number];
+
+export function isWork10MachineTravelMode(value: string): value is Work10MachineTravelMode {
+  return (WORK10_MACHINE_TRAVEL_MODES as readonly string[]).includes(value);
+}
+
+export function defaultResourceTravelMode(kind: string): Work10ResourceTravelMode {
+  if (kind === "MACHINE") return "SELF_PROPELLED";
+  if (kind === "VEHICLE") return "ROAD";
+  return "NONE";
+}
+
+export function resourceTravelSpeedLimitsRoute(kind: string, travelMode: string) {
+  return kind === "MACHINE" && travelMode === "SELF_PROPELLED";
+}
+
 export function isWork10ResourceTravelMode(value: string): value is Work10ResourceTravelMode {
   return (WORK10_RESOURCE_TRAVEL_MODES as readonly string[]).includes(value);
 }

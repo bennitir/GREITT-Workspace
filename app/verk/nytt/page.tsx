@@ -321,7 +321,7 @@ export default async function NýttVerkPage() {
                     <span className="min-w-0">
                       <span className="block font-semibold text-slate-900">{resource.code} · {resource.name}</span>
                       <span className="mt-0.5 block text-xs text-slate-500">
-                        {resource.kind}{resource.travelMode !== "NONE" ? ` · ${workResourceTravelModeText(resource.travelMode, language)}` : ""}{resource.planningTravelSpeedKmh ? ` · ${resource.planningTravelSpeedKmh} km/klst.` : ""}
+                        {resource.kind}{resource.travelMode !== "NONE" ? ` · ${workResourceTravelModeText(resource.travelMode, language)}` : ""}{resource.travelMode === "SELF_PROPELLED" && resource.planningTravelSpeedKmh ? ` · ${resource.planningTravelSpeedKmh} km/klst.` : ""}
                       </span>
                     </span>
                   </label>

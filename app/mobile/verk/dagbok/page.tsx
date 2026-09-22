@@ -9,6 +9,7 @@ import { workResourceKindText, workResourceTravelModeText } from "@/lib/i18n/wor
 import { prisma } from "@/lib/prisma";
 import { getMobileWorkActor } from "@/lib/work10/mobile-access";
 import { operationalLocationAddress, operationalLocationLabel } from "@/lib/work10/location-format";
+import { resourceTravelSpeedLimitsRoute } from "@/lib/work10/resources";
 import { startMobileDiaryEntry, stopMobileDiaryEntry } from "../actions";
 
 function localeFor(language: string) {
@@ -81,7 +82,7 @@ function resourceSummary(resource: {
   if (resource.travelMode !== "NONE") {
     parts.push(workResourceTravelModeText(resource.travelMode, language));
   }
-  if (resource.planningTravelSpeedKmh !== null) {
+  if (resourceTravelSpeedLimitsRoute(resource.kind, resource.travelMode) && resource.planningTravelSpeedKmh !== null) {
     parts.push(`${new Intl.NumberFormat(localeFor(language), { maximumFractionDigits: 1 }).format(resource.planningTravelSpeedKmh)} ${speedUnit(language)}`);
   }
   return parts.join(" · ");
@@ -101,7 +102,7 @@ function diaryResourceSummary(entry: {
   const mode = entry.resourceTravelModeSnapshot ?? entry.workResource?.travelMode ?? null;
   const speed = entry.resourceTravelSpeedKmhSnapshot ?? entry.workResource?.planningTravelSpeedKmh ?? null;
   if (mode && mode !== "NONE") parts.push(workResourceTravelModeText(mode, language));
-  if (speed !== null) parts.push(`${new Intl.NumberFormat(localeFor(language), { maximumFractionDigits: 1 }).format(speed)} ${speedUnit(language)}`);
+  if (mode === "SELF_PROPELLED" && speed !== null) parts.push(`${new Intl.NumberFormat(localeFor(language), { maximumFractionDigits: 1 }).format(speed)} ${speedUnit(language)}`);
   return parts.join(" · ");
 }
 

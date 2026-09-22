@@ -15,6 +15,7 @@ import { ensureOperationalTravelRoute } from "@/lib/work10/routing";
 import {
   defaultResourceUnit,
   isWork10PersistentResourceKind,
+  resourceTravelSpeedLimitsRoute,
   resourceUsageKind,
 } from "@/lib/work10/resources";
 import { deriveWork10Status } from "@/lib/work10/status";
@@ -634,7 +635,8 @@ export async function startMobileDiaryEntry(formData: FormData) {
 
         const travelSpeed = selectedWorkResource?.planningTravelSpeedKmh ?? null;
         const speedControlsTravel =
-          (selectedWorkResource?.travelMode === "SELF_PROPELLED" || selectedWorkResource?.travelMode === "ROAD") &&
+          selectedWorkResource !== null &&
+          resourceTravelSpeedLimitsRoute(selectedWorkResource.kind, selectedWorkResource.travelMode) &&
           travelSpeed !== null &&
           travelSpeed > 0 &&
           route.distanceKm > 0;
@@ -695,7 +697,9 @@ export async function startMobileDiaryEntry(formData: FormData) {
         workResourceCodeSnapshot: selectedWorkResource?.code ?? null,
         workResourceNameSnapshot: selectedWorkResource?.name ?? null,
         resourceTravelModeSnapshot: selectedWorkResource?.travelMode ?? null,
-        resourceTravelSpeedKmhSnapshot: selectedWorkResource?.planningTravelSpeedKmh ?? null,
+        resourceTravelSpeedKmhSnapshot: selectedWorkResource && resourceTravelSpeedLimitsRoute(selectedWorkResource.kind, selectedWorkResource.travelMode)
+          ? selectedWorkResource.planningTravelSpeedKmh
+          : null,
         operationalLocationId,
         travelFromOperationalLocationId,
         travelFromLabelSnapshot,
@@ -732,7 +736,9 @@ export async function startMobileDiaryEntry(formData: FormData) {
         workResourceCodeSnapshot: selectedWorkResource?.code ?? null,
         workResourceNameSnapshot: selectedWorkResource?.name ?? null,
         resourceTravelModeSnapshot: selectedWorkResource?.travelMode ?? null,
-        resourceTravelSpeedKmhSnapshot: selectedWorkResource?.planningTravelSpeedKmh ?? null,
+        resourceTravelSpeedKmhSnapshot: selectedWorkResource && resourceTravelSpeedLimitsRoute(selectedWorkResource.kind, selectedWorkResource.travelMode)
+          ? selectedWorkResource.planningTravelSpeedKmh
+          : null,
           operationalLocationId,
           travelFromOperationalLocationId,
           travelFromLabelSnapshot,
