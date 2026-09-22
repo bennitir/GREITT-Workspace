@@ -1591,6 +1591,7 @@ model WorkKey {
   updatedBy User?   @relation("WorkKeyUpdatedBy", fields: [updatedById], references: [id], onDelete: SetNull)
   workOrders WorkOrder[]
   diaryEntries EmployeeWorkDiaryEntry[]
+  startRules WorkKeyStartRule[]
 
   @@unique([companyId, normalizedCode])
   @@index([companyId, isActive])
@@ -1598,6 +1599,24 @@ model WorkKey {
   @@index([companyId, externalId])
   @@index([createdById])
   @@index([updatedById])
+}
+
+model WorkKeyStartRule {
+  id        Int      @id @default(autoincrement())
+  workKeyId Int
+  kind      String
+  required  Boolean  @default(true)
+  config    Json?
+  sortOrder Int      @default(0)
+  isActive  Boolean  @default(true)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  workKey WorkKey @relation(fields: [workKeyId], references: [id], onDelete: Cascade)
+
+  @@unique([workKeyId, kind])
+  @@index([kind, isActive])
+  @@index([workKeyId, sortOrder])
 }
 
 model WorkOrder {
@@ -2062,6 +2081,9 @@ model WorkPartLaborFact {
   note            String?
   noteSourceLanguage String @default("is")
   source          String @default("MANUAL") // MANUAL | MOBILE | IMPORTED | API | LEGACY
+  // Snapshot af verklyklastýrðum upphafsreglum og svörum þegar vinnan hófst.
+  // Þetta varðveitir söguna þó reglum verklykilsins sé breytt síðar.
+  startContext    Json?
 
   createdById Int?
   voidedAt    DateTime?
@@ -2134,6 +2156,8 @@ model EmployeeWorkDiaryEntry {
   travelKm               Float?
 
   source String @default("MOBILE") // MOBILE | MANUAL | IMPORTED | API
+  // Snapshot af upphafsreglum/svörum Dagbókarfærslunnar.
+  startContext Json?
 
   createdById Int?
   voidedAt    DateTime?

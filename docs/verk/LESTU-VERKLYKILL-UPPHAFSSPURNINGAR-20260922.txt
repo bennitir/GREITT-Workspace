@@ -1,0 +1,89 @@
+GLÖGGT – verklyklastýrðar upphafsspurningar
+22.09.2026
+
+Markmið
+------
+Fyrsti grunnáfangi fyrir sértæka hegðun þegar Mobile-vinna hefst.
+Spurningar/reglur eiga að fylgja verklykli, ekki birtast almennt á öllum Verkum.
+
+Gagnalíkan
+----------
+Ný tafla WorkKeyStartRule geymir virkar upphafsreglur á verklykli.
+Fyrstu innbyggðu kind-gildin eru:
+- GPS_PROGRESS
+- CHAIN_COUNT
+- START_PHOTO
+
+Reglurnar eru raðir með kind/config fremur en þrír fastir dálkar á WorkKey.
+Þannig má bæta við nýjum tegundum upphafsspurninga síðar án þess að gera
+WorkKey sjálft að safni sértækra dálka.
+
+WorkPartLaborFact.startContext og EmployeeWorkDiaryEntry.startContext geyma
+snapshot af því sem gilti þegar vinnan hófst. Seinni breyting á verklykli
+breytir því ekki sögulegum vinnulotum.
+
+Stjórnun verklykla
+------------------
+Á /verk/lyklar birtist „Spurningar við upphaf verks“.
+Stjórnandi getur virkjað:
+- GPS-framvindu
+- Fjölda keðja
+- Mynd við upphaf
+
+Sjálfgefið er ekkert virkt. Innfluttir/eldri verklyklar fá því enga nýja
+truflandi hegðun fyrr en stjórnandi virkjar hana sérstaklega.
+
+Mobile – úthlutað Verk
+----------------------
+Ef verklykill Verks hefur upphafsreglur opnar „Hefja vinnu“ full-screen
+upphafsskjá. Þar birtast aðeins virkar reglur.
+
+GPS_PROGRESS:
+- sýnir skýrar upplýsingar um tilgang GPS-framvindu;
+- starfsmaður staðfestir upplýsingarnar áður en vinnan getur hafist;
+- staðfestingartími snapshot-ast í startContext.
+
+CHAIN_COUNT:
+- krefst heiltölu 0–20;
+- gildið snapshot-ast á vinnulotunni.
+
+START_PHOTO:
+- krefst myndar við upphaf;
+- á úthlutuðu Verki vistast myndin einnig sem WorkEvidencePhoto stage=START;
+- storage path/file metadata snapshot-ast í startContext.
+
+Mobile – Dagbók
+---------------
+Verklyklaval í Dagbók les sömu WorkKeyStartRule reglur.
+GPS-upplýsingaskjár birtist aðeins þegar GPS-virkur lykill er valinn.
+Keðjufjöldi og mynd birtast aðeins ef valinn lykill krefst þeirra.
+Dagbókarspjaldið sýnir síðan stutta staðfestingu, t.d. GPS staðfest,
+Fjöldi keðja: 4, Mynd skráð.
+
+GPS – mikilvægt fyrir þennan áfanga
+----------------------------------
+Þessi migration/lotan byggir stillingu, staðfestingu og snapshot-grunn.
+Hún byrjar EKKI enn að safna GPS-punktum eða teikna track.
+Mobile segir það skýrt á upplýsingaskjánum svo prófun gefi ekki ranga mynd.
+Næsti GPS-áfangi getur tengt WorkTrackSession/trackpunkta við þennan grunn.
+
+Öryggi og rekjanleiki
+---------------------
+Server-actions staðfesta reglurnar aftur; ekki er treyst á client/UI eitt og sér.
+Upphafsmynd er fjarlægð úr storage ef transaction mistekst.
+AuditEvent varðveitir upphafssamhengi með vinnustaðreyndinni.
+
+Migration
+---------
+20260922143000_add_work_key_start_requirements
+
+Prófunarröð
+-----------
+1. npx prisma validate
+2. npx prisma generate
+3. npx tsc --noEmit
+4. npx prisma migrate deploy
+5. Velja prófunarverklykil (t.d. 0300) og virkja GPS + keðjur + mynd.
+6. Staðfesta að annar verklykill án reglna sýni ekkert aukalega.
+7. Prófa Mobile úthlutað Verk og Dagbók.
+8. Staðfesta full-screen GPS upplýsingaskjá, keðjufjölda og mynd.

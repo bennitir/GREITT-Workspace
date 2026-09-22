@@ -2,14 +2,15 @@ import Link from "next/link";
 
 import LiveDiaryTotal from "@/components/work/LiveDiaryTotal";
 import OperationalLocationAutocomplete, { type LocationOption } from "@/components/work/OperationalLocationAutocomplete";
+import MobileDiaryWorkKeyRequirements from "@/components/work/MobileDiaryWorkKeyRequirements";
 
 import { workMobileText } from "@/lib/i18n/work-mobile";
-import { workKeyText } from "@/lib/i18n/work-keys";
 import { workResourceKindText, workResourceTravelModeText } from "@/lib/i18n/work-resources";
 import { prisma } from "@/lib/prisma";
 import { getMobileWorkActor } from "@/lib/work10/mobile-access";
 import { operationalLocationAddress, operationalLocationLabel } from "@/lib/work10/location-format";
 import { resourceTravelSpeedLimitsRoute } from "@/lib/work10/resources";
+import { normalizeWorkStartContext } from "@/lib/work10/work-start-requirements";
 import { startMobileDiaryEntry, stopMobileDiaryEntry } from "../actions";
 
 function localeFor(language: string) {
@@ -109,7 +110,6 @@ function diaryResourceSummary(entry: {
 export default async function MobileWorkDiaryPage() {
   const actor = await getMobileWorkActor();
   const t = workMobileText(actor.language);
-  const workKeyT = workKeyText(actor.language);
 
   if (!actor.employee) {
     return (
@@ -137,7 +137,16 @@ export default async function MobileWorkDiaryPage() {
     }),
     prisma.workKey.findMany({
       where: { companyId: actor.companyId, isActive: true },
-      select: { id: true, code: true, name: true },
+      select: {
+        id: true,
+        code: true,
+        name: true,
+        startRules: {
+          where: { isActive: true },
+          orderBy: { sortOrder: "asc" },
+          select: { kind: true, required: true, config: true },
+        },
+      },
       orderBy: [{ code: "asc" }],
     }),
     prisma.workResource.findMany({
@@ -255,6 +264,16 @@ export default async function MobileWorkDiaryPage() {
             <h2 className="mt-1 text-xl font-bold text-emerald-950">{activeEntry.title}</h2>
             <p className="mt-1 text-sm text-emerald-900">{t.diaryStarted}: {displayTime(activeEntry.startedAt, actor.language)}</p>
             {activeEntry.workKey ? <p className="mt-2 text-sm text-emerald-900">{t.diaryWorkKey}: {activeEntry.workKey}</p> : null}
+            {(() => {
+              const context = normalizeWorkStartContext(activeEntry.startContext);
+              if (!context) return null;
+              const parts = [
+                context.gpsAcknowledgedAt ? t.startContextGps : null,
+                context.chainCount !== null ? `${t.chainCount}: ${context.chainCount}` : null,
+                context.startPhoto ? t.startContextPhoto : null,
+              ].filter(Boolean);
+              return parts.length > 0 ? <p className="mt-1 text-sm font-semibold text-emerald-900">{parts.join(" · ")}</p> : null;
+            })()}
             {diaryResourceSummary(activeEntry, actor.language) ? <p className="mt-1 text-sm text-emerald-900">{t.diaryEquipment}: {diaryResourceSummary(activeEntry, actor.language)}</p> : null}
             {activeEntry.travelFromLabelSnapshot || activeEntry.travelFromOperationalLocation ? (
               <p className="mt-1 text-sm text-emerald-900">{t.diaryTravelFrom}: {activeEntry.travelFromLabelSnapshot ?? activeEntry.travelFromOperationalLocation?.name}</p>
@@ -296,13 +315,11 @@ export default async function MobileWorkDiaryPage() {
                 <span>{t.diaryActivity}</span>
                 <input name="title" required maxLength={200} disabled={Boolean(activeWork)} placeholder={t.diaryActivityPlaceholder} className="rounded-xl border border-slate-300 px-3 py-3 text-base disabled:bg-slate-100" />
               </label>
-              <label className="grid gap-1 text-sm font-semibold text-slate-700">
-                <span>{t.diaryWorkKey}</span>
-                <select name="workKeyId" defaultValue="" disabled={Boolean(activeWork)} className="rounded-xl border border-slate-300 bg-white px-3 py-3 text-base disabled:bg-slate-100">
-                  <option value="">{workKeyT.selectNone}</option>
-                  {workKeys.map((key) => <option key={key.id} value={key.id}>{key.code}{key.name !== key.code ? ` · ${key.name}` : ""}</option>)}
-                </select>
-              </label>
+              <MobileDiaryWorkKeyRequirements
+                language={actor.language}
+                workKeys={workKeys}
+                disabled={Boolean(activeWork)}
+              />
               <label className="grid gap-1 text-sm font-semibold text-slate-700">
                 <span>{t.diaryEquipment}</span>
                 <select name="workResourceId" defaultValue="" disabled={Boolean(activeWork)} className="rounded-xl border border-slate-300 bg-white px-3 py-3 text-base disabled:bg-slate-100">
@@ -366,6 +383,16 @@ export default async function MobileWorkDiaryPage() {
                       <span className="shrink-0 rounded-full bg-slate-100 px-2.5 py-1 text-xs font-bold text-slate-700">{formatMinutes(duration, actor.language)}</span>
                     </div>
                     {entry.workKey ? <p className="mt-2 text-sm text-slate-700">{t.diaryWorkKey}: {entry.workKey}</p> : null}
+                    {(() => {
+                      const context = normalizeWorkStartContext(entry.startContext);
+                      if (!context) return null;
+                      const parts = [
+                        context.gpsAcknowledgedAt ? t.startContextGps : null,
+                        context.chainCount !== null ? `${t.chainCount}: ${context.chainCount}` : null,
+                        context.startPhoto ? t.startContextPhoto : null,
+                      ].filter(Boolean);
+                      return parts.length > 0 ? <p className="mt-1 text-xs font-semibold text-blue-800">{parts.join(" · ")}</p> : null;
+                    })()}
                     {diaryResourceSummary(entry, actor.language) ? <p className="mt-1 text-sm text-slate-700">{t.diaryEquipment}: {diaryResourceSummary(entry, actor.language)}</p> : null}
                     {entry.travelFromLabelSnapshot || entry.travelFromOperationalLocation ? (
                       <p className="mt-1 text-sm text-slate-700">{t.diaryTravelFrom}: {entry.travelFromLabelSnapshot ?? entry.travelFromOperationalLocation?.name}</p>

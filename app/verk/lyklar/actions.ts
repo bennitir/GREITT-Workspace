@@ -8,6 +8,7 @@ import { workKeyText } from "@/lib/i18n/work-keys";
 import { prisma } from "@/lib/prisma";
 import { parseWorkKeyImportFile, WorkKeyImportError } from "@/lib/work10/work-key-import";
 import { cleanWorkKeyCode, normalizeWorkKeyCode } from "@/lib/work10/work-keys";
+import { WORK_START_RULE_KINDS, type WorkStartRuleKind } from "@/lib/work10/work-start-requirements";
 
 async function actionContext() {
   const companyId = await requireActiveCompanyWriteAccess();
@@ -36,9 +37,22 @@ function readFields(formData: FormData) {
   return { code, normalizedCode, name, description, externalId };
 }
 
+function readStartRuleKinds(formData: FormData): WorkStartRuleKind[] {
+  const selected: WorkStartRuleKind[] = [];
+  if (formData.get("startGpsProgress") === "true") selected.push("GPS_PROGRESS");
+  if (formData.get("startChainCount") === "true") selected.push("CHAIN_COUNT");
+  if (formData.get("startPhoto") === "true") selected.push("START_PHOTO");
+  return selected;
+}
+
+function startRuleRows(kinds: readonly WorkStartRuleKind[]) {
+  return kinds.map((kind, index) => ({ kind, required: true, sortOrder: index + 1, isActive: true }));
+}
+
 export async function createWorkKey(formData: FormData) {
   const { companyId, userId, t } = await actionContext();
   const fields = readFields(formData);
+  const startRuleKinds = readStartRuleKinds(formData);
   if (!fields.code || fields.code.length > 120) throw new Error(t.errors.invalidCode);
   if (!fields.name || fields.name.length > 200) throw new Error(t.errors.invalidName);
   if (fields.description.length > 2000) throw new Error(t.errors.descriptionTooLong);
@@ -62,6 +76,7 @@ export async function createWorkKey(formData: FormData) {
         source: "MANUAL",
         createdById: userId,
         updatedById: userId,
+        startRules: startRuleKinds.length > 0 ? { create: startRuleRows(startRuleKinds) } : undefined,
       },
     });
     await tx.auditEvent.create({
@@ -73,7 +88,7 @@ export async function createWorkKey(formData: FormData) {
         action: "CREATED",
         source: "USER",
         description: t.auditCreated,
-        afterData: { code: key.code, name: key.name, externalId: key.externalId },
+        afterData: { code: key.code, name: key.name, externalId: key.externalId, startRules: startRuleKinds },
       },
     });
   });
@@ -86,12 +101,16 @@ export async function updateWorkKey(formData: FormData) {
   const workKeyId = Number(formData.get("workKeyId"));
   if (!Number.isInteger(workKeyId) || workKeyId < 1) throw new Error(t.errors.notFound);
   const fields = readFields(formData);
+  const startRuleKinds = readStartRuleKinds(formData);
   if (!fields.code || fields.code.length > 120) throw new Error(t.errors.invalidCode);
   if (!fields.name || fields.name.length > 200) throw new Error(t.errors.invalidName);
   if (fields.description.length > 2000) throw new Error(t.errors.descriptionTooLong);
   if (fields.externalId.length > 160) throw new Error(t.errors.externalIdTooLong);
 
-  const current = await prisma.workKey.findFirst({ where: { id: workKeyId, companyId } });
+  const current = await prisma.workKey.findFirst({
+    where: { id: workKeyId, companyId },
+    include: { startRules: { where: { isActive: true }, orderBy: { sortOrder: "asc" } } },
+  });
   if (!current) throw new Error(t.errors.notFound);
   const duplicate = await prisma.workKey.findFirst({
     where: { companyId, normalizedCode: fields.normalizedCode, NOT: { id: workKeyId } },
@@ -112,6 +131,15 @@ export async function updateWorkKey(formData: FormData) {
       },
     });
 
+    await tx.workKeyStartRule.deleteMany({
+      where: { workKeyId: updated.id, kind: { in: [...WORK_START_RULE_KINDS] } },
+    });
+    if (startRuleKinds.length > 0) {
+      await tx.workKeyStartRule.createMany({
+        data: startRuleRows(startRuleKinds).map((rule) => ({ ...rule, workKeyId: updated.id })),
+      });
+    }
+
     // Verk/Dagbók geyma denormalíserað sýnilegt kóðagildi. Þegar kóði master-lykils
     // breytist uppfærum við tengda textann; AuditEvent varðveitir breytingasöguna.
     if (updated.code !== current.code) {
@@ -128,8 +156,20 @@ export async function updateWorkKey(formData: FormData) {
         action: "UPDATED",
         source: "USER",
         description: t.auditUpdated,
-        beforeData: { code: current.code, name: current.name, description: current.description, externalId: current.externalId },
-        afterData: { code: updated.code, name: updated.name, description: updated.description, externalId: updated.externalId },
+        beforeData: {
+          code: current.code,
+          name: current.name,
+          description: current.description,
+          externalId: current.externalId,
+          startRules: current.startRules.map((rule) => rule.kind),
+        },
+        afterData: {
+          code: updated.code,
+          name: updated.name,
+          description: updated.description,
+          externalId: updated.externalId,
+          startRules: startRuleKinds,
+        },
       },
     });
   });

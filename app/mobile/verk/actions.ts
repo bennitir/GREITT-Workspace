@@ -8,6 +8,12 @@ import { prisma } from "@/lib/prisma";
 import { nextMaintenanceDueValue } from "@/lib/work10/maintenance";
 import { removeWorkResourceMedia, saveWorkResourceMeterPhoto } from "@/lib/work10/resource-media";
 import { removeWorkEvidenceMedia, saveWorkEvidencePhoto } from "@/lib/work10/work-evidence-media";
+import { removeWorkStartMedia, saveDiaryWorkStartPhoto } from "@/lib/work10/work-start-media";
+import {
+  normalizeWorkStartRules,
+  workStartRuleEnabled,
+  type WorkStartRuleSnapshot,
+} from "@/lib/work10/work-start-requirements";
 import { requireMobileWorkEmployee } from "@/lib/work10/mobile-access";
 import { operationalLocationLabel } from "@/lib/work10/location-format";
 import { resolveHmsOperationalLocation } from "@/lib/work10/iceland-address";
@@ -82,6 +88,66 @@ function requiredEvidenceStage(requirement: string) {
   return null;
 }
 
+type StartRuleInputs = {
+  gpsAcknowledged: boolean;
+  chainCount: number | null;
+  startPhoto: File | null;
+};
+
+function readStartRuleInputs(
+  formData: FormData,
+  rules: readonly WorkStartRuleSnapshot[],
+  errors: ReturnType<typeof workMobileText>["errors"],
+): StartRuleInputs {
+  const gpsEnabled = workStartRuleEnabled(rules, "GPS_PROGRESS");
+  const chainsEnabled = workStartRuleEnabled(rules, "CHAIN_COUNT");
+  const photoEnabled = workStartRuleEnabled(rules, "START_PHOTO");
+
+  const gpsAcknowledged = String(formData.get("gpsAcknowledged") ?? "") === "true";
+  if (gpsEnabled && !gpsAcknowledged) throw new Error(errors.gpsAcknowledgementRequired);
+
+  let chainCount: number | null = null;
+  if (chainsEnabled) {
+    const raw = String(formData.get("chainCount") ?? "").trim();
+    if (!raw) throw new Error(errors.chainCountRequired);
+    const parsed = Number(raw);
+    if (!Number.isInteger(parsed) || parsed < 0 || parsed > 20) throw new Error(errors.invalidChainCount);
+    chainCount = parsed;
+  }
+
+  const rawPhoto = formData.get("startPhoto");
+  const startPhoto = rawPhoto instanceof File && rawPhoto.size > 0 ? rawPhoto : null;
+  if (photoEnabled && !startPhoto) throw new Error(errors.startPhotoRequired);
+
+  return { gpsAcknowledged, chainCount, startPhoto };
+}
+
+function buildStartContext(params: {
+  workKeyId: number | null;
+  rules: readonly WorkStartRuleSnapshot[];
+  inputs: StartRuleInputs;
+  photoStoragePath: string | null;
+  startedAt: Date;
+}) {
+  const { workKeyId, rules, inputs, photoStoragePath, startedAt } = params;
+  return {
+    version: 1,
+    workKeyId,
+    rules: rules.map((rule) => ({ kind: rule.kind, required: rule.required })),
+    gpsAcknowledgedAt: workStartRuleEnabled(rules, "GPS_PROGRESS") && inputs.gpsAcknowledged
+      ? startedAt.toISOString()
+      : null,
+    chainCount: inputs.chainCount,
+    startPhoto: photoStoragePath && inputs.startPhoto
+      ? {
+          storagePath: photoStoragePath,
+          fileName: inputs.startPhoto.name || null,
+          mimeType: inputs.startPhoto.type || null,
+        }
+      : null,
+  };
+}
+
 function revalidateMobileWork(workOrderId: number) {
   revalidatePath("/mobile/verk");
   revalidatePath(`/mobile/verk/${workOrderId}`);
@@ -102,6 +168,16 @@ async function loadWorkPartForMobile(
       startedAt: true,
       completedAt: true,
       photoRequirement: true,
+      workKeyId: true,
+      workKeyRecord: {
+        select: {
+          startRules: {
+            where: { isActive: true },
+            orderBy: { sortOrder: "asc" },
+            select: { kind: true, required: true, config: true },
+          },
+        },
+      },
       workParts: {
         orderBy: { sequence: "asc" },
         select: { id: true, status: true, sequence: true, title: true, photoRequirement: true },
@@ -206,6 +282,9 @@ export async function startMobileWorkPart(formData: FormData) {
   if (isWork10PartTerminalStatus(loaded.part.status)) throw new Error(t.errors.partClosed);
   if (loaded.part.status === "BLOCKED") throw new Error(t.errors.dependencyBlocked);
 
+  const startRules = normalizeWorkStartRules(loaded.work.workKeyRecord?.startRules ?? []);
+  const startInputs = readStartRuleInputs(formData, startRules, t.errors);
+
   const blockers = work10UnresolvedPredecessorIds(
     workPartId,
     loaded.work.workParts,
@@ -214,7 +293,7 @@ export async function startMobileWorkPart(formData: FormData) {
   if (blockers.length > 0) throw new Error(t.errors.dependencyBlocked);
 
   const startRequirement = effectivePhotoRequirement(loaded.part.photoRequirement, loaded.work.photoRequirement);
-  if (startRequirement === "START") {
+  if (startRequirement === "START" && !startInputs.startPhoto) {
     const startPhoto = await prisma.workEvidencePhoto.findFirst({
       where: { companyId: actor.companyId, workOrderId, workPartId, stage: "START" },
       select: { id: true },
@@ -252,60 +331,99 @@ export async function startMobileWorkPart(formData: FormData) {
   }
   if (active) throw new Error(t.errors.alreadyActiveElsewhere);
 
+  let startPhotoStoragePath: string | null = null;
+  if (startInputs.startPhoto) {
+    startPhotoStoragePath = await saveWorkEvidencePhoto(
+      startInputs.startPhoto,
+      actor.companyId,
+      workOrderId,
+      workPartId,
+      "START",
+    );
+  }
+
   const now = new Date();
+  const startContext = buildStartContext({
+    workKeyId: loaded.work.workKeyId,
+    rules: startRules,
+    inputs: startInputs,
+    photoStoragePath: startPhotoStoragePath,
+    startedAt: now,
+  });
   const nextParts = loaded.work.workParts.map((item) =>
     item.id === workPartId ? { ...item, status: "IN_PROGRESS" } : item,
   );
   const nextWorkStatus = deriveWork10Status(loaded.work.status, nextParts);
 
-  await prisma.$transaction(async (tx) => {
-    const fact = await tx.workPartLaborFact.create({
-      data: {
-        companyId: actor.companyId,
-        workPartId,
-        employeeId: actor.employee.id,
-        userId: actor.user.id,
-        resourceLabel: actor.employee.fullName,
-        workDate: workDateFromNow(now),
-        startedAt: now,
-        durationMinutes: 0,
-        noteSourceLanguage: actor.language,
-        source: "MOBILE",
-        createdById: actor.user.id,
-      },
-    });
-
-    if (loaded.part!.status !== "IN_PROGRESS") {
-      await tx.workPart.update({
-        where: { id: workPartId },
-        data: { status: "IN_PROGRESS", updatedById: actor.user.id },
+  try {
+    await prisma.$transaction(async (tx) => {
+      const fact = await tx.workPartLaborFact.create({
+        data: {
+          companyId: actor.companyId,
+          workPartId,
+          employeeId: actor.employee.id,
+          userId: actor.user.id,
+          resourceLabel: actor.employee.fullName,
+          workDate: workDateFromNow(now),
+          startedAt: now,
+          durationMinutes: 0,
+          noteSourceLanguage: actor.language,
+          source: "MOBILE",
+          startContext,
+          createdById: actor.user.id,
+        },
       });
-    }
 
-    await tx.workOrder.update({
-      where: { id: workOrderId },
-      data: {
-        status: nextWorkStatus,
-        startedAt: loaded.work.startedAt ?? now,
-        completedAt: null,
-      },
-    });
+      if (loaded.part!.status !== "IN_PROGRESS") {
+        await tx.workPart.update({
+          where: { id: workPartId },
+          data: { status: "IN_PROGRESS", updatedById: actor.user.id },
+        });
+      }
 
-    await tx.auditEvent.create({
-      data: {
-        companyId: actor.companyId,
-        userId: actor.user.id,
-        entityType: "WORK_PART_LABOR_FACT",
-        entityId: fact.id,
-        parentEntityType: "WORK_ORDER",
-        parentEntityId: workOrderId,
-        action: "MOBILE_WORK_STARTED",
-        source: "MOBILE",
-        description: t.audit.started,
-        afterData: { workPartId, employeeId: actor.employee.id, startedAt: now.toISOString() },
-      },
+      await tx.workOrder.update({
+        where: { id: workOrderId },
+        data: {
+          status: nextWorkStatus,
+          startedAt: loaded.work.startedAt ?? now,
+          completedAt: null,
+        },
+      });
+
+      if (startPhotoStoragePath && startInputs.startPhoto) {
+        await tx.workEvidencePhoto.create({
+          data: {
+            companyId: actor.companyId,
+            workOrderId,
+            workPartId,
+            stage: "START",
+            storagePath: startPhotoStoragePath,
+            fileName: startInputs.startPhoto.name || null,
+            mimeType: startInputs.startPhoto.type || null,
+            createdById: actor.user.id,
+          },
+        });
+      }
+
+      await tx.auditEvent.create({
+        data: {
+          companyId: actor.companyId,
+          userId: actor.user.id,
+          entityType: "WORK_PART_LABOR_FACT",
+          entityId: fact.id,
+          parentEntityType: "WORK_ORDER",
+          parentEntityId: workOrderId,
+          action: "MOBILE_WORK_STARTED",
+          source: "MOBILE",
+          description: t.audit.started,
+          afterData: { workPartId, employeeId: actor.employee.id, startedAt: now.toISOString(), startContext },
+        },
+      });
     });
-  });
+  } catch (error) {
+    await removeWorkEvidenceMedia(startPhotoStoragePath);
+    throw error;
+  }
 
   revalidateMobileWork(workOrderId);
 }
@@ -550,13 +668,23 @@ export async function startMobileDiaryEntry(formData: FormData) {
   const selectedWorkKey = workKeyId
     ? await prisma.workKey.findFirst({
         where: { id: workKeyId, companyId: actor.companyId, isActive: true },
-        select: { id: true, code: true },
+        select: {
+          id: true,
+          code: true,
+          startRules: {
+            where: { isActive: true },
+            orderBy: { sortOrder: "asc" },
+            select: { kind: true, required: true, config: true },
+          },
+        },
       })
     : null;
   if (workKeyId && !selectedWorkKey) {
     throw new Error(t.errors.invalidDiaryWorkKey);
   }
   const workKey = selectedWorkKey?.code ?? null;
+  const startRules = normalizeWorkStartRules(selectedWorkKey?.startRules ?? []);
+  const startInputs = readStartRuleInputs(formData, startRules, t.errors);
 
   const selectedWorkResource = workResourceId
     ? await prisma.workResource.findFirst({
@@ -679,66 +807,47 @@ export async function startMobileDiaryEntry(formData: FormData) {
   ]);
   if (activeWork || activeDiary) throw new Error(t.errors.alreadyActiveElsewhere);
 
-  const now = new Date();
-  await prisma.$transaction(async (tx) => {
-    const entry = await tx.employeeWorkDiaryEntry.create({
-      data: {
-        companyId: actor.companyId,
-        employeeId: actor.employee.id,
-        workDate: workDateFromNow(now),
-        startedAt: now,
-        durationMinutes: 0,
-        title,
-        note,
-        noteSourceLanguage: actor.language,
-        workKey,
-        workKeyId: selectedWorkKey?.id ?? null,
-        workResourceId: selectedWorkResource?.id ?? null,
-        workResourceCodeSnapshot: selectedWorkResource?.code ?? null,
-        workResourceNameSnapshot: selectedWorkResource?.name ?? null,
-        resourceTravelModeSnapshot: selectedWorkResource?.travelMode ?? null,
-        resourceTravelSpeedKmhSnapshot: selectedWorkResource && resourceTravelSpeedLimitsRoute(selectedWorkResource.kind, selectedWorkResource.travelMode)
-          ? selectedWorkResource.planningTravelSpeedKmh
-          : null,
-        operationalLocationId,
-        travelFromOperationalLocationId,
-        travelFromLabelSnapshot,
-        travelToLabelSnapshot,
-        estimatedTravelMinutes,
-        estimatedTravelKm,
-        travelEstimateSource,
-        locationText,
-        travelMinutes,
-        travelKm,
-        source: "MOBILE",
-        createdById: actor.user.id,
-      },
-    });
+  let startPhotoStoragePath: string | null = null;
+  if (startInputs.startPhoto) {
+    startPhotoStoragePath = await saveDiaryWorkStartPhoto(
+      startInputs.startPhoto,
+      actor.companyId,
+      actor.employee.id,
+    );
+  }
 
-    await tx.auditEvent.create({
-      data: {
-        companyId: actor.companyId,
-        userId: actor.user.id,
-        entityType: "EMPLOYEE_WORK_DIARY_ENTRY",
-        entityId: entry.id,
-        parentEntityType: "EMPLOYEE",
-        parentEntityId: actor.employee.id,
-        action: "MOBILE_DIARY_STARTED",
-        source: "MOBILE",
-        description: t.audit.diaryStarted,
-        afterData: {
+  const now = new Date();
+  const startContext = buildStartContext({
+    workKeyId: selectedWorkKey?.id ?? null,
+    rules: startRules,
+    inputs: startInputs,
+    photoStoragePath: startPhotoStoragePath,
+    startedAt: now,
+  });
+
+  try {
+    await prisma.$transaction(async (tx) => {
+      const entry = await tx.employeeWorkDiaryEntry.create({
+        data: {
+          companyId: actor.companyId,
           employeeId: actor.employee.id,
-          startedAt: now.toISOString(),
+          workDate: workDateFromNow(now),
+          startedAt: now,
+          durationMinutes: 0,
           title,
+          note,
+          noteSourceLanguage: actor.language,
           workKey,
           workKeyId: selectedWorkKey?.id ?? null,
-        workResourceId: selectedWorkResource?.id ?? null,
-        workResourceCodeSnapshot: selectedWorkResource?.code ?? null,
-        workResourceNameSnapshot: selectedWorkResource?.name ?? null,
-        resourceTravelModeSnapshot: selectedWorkResource?.travelMode ?? null,
-        resourceTravelSpeedKmhSnapshot: selectedWorkResource && resourceTravelSpeedLimitsRoute(selectedWorkResource.kind, selectedWorkResource.travelMode)
-          ? selectedWorkResource.planningTravelSpeedKmh
-          : null,
+          workResourceId: selectedWorkResource?.id ?? null,
+          workResourceCodeSnapshot: selectedWorkResource?.code ?? null,
+          workResourceNameSnapshot: selectedWorkResource?.name ?? null,
+          resourceTravelModeSnapshot: selectedWorkResource?.travelMode ?? null,
+          resourceTravelSpeedKmhSnapshot:
+            selectedWorkResource &&
+            resourceTravelSpeedLimitsRoute(selectedWorkResource.kind, selectedWorkResource.travelMode)
+              ? selectedWorkResource.planningTravelSpeedKmh
+              : null,
           operationalLocationId,
           travelFromOperationalLocationId,
           travelFromLabelSnapshot,
@@ -746,12 +855,59 @@ export async function startMobileDiaryEntry(formData: FormData) {
           estimatedTravelMinutes,
           estimatedTravelKm,
           travelEstimateSource,
+          locationText,
           travelMinutes,
           travelKm,
+          source: "MOBILE",
+          startContext,
+          createdById: actor.user.id,
         },
-      },
+      });
+
+      await tx.auditEvent.create({
+        data: {
+          companyId: actor.companyId,
+          userId: actor.user.id,
+          entityType: "EMPLOYEE_WORK_DIARY_ENTRY",
+          entityId: entry.id,
+          parentEntityType: "EMPLOYEE",
+          parentEntityId: actor.employee.id,
+          action: "MOBILE_DIARY_STARTED",
+          source: "MOBILE",
+          description: t.audit.diaryStarted,
+          afterData: {
+            employeeId: actor.employee.id,
+            startedAt: now.toISOString(),
+            title,
+            workKey,
+            workKeyId: selectedWorkKey?.id ?? null,
+            startContext,
+            workResourceId: selectedWorkResource?.id ?? null,
+            workResourceCodeSnapshot: selectedWorkResource?.code ?? null,
+            workResourceNameSnapshot: selectedWorkResource?.name ?? null,
+            resourceTravelModeSnapshot: selectedWorkResource?.travelMode ?? null,
+            resourceTravelSpeedKmhSnapshot:
+              selectedWorkResource &&
+              resourceTravelSpeedLimitsRoute(selectedWorkResource.kind, selectedWorkResource.travelMode)
+                ? selectedWorkResource.planningTravelSpeedKmh
+                : null,
+            operationalLocationId,
+            travelFromOperationalLocationId,
+            travelFromLabelSnapshot,
+            travelToLabelSnapshot,
+            estimatedTravelMinutes,
+            estimatedTravelKm,
+            travelEstimateSource,
+            travelMinutes,
+            travelKm,
+          },
+        },
+      });
     });
-  });
+  } catch (error) {
+    await removeWorkStartMedia(startPhotoStoragePath);
+    throw error;
+  }
 
   revalidateMobileDiary(actor.employee.id);
 }

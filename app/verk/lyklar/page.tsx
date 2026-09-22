@@ -37,7 +37,10 @@ export default async function WorkKeysPage({ searchParams }: WorkKeysPageProps) 
       : Promise.resolve(null),
     prisma.workKey.findMany({
       where: { companyId },
-      include: { _count: { select: { workOrders: true, diaryEntries: true } } },
+      include: {
+        _count: { select: { workOrders: true, diaryEntries: true } },
+        startRules: { where: { isActive: true }, orderBy: { sortOrder: "asc" } },
+      },
       orderBy: [{ isActive: "desc" }, { code: "asc" }],
     }),
   ]);
@@ -87,6 +90,15 @@ export default async function WorkKeysPage({ searchParams }: WorkKeysPageProps) 
                 <span>{t.externalId}</span>
                 <input name="externalId" maxLength={160} className="rounded-lg border px-3 py-2" />
               </label>
+              <fieldset className="md:col-span-2 rounded-xl border bg-slate-50 p-3">
+                <legend className="px-1 text-sm font-bold text-slate-800">{t.startQuestionsTitle}</legend>
+                <p className="mb-3 text-xs leading-5 text-slate-500">{t.startQuestionsHelp}</p>
+                <div className="grid gap-3">
+                  <label className="flex items-start gap-3 text-sm text-slate-700"><input type="checkbox" name="startGpsProgress" value="true" className="mt-1 h-4 w-4" /><span><strong>{t.startGpsProgress}</strong><span className="block text-xs font-normal text-slate-500">{t.startGpsProgressHelp}</span></span></label>
+                  <label className="flex items-start gap-3 text-sm text-slate-700"><input type="checkbox" name="startChainCount" value="true" className="mt-1 h-4 w-4" /><span><strong>{t.startChainCount}</strong><span className="block text-xs font-normal text-slate-500">{t.startChainCountHelp}</span></span></label>
+                  <label className="flex items-start gap-3 text-sm text-slate-700"><input type="checkbox" name="startPhoto" value="true" className="mt-1 h-4 w-4" /><span><strong>{t.startPhoto}</strong><span className="block text-xs font-normal text-slate-500">{t.startPhotoHelp}</span></span></label>
+                </div>
+              </fieldset>
               <div className="md:col-span-2">
                 <button type="submit" className="rounded-lg bg-blue-600 px-4 py-2 font-semibold text-white hover:bg-blue-700">{t.create}</button>
               </div>
@@ -131,6 +143,15 @@ export default async function WorkKeysPage({ searchParams }: WorkKeysPageProps) 
                     <p className="mt-2 text-xs text-slate-500">
                       {t.source}: {sourceText(key.source, t)}{key.externalId ? ` · ${t.externalId}: ${key.externalId}` : ""} · {t.usage}: {key._count.workOrders} {t.works}, {key._count.diaryEntries} {t.diary}
                     </p>
+                    {key.startRules.length > 0 ? (
+                      <div className="mt-2 flex flex-wrap gap-1.5">
+                        {key.startRules.map((rule) => (
+                          <span key={rule.id} className="rounded-full bg-blue-50 px-2 py-1 text-[11px] font-semibold text-blue-800">
+                            {rule.kind === "GPS_PROGRESS" ? t.startGpsProgress : rule.kind === "CHAIN_COUNT" ? t.startChainCount : rule.kind === "START_PHOTO" ? t.startPhoto : rule.kind}
+                          </span>
+                        ))}
+                      </div>
+                    ) : null}
                   </div>
                   {access.canWrite ? (
                     <form action={setWorkKeyActive}>
@@ -150,6 +171,15 @@ export default async function WorkKeysPage({ searchParams }: WorkKeysPageProps) 
                       <label className="grid gap-1 text-sm font-semibold text-slate-700"><span>{t.name}</span><input name="name" defaultValue={key.name} required maxLength={200} className="rounded-lg border bg-white px-3 py-2" /></label>
                       <label className="grid gap-1 text-sm font-semibold text-slate-700 md:col-span-2"><span>{t.description}</span><textarea name="description" defaultValue={key.description ?? ""} rows={2} maxLength={2000} className="rounded-lg border bg-white px-3 py-2" /></label>
                       <label className="grid gap-1 text-sm font-semibold text-slate-700 md:col-span-2"><span>{t.externalId}</span><input name="externalId" defaultValue={key.externalId ?? ""} maxLength={160} className="rounded-lg border bg-white px-3 py-2" /></label>
+                      <fieldset className="md:col-span-2 rounded-xl border bg-white p-3">
+                        <legend className="px-1 text-sm font-bold text-slate-800">{t.startQuestionsTitle}</legend>
+                        <p className="mb-3 text-xs leading-5 text-slate-500">{t.startQuestionsHelp}</p>
+                        <div className="grid gap-3">
+                          <label className="flex items-start gap-3 text-sm text-slate-700"><input type="checkbox" name="startGpsProgress" value="true" defaultChecked={key.startRules.some((rule) => rule.kind === "GPS_PROGRESS")} className="mt-1 h-4 w-4" /><span><strong>{t.startGpsProgress}</strong><span className="block text-xs font-normal text-slate-500">{t.startGpsProgressHelp}</span></span></label>
+                          <label className="flex items-start gap-3 text-sm text-slate-700"><input type="checkbox" name="startChainCount" value="true" defaultChecked={key.startRules.some((rule) => rule.kind === "CHAIN_COUNT")} className="mt-1 h-4 w-4" /><span><strong>{t.startChainCount}</strong><span className="block text-xs font-normal text-slate-500">{t.startChainCountHelp}</span></span></label>
+                          <label className="flex items-start gap-3 text-sm text-slate-700"><input type="checkbox" name="startPhoto" value="true" defaultChecked={key.startRules.some((rule) => rule.kind === "START_PHOTO")} className="mt-1 h-4 w-4" /><span><strong>{t.startPhoto}</strong><span className="block text-xs font-normal text-slate-500">{t.startPhotoHelp}</span></span></label>
+                        </div>
+                      </fieldset>
                       <div className="md:col-span-2"><button type="submit" className="rounded-lg bg-blue-600 px-4 py-2 font-semibold text-white hover:bg-blue-700">{t.save}</button></div>
                     </form>
                   </details>

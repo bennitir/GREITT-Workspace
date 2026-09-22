@@ -1,6 +1,7 @@
 import Link from "next/link";
 
 import MobileOperationalTranslationSync from "@/components/MobileOperationalTranslationSync";
+import MobileWorkStartDialog from "@/components/work/MobileWorkStartDialog";
 import { notFound } from "next/navigation";
 
 import { getCompanyModuleSettings } from "@/lib/core/company-module-repository";
@@ -21,6 +22,7 @@ import { getMobileWorkActor } from "@/lib/work10/mobile-access";
 import { projectPersistedWorkOrderText } from "@/lib/work10/work-order-text";
 import { resolveWork10LocalizedText } from "@/lib/work10/operational-text";
 import { deriveWork10Status } from "@/lib/work10/status";
+import { normalizeWorkStartContext } from "@/lib/work10/work-start-requirements";
 import {
   isWork10PartTerminalStatus,
   work10UnresolvedPredecessorIds,
@@ -32,7 +34,6 @@ import {
   recordMobileMeterReading,
   recordMobileResourceUsage,
   recordMobileWorkEvidencePhoto,
-  startMobileWorkPart,
   stopMobileWorkPart,
 } from "../actions";
 
@@ -71,6 +72,15 @@ export default async function MobileWorkDetailPage({ params }: Props) {
       where: { id: workOrderId, companyId: actor.companyId },
       include: {
         translations: true,
+        workKeyRecord: {
+          select: {
+            startRules: {
+              where: { isActive: true },
+              orderBy: { sortOrder: "asc" },
+              select: { kind: true, required: true, config: true },
+            },
+          },
+        },
         evidencePhotos: {
           orderBy: { createdAt: "desc" },
           take: 40,
@@ -353,6 +363,16 @@ export default async function MobileWorkDetailPage({ params }: Props) {
                         <div className="rounded-2xl border border-emerald-200 bg-emerald-50 p-4">
                           <p className="text-sm font-bold text-emerald-900">{t.activeNow}</p>
                           <p className="mt-1 text-xs text-emerald-800">{t.activeSince}: {formatTime(activeFact.startedAt!, actor.language)}</p>
+                          {(() => {
+                            const context = normalizeWorkStartContext(activeFact.startContext);
+                            if (!context) return null;
+                            const parts = [
+                              context.gpsAcknowledgedAt ? t.startContextGps : null,
+                              context.chainCount !== null ? `${t.chainCount}: ${context.chainCount}` : null,
+                              context.startPhoto ? t.startContextPhoto : null,
+                            ].filter(Boolean);
+                            return parts.length > 0 ? <p className="mt-2 text-xs font-semibold text-emerald-900">{parts.join(" · ")}</p> : null;
+                          })()}
                           <div className="mt-3 grid grid-cols-2 gap-2">
                             <form action={stopMobileWorkPart}>
                               <input type="hidden" name="workOrderId" value={work.id} />
@@ -373,11 +393,13 @@ export default async function MobileWorkDetailPage({ params }: Props) {
                         </div>
                       ) : !terminal ? (
                         <div className="grid gap-2">
-                          <form action={startMobileWorkPart}>
-                            <input type="hidden" name="workOrderId" value={work.id} />
-                            <input type="hidden" name="workPartId" value={part.id} />
-                            <button type="submit" disabled={blockers.length > 0 || part.status === "BLOCKED" || startPhotoBlocks} className="w-full rounded-xl bg-blue-600 px-4 py-3 text-base font-bold text-white disabled:cursor-not-allowed disabled:opacity-40">{t.startWork}</button>
-                          </form>
+                          <MobileWorkStartDialog
+                            workOrderId={work.id}
+                            workPartId={part.id}
+                            language={actor.language}
+                            rules={work.workKeyRecord?.startRules ?? []}
+                            disabled={blockers.length > 0 || part.status === "BLOCKED" || startPhotoBlocks}
+                          />
                           <form action={completeMobileWorkPart}>
                             <input type="hidden" name="workOrderId" value={work.id} />
                             <input type="hidden" name="workPartId" value={part.id} />
@@ -522,9 +544,21 @@ export default async function MobileWorkDetailPage({ params }: Props) {
                         <div className="mt-2 space-y-2">
                           {ownFacts.map((fact) => (
                             <div key={fact.id} className="rounded-lg bg-slate-50 px-3 py-2 text-xs text-slate-700">
-                              <span className="font-semibold">{fact.startedAt ? formatTime(fact.startedAt, actor.language) : "—"}</span>
-                              <span> · </span>
-                              <span>{fact.endedAt ? work10FormatDuration(fact.durationMinutes, actor.language) : t.activeNow}</span>
+                              <div>
+                                <span className="font-semibold">{fact.startedAt ? formatTime(fact.startedAt, actor.language) : "—"}</span>
+                                <span> · </span>
+                                <span>{fact.endedAt ? work10FormatDuration(fact.durationMinutes, actor.language) : t.activeNow}</span>
+                              </div>
+                              {(() => {
+                                const context = normalizeWorkStartContext(fact.startContext);
+                                if (!context) return null;
+                                const parts = [
+                                  context.gpsAcknowledgedAt ? t.startContextGps : null,
+                                  context.chainCount !== null ? `${t.chainCount}: ${context.chainCount}` : null,
+                                  context.startPhoto ? t.startContextPhoto : null,
+                                ].filter(Boolean);
+                                return parts.length > 0 ? <div className="mt-1 font-semibold text-blue-800">{parts.join(" · ")}</div> : null;
+                              })()}
                             </div>
                           ))}
                         </div>
