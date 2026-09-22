@@ -1,0 +1,11 @@
+GLÖGGT – Verkfæraspjald í Tækjalista – 22.09.2026
+
+Lítil UI-aðgreining á /verk/tilfong:
+
+- Vinnuvélar og ökutæki birtast saman í eigin spjaldi.
+- Verkfæri (TOOL) birtast í sérstöku Verkfæri-spjaldi.
+- Fjöldi er sýndur sérstaklega fyrir hvorn flokk.
+- Tómt Verkfæri-spjald er áfram sýnilegt svo notandi sjái strax að flokkurinn sé til.
+- Engin breyting er á gagnalíkani, QR, viðhaldi, kostnaði, úthlutun eða notkunarsögu.
+- Engin Prisma-migration.
+- Nýir textar eru til fyrir is/en/pl/sr.

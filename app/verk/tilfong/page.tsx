@@ -80,6 +80,20 @@ export default async function WorkResourcesPage({ searchParams }: WorkResourcesP
     ),
   );
   const meterPhotoUrlById = new Map(photoPairs.filter((pair): pair is readonly [number, string] => Boolean(pair[1])));
+  const resourceSections = [
+    {
+      key: "vehicles",
+      title: t.mobileEquipment,
+      emptyText: t.noMobileEquipment,
+      items: resources.filter((resource) => resource.kind !== "TOOL"),
+    },
+    {
+      key: "tools",
+      title: t.tools,
+      emptyText: t.noTools,
+      items: resources.filter((resource) => resource.kind === "TOOL"),
+    },
+  ];
 
   const maintenanceStateText = (state: ReturnType<typeof deriveWorkMaintenanceState>) => {
     if (state === "DUE") return ops.maintenanceDue;
@@ -113,16 +127,17 @@ export default async function WorkResourcesPage({ searchParams }: WorkResourcesP
         </Card>
       )}
 
-      <Card>
-        <div className="flex items-center justify-between gap-3">
-          <h2 className="text-lg font-bold text-slate-950">{t.resources}</h2>
-          <span className="rounded-full bg-slate-100 px-3 py-1 text-xs font-semibold text-slate-600">{resources.length}</span>
-        </div>
-        {resources.length === 0 ? (
-          <p className="mt-4 text-sm text-slate-500">{t.noResources}</p>
-        ) : (
-          <div className="mt-4 grid gap-4 lg:grid-cols-2">
-            {resources.map((resource) => {
+      {resourceSections.map((section) => (
+        <Card key={section.key}>
+          <div className="flex items-center justify-between gap-3">
+            <h2 className="text-lg font-bold text-slate-950">{section.title}</h2>
+            <span className="rounded-full bg-slate-100 px-3 py-1 text-xs font-semibold text-slate-600">{section.items.length}</span>
+          </div>
+          {section.items.length === 0 ? (
+            <p className="mt-4 text-sm text-slate-500">{section.emptyText}</p>
+          ) : (
+            <div className="mt-4 grid gap-4 lg:grid-cols-2">
+              {section.items.map((resource) => {
               const latestReading = resource.meterReadings[0] ?? null;
               return (
                 <article key={resource.id} className={`rounded-2xl border p-4 ${resource.isActive ? "bg-white" : "bg-slate-50 opacity-75"}`}>
@@ -325,10 +340,11 @@ export default async function WorkResourcesPage({ searchParams }: WorkResourcesP
                   )}
                 </article>
               );
-            })}
-          </div>
-        )}
-      </Card>
+              })}
+            </div>
+          )}
+        </Card>
+      ))}
     </main>
   );
 }
