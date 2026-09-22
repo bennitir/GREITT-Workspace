@@ -1,0 +1,22 @@
+GLÖGGT – GPS skjávaka í Mobile
+Dagsetning: 22.09.2026
+
+Markmið
+- Þegar virk GPS-vinnulota er í Mobile reynir GLÖGGT að halda skjánum vakandi.
+- Notandi á ekki að þurfa að snerta skjáinn reglulega til að koma í veg fyrir skjálás.
+- Þegar GPS-vinnulotu lýkur eða notandi yfirgefur virka vinnusýn er wake lock sleppt sjálfkrafa.
+
+Hegðun
+- Screen Wake Lock er aðeins beðið um meðan MobileGpsTracker er mounted, þ.e. þegar virk WorkTrackSession er í gangi.
+- Ef vafrinn/appið fer úr forgrunni getur stýrikerfið sleppt wake lock.
+- Þegar GLÖGGT verður sýnilegt aftur reynir kerfið sjálfkrafa að fá wake lock aftur.
+- Ef vafri styður ekki Screen Wake Lock eða beiðnin mistekst heldur GPS-söfnunin áfram eftir getu vafrans og notandinn fær sýnilega stöðu.
+
+Mikilvægt
+- Engin breyting er gerð á hráum GPS-punktum, senditíðni eða gæðamörkum í þessum pakka.
+- Þetta er skjá-/rekstrarhegðun, ekki map matching og ekki native background tracking.
+- Notandi á ekki að eiga við símann meðan ekið er.
+
+Breyttar skrár
+- components/work/MobileGpsTracker.tsx
+- lib/i18n/work-gps.ts

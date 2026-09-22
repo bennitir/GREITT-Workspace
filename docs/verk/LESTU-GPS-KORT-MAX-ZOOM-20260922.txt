@@ -1,0 +1,16 @@
+GLÖGGT – GPS kort: hámarkszoom 22.09.2026
+
+Breyting:
+- Lagar að + takkinn hafi áður aðeins leyft þrjú zoom-skref frá sjálfvirku Passa-sýninni.
+- Kortið má nú stækka alla leið að raunverulegu OpenStreetMap hámarkszoom-i (19).
+- Virkar bæði á korti eins Verks og fyrirtækjakortinu, þar sem bæði nota WorkOrderTrackMap.
+- Pan/drag hegðun helst óbreytt.
+- Passa endurstillir zoom og færslu á alla GPS-leiðina.
+- Engin breyting er gerð á hráum GPS-punktum, vegalengd eða gagnalíkani.
+
+Próf:
+1. npx tsc --noEmit
+2. Opna /verk og flipann Kort.
+3. Ýta endurtekið á + og draga kortið yfir Voga.
+4. Staðfesta að hægt sé að komast niður á götu-/húsastig.
+5. Ýta á Passa og staðfesta að heildarleiðin komi aftur.

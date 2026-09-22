@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useMemo, useRef, useState } from "react";
+import type { PointerEvent as ReactPointerEvent } from "react";
 
 type TrackPoint = {
   sequence: number;
@@ -108,6 +109,9 @@ export default function WorkOrderTrackMap({
   const containerRef = useRef<HTMLDivElement | null>(null);
   const [size, setSize] = useState({ width: DEFAULT_WIDTH, height: DEFAULT_HEIGHT });
   const [zoomOffset, setZoomOffset] = useState(0);
+  const [panOffset, setPanOffset] = useState({ x: 0, y: 0 });
+  const [isDragging, setIsDragging] = useState(false);
+  const dragRef = useRef<{ pointerId: number; startX: number; startY: number; baseX: number; baseY: number } | null>(null);
   const [mounted, setMounted] = useState(false);
 
   useEffect(() => {
@@ -144,8 +148,8 @@ export default function WorkOrderTrackMap({
     const maxY = Math.max(...projectedPoints.map((point) => point.y));
     const centerX = (minX + maxX) / 2;
     const centerY = (minY + maxY) / 2;
-    const left = centerX - size.width / 2;
-    const top = centerY - size.height / 2;
+    const left = centerX - size.width / 2 - panOffset.x;
+    const top = centerY - size.height / 2 - panOffset.y;
 
     const tileMinX = Math.floor(left / TILE_SIZE) - 1;
     const tileMaxX = Math.floor((left + size.width) / TILE_SIZE) + 1;
@@ -181,8 +185,65 @@ export default function WorkOrderTrackMap({
       }),
     }));
 
-    return { tiles, tracks: projectedTracks };
-  }, [tracks, size, zoomOffset]);
+    return { tiles, tracks: projectedTracks, baseZoom, zoom };
+  }, [tracks, size, zoomOffset, panOffset]);
+
+
+  const changeZoom = (delta: number) => {
+    if (!geometry) return;
+
+    const nextZoom = Math.max(MIN_ZOOM, Math.min(MAX_ZOOM, geometry.zoom + delta));
+    if (nextZoom === geometry.zoom) return;
+
+    const nextZoomOffset = nextZoom - geometry.baseZoom;
+    const scale = 2 ** (nextZoom - geometry.zoom);
+    setPanOffset((value) => ({ x: value.x * scale, y: value.y * scale }));
+    setZoomOffset(nextZoomOffset);
+  };
+
+  const handlePointerDown = (event: ReactPointerEvent<HTMLDivElement>) => {
+    const target = event.target;
+    if (target instanceof Element && target.closest("button, a")) return;
+    if (event.pointerType === "mouse" && event.button !== 0) return;
+
+    event.preventDefault();
+    event.currentTarget.setPointerCapture(event.pointerId);
+    dragRef.current = {
+      pointerId: event.pointerId,
+      startX: event.clientX,
+      startY: event.clientY,
+      baseX: panOffset.x,
+      baseY: panOffset.y,
+    };
+    setIsDragging(true);
+  };
+
+  const handlePointerMove = (event: ReactPointerEvent<HTMLDivElement>) => {
+    const drag = dragRef.current;
+    if (!drag || drag.pointerId !== event.pointerId) return;
+
+    event.preventDefault();
+    setPanOffset({
+      x: drag.baseX + (event.clientX - drag.startX),
+      y: drag.baseY + (event.clientY - drag.startY),
+    });
+  };
+
+  const finishPointerDrag = (event: ReactPointerEvent<HTMLDivElement>) => {
+    const drag = dragRef.current;
+    if (!drag || drag.pointerId !== event.pointerId) return;
+
+    if (event.currentTarget.hasPointerCapture(event.pointerId)) {
+      event.currentTarget.releasePointerCapture(event.pointerId);
+    }
+    dragRef.current = null;
+    setIsDragging(false);
+  };
+
+  const resetView = () => {
+    setZoomOffset(0);
+    setPanOffset({ x: 0, y: 0 });
+  };
 
   if (!mounted) {
     return <div className="overflow-hidden rounded-2xl border border-slate-200 bg-slate-100 shadow-sm" style={{ height: DEFAULT_HEIGHT }} aria-hidden="true" />;
@@ -192,7 +253,15 @@ export default function WorkOrderTrackMap({
 
   return (
     <div className="overflow-hidden rounded-2xl border border-slate-200 bg-slate-100 shadow-sm">
-      <div ref={containerRef} className="relative w-full overflow-hidden bg-slate-200" style={{ height: DEFAULT_HEIGHT }}>
+      <div
+        ref={containerRef}
+        className={`relative w-full overflow-hidden bg-slate-200 ${isDragging ? "cursor-grabbing" : "cursor-grab"}`}
+        style={{ height: DEFAULT_HEIGHT, touchAction: "none", userSelect: "none" }}
+        onPointerDown={handlePointerDown}
+        onPointerMove={handlePointerMove}
+        onPointerUp={finishPointerDrag}
+        onPointerCancel={finishPointerDrag}
+      >
         {geometry.tiles.map((tile) => (
           <div
             key={tile.key}
@@ -247,7 +316,7 @@ export default function WorkOrderTrackMap({
         <div className="absolute right-3 top-3 grid gap-2">
           <button
             type="button"
-            onClick={() => setZoomOffset((value) => Math.min(3, value + 1))}
+            onClick={() => changeZoom(1)}
             className="h-11 w-11 rounded-xl border border-slate-300 bg-white/95 text-xl font-bold text-slate-900 shadow"
             aria-label={zoomInLabel}
           >
@@ -255,16 +324,16 @@ export default function WorkOrderTrackMap({
           </button>
           <button
             type="button"
-            onClick={() => setZoomOffset((value) => Math.max(-3, value - 1))}
+            onClick={() => changeZoom(-1)}
             className="h-11 w-11 rounded-xl border border-slate-300 bg-white/95 text-xl font-bold text-slate-900 shadow"
             aria-label={zoomOutLabel}
           >
             −
           </button>
-          {zoomOffset !== 0 ? (
+          {zoomOffset !== 0 || panOffset.x !== 0 || panOffset.y !== 0 ? (
             <button
               type="button"
-              onClick={() => setZoomOffset(0)}
+              onClick={resetView}
               className="min-h-10 rounded-xl border border-slate-300 bg-white/95 px-2 text-xs font-bold text-slate-800 shadow"
             >
               {fitLabel}

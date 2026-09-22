@@ -1,0 +1,19 @@
+GLÖGGT – GPS-kort: draga og stækka
+Dagsetning: 22.09.2026
+
+Breyting:
+- GPS-stjórnendakort má nú draga/panna með mús eða snertingu.
+- Stækkun heldur núverandi sjónmiðju betur þegar kort hefur verið fært.
+- „Passa“ endurstillir bæði zoom og færslu þannig að öll GPS-leiðin passi aftur á kortið.
+- Sama WorkOrderTrackMap er notað bæði í korti eins Verks og fyrirtækjakorti Verk.
+
+Ástæða:
+Við prófun á /verk/6310/kort var hægt að stækka en kortið hélt miðju allrar leiðarinnar. Því var ekki hægt að stækka sérstaklega yfir Voga. GPS-gögnunum sjálfum er ekki breytt.
+
+Próf eftir uppsetningu:
+1. Opna /verk/6310/kort.
+2. Ýta á +.
+3. Grípa í kortið og draga Voga inn að miðju.
+4. Stækka aftur og staðfesta að hægt sé að skoða svæðið nánar.
+5. Ýta á Passa og staðfesta að öll leiðin komi aftur inn á kortið.
+6. npx tsc --noEmit

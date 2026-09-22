@@ -17,6 +17,19 @@ type Props = {
 
 type Status = "WAITING" | "ACTIVE" | "WEAK" | "DENIED" | "UNAVAILABLE" | "UNSUPPORTED" | "ERROR";
 
+type WakeLockStatus = "WAITING" | "ACTIVE" | "UNAVAILABLE" | "UNSUPPORTED";
+
+type ScreenWakeLockSentinel = EventTarget & {
+  released?: boolean;
+  release: () => Promise<void>;
+};
+
+type NavigatorWithWakeLock = Navigator & {
+  wakeLock?: {
+    request: (type: "screen") => Promise<ScreenWakeLockSentinel>;
+  };
+};
+
 type Sample = {
   latitude: number;
   longitude: number;
@@ -40,8 +53,68 @@ export default function MobileGpsTracker({ sessionId, language, initialPointCoun
   const [status, setStatus] = useState<Status>("WAITING");
   const [pointCount, setPointCount] = useState(initialPointCount);
   const [accuracy, setAccuracy] = useState<number | null>(null);
+  const [wakeLockStatus, setWakeLockStatus] = useState<WakeLockStatus>("WAITING");
   const lastSentRef = useRef<Sample | null>(null);
   const sendingRef = useRef(false);
+  const wakeLockRef = useRef<ScreenWakeLockSentinel | null>(null);
+
+  useEffect(() => {
+    const wakeLockApi = (navigator as NavigatorWithWakeLock).wakeLock;
+    if (!wakeLockApi) {
+      setWakeLockStatus("UNSUPPORTED");
+      return;
+    }
+
+    let cancelled = false;
+    let requestInFlight = false;
+
+    const acquireWakeLock = async () => {
+      if (cancelled || requestInFlight || wakeLockRef.current || document.visibilityState !== "visible") return;
+
+      requestInFlight = true;
+      setWakeLockStatus("WAITING");
+      try {
+        const sentinel = await wakeLockApi.request("screen");
+        if (cancelled) {
+          await sentinel.release().catch(() => undefined);
+          return;
+        }
+
+        wakeLockRef.current = sentinel;
+        setWakeLockStatus("ACTIVE");
+
+        sentinel.addEventListener("release", () => {
+          if (wakeLockRef.current === sentinel) wakeLockRef.current = null;
+          if (!cancelled) {
+            setWakeLockStatus(document.visibilityState === "visible" ? "UNAVAILABLE" : "WAITING");
+          }
+        }, { once: true });
+      } catch {
+        if (!cancelled) setWakeLockStatus("UNAVAILABLE");
+      } finally {
+        requestInFlight = false;
+      }
+    };
+
+    const handleVisibilityChange = () => {
+      if (document.visibilityState === "visible") {
+        void acquireWakeLock();
+      } else if (!cancelled) {
+        setWakeLockStatus("WAITING");
+      }
+    };
+
+    document.addEventListener("visibilitychange", handleVisibilityChange);
+    void acquireWakeLock();
+
+    return () => {
+      cancelled = true;
+      document.removeEventListener("visibilitychange", handleVisibilityChange);
+      const sentinel = wakeLockRef.current;
+      wakeLockRef.current = null;
+      if (sentinel) void sentinel.release().catch(() => undefined);
+    };
+  }, [sessionId]);
 
   useEffect(() => {
     if (!("geolocation" in navigator)) {
@@ -137,6 +210,12 @@ export default function MobileGpsTracker({ sessionId, language, initialPointCoun
     status === "ERROR" ? t.error :
     t.waiting;
 
+  const wakeLockText =
+    wakeLockStatus === "ACTIVE" ? t.wakeLockActive :
+    wakeLockStatus === "UNAVAILABLE" ? t.wakeLockUnavailable :
+    wakeLockStatus === "UNSUPPORTED" ? t.wakeLockUnsupported :
+    t.wakeLockWaiting;
+
   const tone = status === "ACTIVE"
     ? "border-emerald-200 bg-emerald-50 text-emerald-950"
     : status === "DENIED" || status === "ERROR" || status === "UNSUPPORTED"
@@ -153,7 +232,8 @@ export default function MobileGpsTracker({ sessionId, language, initialPointCoun
         <span className="shrink-0 rounded-full bg-white/80 px-2 py-1 text-[11px] font-bold">{pointCount} {t.points}</span>
       </div>
       {accuracy !== null ? <p className="mt-2 text-xs">{t.accuracy}: ±{Math.round(accuracy)} m</p> : null}
-      <p className="mt-2 text-[11px] leading-4 opacity-75">{t.firstTest}</p>
+      <p className="mt-2 text-[11px] font-semibold leading-4 opacity-85">{wakeLockText}</p>
+      <p className="mt-1 text-[11px] leading-4 opacity-70">{t.firstTest}</p>
     </section>
   );
 }
