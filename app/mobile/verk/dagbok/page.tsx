@@ -315,6 +315,8 @@ export default async function MobileWorkDiaryPage() {
                 help={t.diaryLocationSearchHelp}
                 textName="locationText"
                 options={locationOptions}
+                officialSourceLabel={t.officialAddressSource}
+                officialSearchingLabel={t.officialAddressSearching}
                 disabled={Boolean(activeWork)}
                 labelClassName="grid gap-1 text-sm font-semibold text-slate-700"
                 inputClassName="rounded-xl border border-slate-300 px-3 py-3 text-base font-normal"

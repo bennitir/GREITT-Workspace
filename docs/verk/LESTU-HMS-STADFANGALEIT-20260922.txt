@@ -1,0 +1,26 @@
+GLÖGGT – HMS Staðfangaleit
+22. september 2026
+
+Markmið
+- Almennt íslenskt autocomplete án GPS-heimildar.
+- Eigin rekstrarstaðir og nýlegir verkstaðir birtast áfram fyrst.
+- Opinber Staðfangaskrá HMS bætist við sem landsleit þegar notandi byrjar að skrifa.
+- Val úr HMS er varðveitt sem OperationalLocation hjá fyrirtækinu svo staðurinn verði næst hluti af eigin gagnalagi GLÖGGT.
+- Hnit varðveitast fyrir síðari leiðar-/vegalengdarreikning.
+
+Uppruni
+HMS Staðfangaskrá:
+https://hmsstgsftpprodweu001.blob.core.windows.net/fasteignaskra/Stadfangaskra.csv
+
+Innflutningur
+1. Keyra migration.
+2. Keyra:
+   npx tsx scripts/import-stadfangaskra.ts
+
+Innflutningurinn sækir opinberu CSV-skrána, hreinsar fyrri staðfangatöflu og hleður nýjustu útgáfu inn í IcelandAddress.
+
+Vinnulag
+- Engin GPS-heimild þarf fyrir textaleit.
+- GPS verður síðar sérstök aðgerð: „Nota staðsetninguna mína“.
+- Runtime autocomplete leitar í eigin Postgres-gögnum; það hleður ekki HMS-skránni við hvert innsláttaratvik.
+- Þegar HMS-staðfang er valið býr GLÖGGT til/endurnýtir OperationalLocation með kóða HMS-<HNITNUM>.

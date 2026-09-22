@@ -897,6 +897,41 @@ model OperationalLocation {
   @@index([companyId, zoneCode])
 }
 
+model IcelandAddress {
+  id Int @id @default(autoincrement())
+
+  // Opinber Staðfangaskrá HMS. HNITNUM auðkennir einstakt staðfangshnit.
+  hnitnum String @unique
+  heinum String?
+  landnr String?
+  municipalityCode String?
+  postalCode String?
+
+  streetName String
+  houseNumber String?
+  houseNumberSort Int?
+  houseLetter String?
+  suffix String?
+  specialName String?
+
+  addressText String
+  displayText String
+  streetSearch String
+  specialSearch String?
+  displaySearch String
+
+  latitude Float?
+  longitude Float?
+  sourceUpdatedAt DateTime?
+  importedAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([streetSearch])
+  @@index([specialSearch])
+  @@index([displaySearch])
+  @@index([postalCode])
+}
+
 model OperationalTravelRoute {
   id        Int @id @default(autoincrement())
   companyId Int

@@ -28,7 +28,12 @@ export function operationalLocationAddress(location: OperationalLocationLike | n
 
 export function operationalLocationLabel(location: OperationalLocationLike | null | undefined) {
   if (!location) return "";
-  return [String(location.name ?? "").trim(), String(location.address ?? "").trim(), postalCityLabel(location.postalCode, location.city)]
-    .filter(Boolean)
-    .join(" · ");
+  const name = String(location.name ?? "").trim();
+  const address = String(location.address ?? "").trim();
+  const postalCity = postalCityLabel(location.postalCode, location.city);
+  const parts: string[] = [];
+  if (name) parts.push(name);
+  if (address && address.toLocaleLowerCase("is") !== name.toLocaleLowerCase("is")) parts.push(address);
+  if (postalCity && !parts.some((part) => part.toLocaleLowerCase("is").includes(postalCity.toLocaleLowerCase("is")))) parts.push(postalCity);
+  return parts.join(" · ");
 }

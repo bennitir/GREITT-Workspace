@@ -10,6 +10,7 @@ import { removeWorkResourceMedia, saveWorkResourceMeterPhoto } from "@/lib/work1
 import { removeWorkEvidenceMedia, saveWorkEvidencePhoto } from "@/lib/work10/work-evidence-media";
 import { requireMobileWorkEmployee } from "@/lib/work10/mobile-access";
 import { operationalLocationLabel } from "@/lib/work10/location-format";
+import { resolveHmsOperationalLocation } from "@/lib/work10/iceland-address";
 import {
   defaultResourceUnit,
   isWork10PersistentResourceKind,
@@ -531,8 +532,9 @@ export async function startMobileDiaryEntry(formData: FormData) {
   const workKeyId = numberField(formData, "workKeyId");
   const workResourceId = numberField(formData, "workResourceId");
   const note = textField(formData.get("note"), 2000);
-  const locationText = textField(formData.get("locationText"), 240);
-  const operationalLocationId = numberField(formData, "operationalLocationId");
+  let locationText = textField(formData.get("locationText"), 240);
+  let operationalLocationId = numberField(formData, "operationalLocationId");
+  const externalAddressId = textField(formData.get("externalAddressId"), 80);
 
   const rawTravelMinutes = String(formData.get("travelMinutes") ?? "").trim();
   const rawTravelKm = String(formData.get("travelKm") ?? "").trim();
@@ -575,6 +577,13 @@ export async function startMobileDiaryEntry(formData: FormData) {
     : null;
   if (workResourceId && !selectedWorkResource) {
     throw new Error(t.errors.invalidDiaryResource);
+  }
+
+  if (!operationalLocationId && externalAddressId) {
+    const resolved = await resolveHmsOperationalLocation({ companyId: actor.companyId, hnitnum: externalAddressId });
+    if (!resolved) throw new Error(t.errors.invalidDiaryLocation);
+    operationalLocationId = resolved.location.id;
+    locationText = resolved.displayText;
   }
 
   const destinationLocation: OperationalLocationSnapshot | null = operationalLocationId

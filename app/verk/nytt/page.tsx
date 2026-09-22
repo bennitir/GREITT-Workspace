@@ -15,6 +15,7 @@ import { workKeyText } from "@/lib/i18n/work-keys";
 import { normalizeUiLanguage } from "@/lib/i18n/ui";
 import { parseWork10CompletionDeadline, parseWork10PlannedDate, parseWork10PlannedStartParts } from "@/lib/work10/scheduling";
 import { operationalLocationAddress, operationalLocationLabel } from "@/lib/work10/location-format";
+import { resolveHmsOperationalLocation } from "@/lib/work10/iceland-address";
 
 async function createWorkOrder(formData: FormData) {
   "use server";
@@ -29,10 +30,11 @@ async function createWorkOrder(formData: FormData) {
   const requestedWorkKeyId = Number(formData.get("workKeyId") ?? 0);
   const title = String(formData.get("title") ?? "").trim();
   const description = String(formData.get("description") ?? "").trim();
-  const address = String(formData.get("address") ?? "").trim();
+  let address = String(formData.get("address") ?? "").trim();
   const requestedOperationalLocationId = Number(formData.get("operationalLocationId") ?? 0);
+  const externalAddressId = String(formData.get("externalAddressId") ?? "").trim();
   const requestedResourceIds = [...new Set(formData.getAll("workResourceId").map((value) => Number(value)).filter((value) => Number.isInteger(value) && value > 0))];
-  const operationalLocationId = Number.isInteger(requestedOperationalLocationId) && requestedOperationalLocationId > 0
+  let operationalLocationId = Number.isInteger(requestedOperationalLocationId) && requestedOperationalLocationId > 0
     ? requestedOperationalLocationId
     : null;
   const priority = String(formData.get("priority") ?? "NORMAL");
@@ -96,6 +98,13 @@ async function createWorkOrder(formData: FormData) {
     : null;
   if (requestedWorkKeyId && !selectedWorkKey) {
     throw new Error(workKeyT.errors.notFound);
+  }
+
+  if (!operationalLocationId && externalAddressId) {
+    const resolved = await resolveHmsOperationalLocation({ companyId, hnitnum: externalAddressId });
+    if (!resolved) throw new Error("Valið staðfang fannst ekki í Staðfangaskrá.");
+    operationalLocationId = resolved.location.id;
+    address = resolved.displayText;
   }
 
   if (operationalLocationId) {
@@ -287,6 +296,8 @@ export default async function NýttVerkPage() {
             help={t.operationalLocationHelp}
             textName="address"
             options={locationOptions}
+            officialSourceLabel={t.officialAddressSource}
+            officialSearchingLabel={t.officialAddressSearching}
             labelClassName="grid gap-2 font-medium"
             inputClassName="rounded-lg border px-4 py-3 font-normal"
           />
