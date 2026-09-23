@@ -1304,6 +1304,42 @@ async function analyzeReceiptWithAIInternal(
 
   const analysisStartedAt = Date.now();
 
+  const variableSourcePrompt = sourceTextForAnalysis
+    ? `GLÖGGT hefur þegar lesið eftirfarandi textalag úr PDF án AI. Notaðu þetta sem frumgagn og endurlesið ekki atriði sem eru skýr hér nema sjónrænt samhengi stangist á:
+--- BYRJUN PDF-TEXTA ---
+${sourceTextForAnalysis.slice(0, 50000)}
+--- ENDIR PDF-TEXTA ---
+
+Deterministic vísbendingar úr textanum: ${JSON.stringify(deterministicDataForAnalysis ?? {})}`
+    : "Textalag úr PDF er ekki tiltækt. Notaðu mynd/skrá sem fylgir sem frumgagn.";
+
+  const variableKnowledgePrompt = `BREYTILEGT STAÐFEST SAMHENGI FYRIRTÆKISINS:
+
+Fyrirtækið sem bókar fylgiskjalið er:
+Nafn: ${receipt.company.name}
+VSK-númer: ${receipt.company.vatNumber ?? "Ekki skráð"}
+VSK-skráningarstaða: ${receipt.company.vatRegistered === true ? "Já, VSK-skráð" : receipt.company.vatRegistered === false ? "Nei, ekki VSK-skráð" : "Ekki staðfest"}
+RSK-skráð starfsemi: ${receipt.company.rskRegisteredActivities ?? "Ekki skráð"}
+Virk starfsemi: ${receipt.company.activeActivities ?? "Ekki staðfest"}
+
+STAÐFEST LÁN SEM GLÖGGT ÞEKKIR:
+${confirmedLoanPromptText}
+
+VARANLEG STAÐFEST BÓKUNARMYNSTUR ÚR BÓKARAMINNI GLÖGGT:
+${learnedAccountingPatternPromptText}
+
+NÝLEG YFIRFARIN BÓKUNARDÆMI Í ÞESSU FYRIRTÆKI:
+${reviewedBookingPromptText}
+
+STAÐFEST TRYGGINGARSKÍRTEINI SEM GLÖGGT ÞEKKIR:
+${confirmedInsurancePromptText}
+
+FYRRI TRYGGINGAHREYFINGAR ÚR INNSÝN:
+${insuranceInsightPromptText}
+
+REIKNINGSLYKILL FYRIRTÆKISINS:
+${companyAccountPromptText}`;
+
   const response = deterministicAnalysis
     ? {
         usage: undefined,
@@ -1311,37 +1347,16 @@ async function analyzeReceiptWithAIInternal(
       }
     : await getOpenAi().responses.create({
     model: "gpt-5.6",
+    prompt_cache_key: "gloggt-receipt-analysis-v1",
+    prompt_cache_options: { mode: "explicit" },
     input: [
       {
         role: "user",
         content: [
-          ...(isImage && imageDataUrl
-            ? [
-                {
-                  type: "input_image" as const,
-                  image_url: imageDataUrl,
-                  detail: "auto" as const,
-                },
-              ]
-            : uploadedFileId
-              ? [
-                  {
-                    type: "input_file" as const,
-                    file_id: uploadedFileId,
-                  },
-                ]
-              : []),
-
           {
             type: "input_text",
+            prompt_cache_breakpoint: { mode: "explicit" },
             text: `
-${sourceTextForAnalysis ? `GLÖGGT hefur þegar lesið eftirfarandi textalag úr PDF án AI. Notaðu þetta sem frumgagn og endurlesið ekki atriði sem eru skýr hér nema sjónrænt samhengi stangist á:
---- BYRJUN PDF-TEXTA ---
-${sourceTextForAnalysis.slice(0, 50000)}
---- ENDIR PDF-TEXTA ---
-
-Deterministic vísbendingar úr textanum: ${JSON.stringify(deterministicDataForAnalysis ?? {})}
-` : ""}
 Lestu þetta íslenska skjal vandlega.
 
 MIKILVÆGT – FLOKKAÐU SKJALIÐ ÁÐUR EN ÞÚ HUGSAR UM BÓKUN:
@@ -1406,17 +1421,17 @@ Mjög mikilvægt:
 - Ef slík staðfest tenging finnst skaltu samt búa til full bookingEntries og nota staðfesta skuldareikninginn á LOAN_PRINCIPAL.
 
 STAÐFEST LÁN SEM GLÖGGT ÞEKKIR:
-${confirmedLoanPromptText}
+Sjá breytilegt staðfest fyrirtækissamhengi í næsta input-skilaboði.
 
 VARANLEG STAÐFEST BÓKUNARMYNSTUR ÚR BÓKARAMINNI GLÖGGT:
-${learnedAccountingPatternPromptText}
+Sjá breytilegt staðfest fyrirtækissamhengi í næsta input-skilaboði.
 - Þetta eru staðfestar ákvarðanir bókara úr AccountingPattern, ekki ágiskanir AI.
 - Þegar merchant/documentType á núverandi skjali passar við matchKey/matchData skal samsvarandi staðfest reikningsval hafa meira vægi en almennt sjálfgefið reikningsval.
 - Ekki yfirfæra mynstur milli ólíkra aðila eða ólíkra skjalategunda nema gögnin styðji það skýrt.
 - correctionCount merkir að mynstrið hefur áður verið leiðrétt; ef nýtt skjal stangast á við mynstrið skaltu velja REVIEW frekar en að þvinga mynstrið.
 
 NÝLEG YFIRFARIN BÓKUNARDÆMI Í ÞESSU FYRIRTÆKI:
-${reviewedBookingPromptText}
+Sjá breytilegt staðfest fyrirtækissamhengi í næsta input-skilaboði.
 - Yfirfarin dæmi eru staðfest notendaval og mega hafa meira vægi en almenn ágiskun AI þegar sami aðili og sama tegund færslu kemur aftur.
 - Ef endurtekið lánaskjal frá sama lánveitanda og sama staðfesta láni hefur áður verið yfirfarið með BANK/CASH mótreikningi, skaltu endurnýta þann mótreikning þegar nýja skjalið lýsir sömu tegund greiðslu. Ekki nota 2000 – Viðskiptaskuldir sem sjálfgefinn mótreikning gegn slíku staðfestu mynstri.
 - Verðbætur sem leggjast á eða eru greiddar með láni eru fjármögnunarkostnaður en EKKI afborgun höfuðstóls. Þær mega því ekki fá entryRole = LOAN_PRINCIPAL og mega ekki fara á staðfesta skuldareikning lánsins nema sérstök bókhaldsregla fyrirtækisins segi það. Nýttu staðfest yfirfarin dæmi til að velja viðeigandi verðbótareikning.
@@ -1448,10 +1463,10 @@ MIKILVÆG REGLA UM TRYGGINGAR:
 - Tryggingayfirlit, samningur eða annað grunnskjal sem aðeins lýsir tryggingarvernd/skilmálum án sjálfstæðrar greiðslu getur áfram verið INSIGHT_SOURCE/SUPPORTING. Þessi regla breytir því ekki.
 
 STAÐFEST TRYGGINGARSKÍRTEINI SEM GLÖGGT ÞEKKIR:
-${confirmedInsurancePromptText}
+Sjá breytilegt staðfest fyrirtækissamhengi í næsta input-skilaboði.
 
 FYRRI TRYGGINGAHREYFINGAR ÚR INNSÝN (hreyfingalistar/yfirlit; notaðu aðeins nákvæm skírteinisnúmer sem tengilykil):
-${insuranceInsightPromptText}
+Sjá breytilegt staðfest fyrirtækissamhengi í næsta input-skilaboði.
 
 MIKILVÆG REGLA UM LÍFEYRIS- OG GREIÐSLUSEÐLA EINSTAKLINGS:
 - Lífeyrisseðill, örorkulífeyrisseðill eða sambærilegt mánaðarlegt tekjuyfirlit er EKKI sjálfkrafa persónulegt upplýsingaskjal sem á aðeins í Innsýn.
@@ -1464,12 +1479,7 @@ MIKILVÆG REGLA UM LÍFEYRIS- OG GREIÐSLUSEÐLA EINSTAKLINGS:
 
 - Ef skjalið inniheldur sundurliðun, magn, km, kWh, einingarverð, eignarauðkenni, lánsnúmer, tryggingavernd eða tímabil skal varðveita það í summary eins nákvæmlega og skynsamlegt er, jafnvel þótt það sé ekki nauðsynlegt fyrir bókun.
 
-Fyrirtækið sem bókar fylgiskjalið er:
-Nafn: ${receipt.company.name}
-VSK-númer: ${receipt.company.vatNumber ?? "Ekki skráð"}
-VSK-skráningarstaða: ${receipt.company.vatRegistered === true ? "Já, VSK-skráð" : receipt.company.vatRegistered === false ? "Nei, ekki VSK-skráð" : "Ekki staðfest"}
-RSK-skráð starfsemi: ${receipt.company.rskRegisteredActivities ?? "Ekki skráð"}
-Virk starfsemi: ${receipt.company.activeActivities ?? "Ekki staðfest"}
+Fyrirtækissamhengi fylgir í næsta input-skilaboði.
 
 Mikilvægt um fyrirtækið:
 RSK-skráð starfsemi segir hvað fyrirtækið er skráð fyrir,
@@ -1570,7 +1580,7 @@ Samtala debetlína og kreditlína verður alltaf að vera jöfn.
 
 REIKNINGSLYKILL FYRIRTÆKISINS:
 
-${companyAccountPromptText}
+Sjá breytilegt staðfest fyrirtækissamhengi í næsta input-skilaboði.
 
 Reglur um reikningslykla:
 
@@ -1660,6 +1670,34 @@ Skila skal dagsetningu á forminu YYYY-MM-DD.
 Ef dagsetning eða ártal er ólæsilegt eða óvíst skal skila date sem null.
             `,
           },
+        ],
+      },
+      {
+        role: "user",
+        content: [
+          {
+            type: "input_text",
+            text: `${variableKnowledgePrompt}
+
+FRUMGÖGN FYLGISKJALS:
+${variableSourcePrompt}`,
+          },
+          ...(isImage && imageDataUrl
+            ? [
+                {
+                  type: "input_image" as const,
+                  image_url: imageDataUrl,
+                  detail: "auto" as const,
+                },
+              ]
+            : uploadedFileId
+              ? [
+                  {
+                    type: "input_file" as const,
+                    file_id: uploadedFileId,
+                  },
+                ]
+              : []),
         ],
       },
     ],
@@ -2082,6 +2120,7 @@ const totalTokens = response.usage?.total_tokens ?? 0;
           : sourceTextForAnalysis
             ? "PDF_TEXT_ONLY"
             : "FILE_UPLOAD",
+        promptLayout: "EXPLICIT_GLOBAL_PREFIX_V1",
       },
     });
   }

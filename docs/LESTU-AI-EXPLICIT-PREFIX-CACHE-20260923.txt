@@ -1,0 +1,47 @@
+GLÖGGT – AI-kostnaður / explicit global prefix cache
+23.09.2026
+
+Markmið
+- Lækka kostnað við fyrsta AI-lestur þegar deterministic/reconciliation dugar ekki.
+- Halda öllum GLÖGGT-reglum óbreyttum en gera sameiginlegan regluprompt raunverulega endurnýtanlegan milli skjala.
+
+Vandinn sem fannst í fyrstu útgáfu
+- PDF-texti/mynd/file input hafði verið færður á eftir cache-breakpointi, sem var rétt.
+- En staðfest lán, bókunarmynstur, yfirfarin dæmi, tryggingargögn, fyrirtækisupplýsingar og reikningslykill voru enn inni FYRIR breakpoint.
+- Þar sem þessi gögn geta breyst milli skjala hefði eitt breytt atriði rofið allan cached prefixinn.
+
+Breyting
+- Fyrsta input-skilaboðið inniheldur aðeins stöðugar GLÖGGT-reglur.
+- Explicit prompt_cache_breakpoint er á enda þess stöðuga reglublokks.
+- prompt_cache_options.mode = "explicit".
+- prompt_cache_key = "gloggt-receipt-analysis-v1" hjálpar skyldum requests að lenda á sama cache-routing hópi.
+- Allt breytilegt samhengi fer á eftir breakpoint:
+  * fyrirtækisupplýsingar,
+  * staðfest lán,
+  * AccountingPattern,
+  * yfirfarin bókunardæmi,
+  * staðfest tryggingarskírteini,
+  * Innsýn-tryggingahreyfingar,
+  * reikningslykill,
+  * deterministic PDF-texti/gögn,
+  * mynd eða file input.
+- AiUsage metadata fær promptLayout = EXPLICIT_GLOBAL_PREFIX_V1.
+
+Öryggi
+- Engin bókunarregla er fjarlægð.
+- Engu staðfestu samhengi er sleppt; það er aðeins fært á eftir cache-breakpointi.
+- JSON schema, model og deterministic/reconciliation röð breytist ekki.
+- Engin ný AI-köll bætast við.
+
+Kostnaðarhegðun GPT-5.6
+- Fyrsta cache-write á cacheable prefix kostar meira en venjulegt ócache-að input.
+- Endurnýting sama prefix getur síðan orðið mun ódýrari.
+- Þess vegna á ekki að keyra handvirkan dýran endurlestur eingöngu til prófunar.
+- Prófa með næstu eðlilegu skjölum sem raunverulega þurfa AI og bera saman cachedInputTokens/cache-write þar sem það er tiltækt.
+
+Prófun
+1. npx tsc --noEmit
+2. git diff --check
+3. git --no-pager diff -- app/actions/receiptActions.ts
+4. Við næstu eðlilegu AI-köll: skoða AiUsage.inputTokens, cachedInputTokens og metadata.promptLayout.
+5. Sérstaklega gagnlegt að bera saman tvö eða fleiri AI-skjöl unnin nálægt í tíma.
