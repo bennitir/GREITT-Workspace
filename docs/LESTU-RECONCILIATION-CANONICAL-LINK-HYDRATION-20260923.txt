@@ -1,0 +1,45 @@
+GLÖGGT – Reconciliation canonical link hydration
+23. september 2026
+
+VANDI SEM PRÓF 291 AFHJÚPAÐI
+Read-only dry-run á receipt 291 fann 8 staðfest tryggingaskírteini en féll fail-closed
+á MISSING_ENTITY_LINK. Canonical extraction innihélt níunda skírteinið 705186 og
+sameiginlega canonical identity-lagið hafði þegar staðfest INSURANCE_POLICY entity
+með sama sterka auðkenni og staðfestan EXPENSE-reikning. Það sem vantaði var aðeins
+DocumentEntityLink á eldri greinda skjalinu.
+
+ALMENN REGLA
+Reconciliation má ekki túlka vantað/stale DocumentEntityLink sem nýtt AI-þarf þegar:
+- canonical extraction hefur sterkt auðkenni,
+- canonical identity-lagið finnur nákvæmlega eitt staðfest entity fyrir fyrirtækið,
+- og staðfest reikningstenging er til.
+
+Þetta er ekki Sjóvá-regla. Sama leið er notuð fyrir sterk INSURANCE_POLICY og LOAN
+auðkenni og byggir á canonicalizeInsightIdentifier().
+
+FAIL-CLOSED
+- Aðeins STRONG canonical identifiers mega hydrate-a vantaða linka.
+- Eitt CONFIRMED entity vinnur eldri óstaðfest semantic duplicates.
+- Ef fleiri en eitt CONFIRMED entity bera sama sterka auðkennið er ekkert valið.
+- Engin ný InsightEntity eru stofnuð í reconciliation.
+- Veik auðkenni eru ekki auto-tengd.
+
+HEGÐUN
+lib/receipts/reconciliation.ts:
+- sækir canonical facts,
+- bætir tímabundið við canonical entity links úr company knowledge store,
+- keyrir sama pure reconcileDocumentFromKnownFacts(),
+- og aðeins ef allt reconciliation tekst er vantaður DocumentEntityLink varðveittur
+  sem SYSTEM-linkur samhliða bókunarendurútreikningi.
+
+NÝTT READ-ONLY PRÓF
+previewReceiptReconciliationFromKnownFacts(receiptId) keyrir sömu hydration +
+reconciliation ákvörðun en skrifar engu í gagnagrunninn og kallar ekki AI.
+
+MARKMIÐ FYRIR RECEIPT 291
+- status: RECONCILED
+- blockers: []
+- hydratedEntityLinkCount: 1
+- appliedKnowledge inniheldur einnig INSURANCE_POLICY:705186->4620
+- debet = kredit = 85.677
+- AiUsage COUNT helst 2 þar til/eftir deterministic reconciliation.
