@@ -43,10 +43,12 @@ function finiteNonNegative(value: number | null | undefined) {
 /**
  * Returns the distance that may count toward the operational track length.
  *
- * Raw GPS points remain untouched. We only suppress a segment when both
- * endpoints explicitly report near-stationary speed and the measured move
- * is no larger than the reported GPS uncertainty. This is intentionally
- * conservative so slow walking/machinery movement is not broadly smoothed.
+ * Raw GPS points remain untouched. We suppress a segment only when neither
+ * endpoint reports speed above the near-stationary threshold and the measured
+ * move is no larger than the reported GPS uncertainty. A missing speed value
+ * is treated as "no evidence of movement", not as proof that the device is
+ * stationary. This keeps the rule useful during GPS warm-up while remaining
+ * bounded by the reported position uncertainty.
  */
 export function acceptedGpsSegmentDistanceM(
   from: GpsDistancePoint,
@@ -67,15 +69,13 @@ export function acceptedGpsSegmentDistanceM(
   const fromAccuracyM = finiteNonNegative(from.accuracyM);
   const toAccuracyM = finiteNonNegative(to.accuracyM);
 
-  const bothNearStationary =
-    fromSpeedMps !== null &&
-    toSpeedMps !== null &&
-    fromSpeedMps <= STATIONARY_GPS_SPEED_MPS &&
-    toSpeedMps <= STATIONARY_GPS_SPEED_MPS;
+  const noEndpointReportsMovement =
+    (fromSpeedMps === null || fromSpeedMps <= STATIONARY_GPS_SPEED_MPS) &&
+    (toSpeedMps === null || toSpeedMps <= STATIONARY_GPS_SPEED_MPS);
 
   const uncertaintyM = Math.max(fromAccuracyM ?? 0, toAccuracyM ?? 0);
 
-  if (bothNearStationary && uncertaintyM > 0 && rawDistanceM <= uncertaintyM) {
+  if (noEndpointReportsMovement && uncertaintyM > 0 && rawDistanceM <= uncertaintyM) {
     return 0;
   }
 

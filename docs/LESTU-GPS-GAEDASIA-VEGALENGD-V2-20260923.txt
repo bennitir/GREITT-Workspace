@@ -1,0 +1,58 @@
+GLÖGGT – GPS gæðasía vegalengdar V2
+Dagsetning: 23.09.2026
+
+Tilgangur
+--------
+Lagfæra kyrrstöðudrift sem kom í ljós í production-prófi eftir V1.
+
+Staðfest production-próf
+------------------------
+Ný GPS-lota var látin standa kyrr í rúmar 3 mínútur:
+- 12 GPS-punktar
+- vistuð vegalengd: 76,19 m
+
+Greining sýndi að nær öll falsa vegalengdin kom úr fyrstu punktunum þar sem
+speedMps var null. V1 krafðist þess að báðir punktar hefðu speedMps og væru
+<= 1,5 m/s, þannig að þessi segment voru samþykkt þrátt fyrir að hreyfingin
+væri innan uppgefinnar GPS-óvissu.
+
+V2 regla
+--------
+Hráir GPS-punktar eru áfram varðveittir óbreyttir.
+
+Segment telst 0 m í rekstrarvegalengd þegar:
+1. hvorugur endapunktur sýnir hraða yfir 1,5 m/s; speedMps=null telst aðeins
+   "engin staðfest vísbending um hreyfingu", ekki sönnun um kyrrstöðu;
+2. uppgefin GPS-óvissa er > 0;
+3. mæld færsla er <= stærri accuracy-tölu endapunktanna.
+
+Gamla öryggisreglan stendur áfram:
+- ógild/negative vegalengd => 0 m
+- einstakt segment yfir 10 km => 0 m
+
+Read-only bakpróf á raunlotum
+-----------------------------
+Session 4, raunferð:
+- hrátt: 35.305,50 m
+- V2: 35.289,88 m
+- tekið frá: 15,62 m
+
+Session 5, raunferð:
+- hrátt: 35.622,97 m
+- V2: 35.555,51 m
+- tekið frá: 67,46 m
+
+Session 6, kyrrstöðutest:
+- hrátt: 85,26 m
+- V1: 76,19 m
+- V2: 0,00 m
+
+Samtals tekur V2 um 83,08 m frá tveimur 70,93 km raunferðum, um 0,12%.
+
+Takmörk / næsta próf
+--------------------
+Þetta staðfestir akstur + kyrrstöðu, en ekki enn mjög hæga raunhreyfingu.
+Næsta gagnlega production-próf eftir deploy er stutt göngupróf, t.d. 50–100 m,
+til að staðfesta að hæg hreyfing sé ekki ofsíuð þegar speedMps vantar.
+
+Engar eldri GPS-lotur eru endurreiknaðar sjálfkrafa.
