@@ -1,0 +1,13 @@
+# GLÖGGT – Dagskipulag drag/drop lagfæring
+
+Dagsetning: 22.09.2026
+
+Vandamál:
+- Verk var hægt að grípa í Dagskipulagi en það hoppaði strax til baka við drop.
+- Chromium/Chrome getur haldið `dataTransfer.getData(...)` tómu í `dragover` og aðeins afhent payload við `drop`.
+- Drop-svæðin notuðu payloadið í `dragover` til að ákveða hvort þau ættu að kalla `preventDefault()`. Þar með var drop ekki samþykkt.
+
+Lagfæring:
+- `workIdFromDrag()` notar nú virkt `dragWorkId` state sem fallback á meðan drag stendur yfir.
+- `dataTransfer` payload er áfram notað þegar það er tiltækt.
+- Engin breyting á GPS, Prisma eða vistunarreglum.

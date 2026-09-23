@@ -1,0 +1,20 @@
+GLÖGGT – Verk / Dagskipulag – drag & time Phase 1
+Dagsetning: 22.09.2026
+
+Markmið
+- Gera Dagskipulag að virku stjórntæki en ekki eingöngu skoðunarsýn.
+- Verk má nú draga á tímalínu til að ákveða eða breyta upphafstíma.
+- Verk má draga á röð starfsmanns til að tímasetja Verkið og óska eftir úthlutun á þann starfsmann.
+
+Hegðun
+- Tími er snap-aður á 5 mínútna bil.
+- Færsla er optimistic í UI: Verkið færist strax á skjánum.
+- updateWorkOrderPlanning vistar dag + upphafstíma og varðveitir núverandi mönnun, áætlaðan tíma, deadline, myndakröfu og dagslokaundanþágu.
+- Ef vistun mistekst er optimistic færsla tekin til baka og villa sýnd.
+- Drop á starfsmann fjarlægir ALDREI aðra starfsmenn sjálfkrafa.
+- Ef starfsmaður er ekki þegar úthlutaður fer núverandi örugga WorkPart-úthlutunarflæði af stað. Ef fleiri en einn opinn Verkþáttur er til fær notandi áfram val.
+
+Mikilvægt
+- Þetta er Phase 1. „Skipta starfsmanni út“ / færa úthlutun milli tveggja einstaklinga verður sér rekjanleg aðgerð síðar.
+- GPS-söfnun, GPS-kort og Mobile GPS eru ósnert.
+- Engin Prisma migration.

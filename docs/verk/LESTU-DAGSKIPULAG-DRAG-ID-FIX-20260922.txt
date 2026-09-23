@@ -1,0 +1,13 @@
+GLÖGGT – Dagskipulag drag/drop id fix – 22.09.2026
+
+Vandamál:
+Chrome/Chromium getur skilað tómum dataTransfer payload í dragover.
+Number("") verður 0 og fyrri kóði túlkaði það sem heiltölu, þannig að React dragWorkId fallback var aldrei notað.
+Afleiðing: drop-svæði kallaði ekki preventDefault() og vafrinn sýndi rauðan bannað-merki.
+
+Lagfæring:
+- Tómt payload er nú hunsað.
+- Aðeins jákvætt heiltölu Work id er tekið úr dataTransfer.
+- Annars er virkt dragWorkId úr React state notað.
+
+Engin breyting á GPS, Prisma eða server actions.

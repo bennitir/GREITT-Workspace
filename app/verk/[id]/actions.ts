@@ -1631,6 +1631,71 @@ export async function updateWorkOrderPlanning(formData: FormData) {
 }
 
 
+/**
+ * Færir Verk á annan dag/tíma úr Dagskipulagi.
+ *
+ * Þessi aðgerð breytir eingöngu tímasetningu Verksins. Hún á ekki að
+ * endursenda eða endurvista mönnun, áætlaðan verktíma, myndakröfu,
+ * skilafrest eða aðrar skipulagsstillingar þegar notandi dregur kubb á
+ * tímalínunni.
+ */
+export async function moveWorkOrderSchedule(formData: FormData) {
+  const workOrderId = Number(formData.get("workOrderId"));
+  if (!Number.isInteger(workOrderId)) throw new Error("Ógilt verknúmer.");
+
+  const plannedDate = parseWork10PlannedDate(String(formData.get("plannedDate") ?? ""));
+  if (!plannedDate) throw new Error("Dagsetning vantar eða er ógild.");
+
+  const plannedStartMinutes = Number(formData.get("plannedStartMinutes"));
+  if (!Number.isInteger(plannedStartMinutes) || plannedStartMinutes < 0 || plannedStartMinutes > 23 * 60 + 59) {
+    throw new Error("Upphafstími er ógildur.");
+  }
+
+  const companyId = await requireActiveCompanyWriteAccess();
+  const effectiveUser = await getEffectiveUser();
+
+  const work = await prisma.workOrder.findFirst({
+    where: { id: workOrderId, companyId },
+    select: { id: true, status: true, plannedDate: true, plannedStartMinutes: true },
+  });
+  if (!work) throw new Error("Verkið fannst ekki.");
+  if (work.status === "COMPLETED" || work.status === "CANCELLED") {
+    throw new Error("Endurvirkja þarf Verkið áður en tímasetningu þess er breytt.");
+  }
+
+  await prisma.$transaction(async (tx) => {
+    await tx.workOrder.update({
+      where: { id: workOrderId },
+      data: { plannedDate, plannedStartMinutes, plannedEndMinutes: null },
+    });
+
+    await tx.auditEvent.create({
+      data: {
+        companyId,
+        userId: effectiveUser?.id ?? null,
+        entityType: "WORK_ORDER",
+        entityId: workOrderId,
+        action: "SCHEDULE_MOVED",
+        source: "USER",
+        description: "Verk fært á annan dag/tíma í Dagskipulagi.",
+        beforeData: {
+          plannedDate: work.plannedDate?.toISOString().slice(0, 10) ?? null,
+          plannedStartMinutes: work.plannedStartMinutes,
+        },
+        afterData: {
+          plannedDate: plannedDate.toISOString().slice(0, 10),
+          plannedStartMinutes,
+        },
+      },
+    });
+  });
+
+  revalidatePath("/verk");
+  revalidatePath(`/verk/${workOrderId}`);
+  revalidatePath("/mobile");
+  revalidatePath("/mobile/verk");
+}
+
 export async function applyWorkdayStaffingPlan(formData: FormData) {
   const rawPlan = String(formData.get("plan") ?? "").trim();
   if (!rawPlan) throw new Error("Dagsáætlun vantar.");

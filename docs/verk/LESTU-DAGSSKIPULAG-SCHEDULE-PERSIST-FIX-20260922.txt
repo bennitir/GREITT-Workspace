@@ -1,0 +1,18 @@
+GLÖGGT – Dagskipulag schedule persist fix – 22.09.2026
+
+Vandamál:
+- Drag/drop sýndi nýjan tíma tímabundið í UI en WorkOrder.plannedStartMinutes vistaðist ekki.
+- Dagskipulag kallaði updateWorkOrderPlanning(), sem er víð aðgerð fyrir alla áætlun Verks.
+
+Lagfæring:
+- Ný server action moveWorkOrderSchedule().
+- Hún uppfærir eingöngu plannedDate, plannedStartMinutes og hreinsar plannedEndMinutes.
+- Skrifar AuditEvent SCHEDULE_MOVED með before/after.
+- Drag/drop kallar nú þessa þröngu aðgerð.
+- Engar GPS breytingar.
+
+Próf:
+1. npx tsc --noEmit
+2. Draga prufa gps frá 16:00 yfir á annan tíma.
+3. Staðfesta að kubbur haldist þar eftir nokkrar sekúndur og refresh.
+4. Lesa WorkOrder 6310 og sjá nýtt plannedStartMinutes.

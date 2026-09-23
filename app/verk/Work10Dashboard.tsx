@@ -3,7 +3,7 @@
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useEffect, useMemo, useRef, useState, type DragEvent, type FormEvent, type UIEvent } from "react";
-import { applyWorkdayStaffingPlan, assignPersonToWorkPart, persistLegacyFirstWorkPart, updateWorkOrderPlanning } from "@/app/verk/[id]/actions";
+import { applyWorkdayStaffingPlan, assignPersonToWorkPart, moveWorkOrderSchedule, persistLegacyFirstWorkPart, updateWorkOrderPlanning } from "@/app/verk/[id]/actions";
 import { work10FormatDate, work10PriorityText, work10StatusText, work10Text } from "@/lib/i18n/work10";
 import { workResourceKindText, workResourceStatusText, workResourceText } from "@/lib/i18n/work-resources";
 import { work10ClockFromMinutes, work10ScheduleRangesOverlap } from "@/lib/work10/scheduling";
@@ -111,6 +111,11 @@ type WorkOrderData = {
   createdByName: string | null;
   workParts: WorkPartData[];
   actualLabor: ActualLaborData[];
+};
+
+type ScheduleOverride = {
+  plannedDate: string | null;
+  plannedStartMinutes: number | null;
 };
 
 type PersonData = {
@@ -878,6 +883,9 @@ export default function Work10Dashboard({ data }: { data: Work10DashboardData })
   const [mainTab, setMainTab] = useState<MainTab>("schedule");
   const [resourceTab, setResourceTab] = useState<ResourceTab>("people");
   const [calendarMode, setCalendarMode] = useState<CalendarMode>("day");
+  const [scheduleOverrides, setScheduleOverrides] = useState<Record<number, ScheduleOverride>>({});
+  const [dragWorkId, setDragWorkId] = useState<number | null>(null);
+  const [scheduleMoveBusyId, setScheduleMoveBusyId] = useState<number | null>(null);
 
   useEffect(() => {
     const syncMainTabFromHash = () => {
@@ -889,9 +897,16 @@ export default function Work10Dashboard({ data }: { data: Work10DashboardData })
     window.addEventListener("hashchange", syncMainTabFromHash);
     return () => window.removeEventListener("hashchange", syncMainTabFromHash);
   }, []);
+  const effectiveWorkOrders = useMemo(
+    () => data.workOrders.map((work) => {
+      const override = scheduleOverrides[work.id];
+      return override ? { ...work, ...override } : work;
+    }),
+    [data.workOrders, scheduleOverrides],
+  );
   const activeWorkOrders = useMemo(
     () =>
-      data.workOrders
+      effectiveWorkOrders
         .filter((work) => work.status !== "COMPLETED" && work.status !== "CANCELLED")
         .slice()
         .sort((a, b) => {
@@ -909,11 +924,11 @@ export default function Work10Dashboard({ data }: { data: Work10DashboardData })
           if (statusDiff !== 0) return statusDiff;
           return new Date(a.createdAt).getTime() - new Date(b.createdAt).getTime();
         }),
-    [data.people, data.workOrders],
+    [data.people, effectiveWorkOrders],
   );
   const completedWorkOrders = useMemo(
-    () => data.workOrders.filter((work) => work.status === "COMPLETED" || work.status === "CANCELLED"),
-    [data.workOrders],
+    () => effectiveWorkOrders.filter((work) => work.status === "COMPLETED" || work.status === "CANCELLED"),
+    [effectiveWorkOrders],
   );
 
   const workMatchesSearch = (work: WorkOrderData, query: string) => {
@@ -3058,6 +3073,73 @@ export default function Work10Dashboard({ data }: { data: Work10DashboardData })
     requestAssignmentToWork(employeeId, work);
   };
 
+  const workIdFromDrag = (event: DragEvent<HTMLElement>) => {
+    // Chromium may expose the drag type during dragover while keeping the
+    // payload itself unavailable until drop. Keep the active Work id in
+    // React state as a safe fallback so drop zones can accept the drag.
+    const raw = event.dataTransfer.getData("application/x-gloggt-work").trim();
+    if (raw !== "") {
+      const value = Number(raw);
+      if (Number.isInteger(value) && value > 0) return value;
+    }
+    return dragWorkId;
+  };
+
+  const scheduleMoveFormData = (workId: number, plannedDate: string, plannedStartMinutes: number) => {
+    const formData = new FormData();
+    formData.set("workOrderId", String(workId));
+    formData.set("plannedDate", plannedDate);
+    formData.set("plannedStartMinutes", String(plannedStartMinutes));
+    return formData;
+  };
+
+  const timelineMinuteFromDrop = (event: DragEvent<HTMLElement>) => {
+    const rect = event.currentTarget.getBoundingClientRect();
+    if (rect.width <= 0) return timelineStartMinutes;
+    const ratio = Math.max(0, Math.min(0.999, (event.clientX - rect.left) / rect.width));
+    const rawMinute = timelineStartMinutes + ratio * TIMELINE_WINDOW_MINUTES;
+    return Math.max(0, Math.min(23 * 60 + 55, Math.round(rawMinute / 5) * 5));
+  };
+
+  const persistWorkScheduleDrop = async (event: DragEvent<HTMLElement>, employeeId: number | null = null) => {
+    event.preventDefault();
+    const workId = workIdFromDrag(event);
+    if (!workId || scheduleMoveBusyId !== null) return;
+    const work = activeWorkOrders.find((candidate) => candidate.id === workId);
+    if (!work) return;
+
+    const plannedStartMinutes = timelineMinuteFromDrop(event);
+    const previousOverride = scheduleOverrides[work.id];
+    setScheduleMoveBusyId(work.id);
+    setSelectedWorkId(work.id);
+    setTimelineFollowNow(false);
+    setScheduleOverrides((current) => ({
+      ...current,
+      [work.id]: { plannedDate: selectedDateIso, plannedStartMinutes },
+    }));
+    setAssignmentFeedback(null);
+
+    try {
+      await moveWorkOrderSchedule(scheduleMoveFormData(work.id, selectedDateIso, plannedStartMinutes));
+      setAssignmentFeedback({ kind: "success", text: `${t.scheduleMoveSuccess} · ${work10ClockFromMinutes(plannedStartMinutes)}` });
+
+      if (employeeId !== null && !work.workParts.some((part) => part.assignedEmployeeIds.includes(employeeId))) {
+        requestAssignmentToWork(employeeId, work);
+      }
+    } catch (error) {
+      setScheduleOverrides((current) => {
+        const next = { ...current };
+        if (previousOverride) next[work.id] = previousOverride;
+        else delete next[work.id];
+        return next;
+      });
+      setAssignmentFeedback({ kind: "error", text: error instanceof Error ? error.message : t.scheduleMoveError });
+    } finally {
+      setScheduleMoveBusyId(null);
+      setDragWorkId(null);
+    }
+  };
+
   const handlePartDrop = (event: DragEvent<HTMLElement>, work: WorkOrderData, part: WorkPartData) => {
     event.preventDefault();
     const employeeId = employeeIdFromDrag(event);
@@ -3286,6 +3368,7 @@ export default function Work10Dashboard({ data }: { data: Work10DashboardData })
                   <div>
                     <h2 className="font-bold text-slate-900">{t.scheduleTitle}</h2>
                     <p className="text-xs text-slate-500">{t.scheduleHelp}</p>
+                    <p className="mt-1 text-[11px] font-medium text-blue-700">{t.scheduleDragHint}</p>
                   </div>
                   <div className="flex flex-wrap items-center justify-end gap-2">
                     <span className="rounded-full bg-slate-100 px-3 py-1 text-xs font-medium text-slate-600">{calendarMode === "day" ? t.dayView : calendarMode === "week" ? t.weekView : t.monthView}</span>
@@ -3346,7 +3429,7 @@ export default function Work10Dashboard({ data }: { data: Work10DashboardData })
                     </div>
                     <div className="mt-2 flex flex-wrap gap-2">
                       {unscheduledForSelectedDay.map((work) => (
-                        <button key={work.id} type="button" onClick={() => setSelectedWorkId(work.id)} onDragOver={(event) => { event.preventDefault(); event.dataTransfer.dropEffect = "copy"; setDropWorkId(work.id); }} onDragLeave={() => setDropWorkId((current) => current === work.id ? null : current)} onDrop={(event) => handleWorkDrop(event, work)} className={`rounded-lg border bg-white px-3 py-2 text-left text-xs shadow-sm ${dropWorkId === work.id ? "border-emerald-500 ring-2 ring-emerald-200" : selectedWork?.id === work.id ? "border-blue-500" : "border-amber-200 hover:border-blue-300"}`}>
+                        <button key={work.id} type="button" draggable onDragStart={(event) => { event.dataTransfer.setData("application/x-gloggt-work", String(work.id)); event.dataTransfer.effectAllowed = "move"; setDragWorkId(work.id); }} onDragEnd={() => setDragWorkId(null)} onClick={() => setSelectedWorkId(work.id)} onDragOver={(event) => { if (!workIdFromDrag(event)) { event.preventDefault(); event.dataTransfer.dropEffect = "copy"; setDropWorkId(work.id); } }} onDragLeave={() => setDropWorkId((current) => current === work.id ? null : current)} onDrop={(event) => handleWorkDrop(event, work)} className={`cursor-grab rounded-lg border bg-white px-3 py-2 text-left text-xs shadow-sm active:cursor-grabbing ${dragWorkId === work.id ? "opacity-60 ring-2 ring-blue-200" : ""} ${dropWorkId === work.id ? "border-emerald-500 ring-2 ring-emerald-200" : selectedWork?.id === work.id ? "border-blue-500" : "border-amber-200 hover:border-blue-300"}`}>
                           <strong className="block text-slate-900">{work.title}</strong>
                           <span className="mt-0.5 block text-[10px] text-slate-500">#{work.workNumber} · {work.estimatedMinutes ? formatMinutesDuration(work.estimatedMinutes, t.hoursShort, t.minutesShort) : t.notRegistered}</span>
                         </button>
@@ -3387,7 +3470,12 @@ export default function Work10Dashboard({ data }: { data: Work10DashboardData })
                     ) : null}
 
                     <div className="relative divide-y">
-                      <div className="relative bg-blue-50/30 px-2 py-2" style={{ height: `${Math.max(58, 32 + visibleScheduledForSelectedDay.length * 34)}px` }}>
+                      <div
+                        className={`relative bg-blue-50/30 px-2 py-2 transition ${dragWorkId !== null ? "ring-2 ring-inset ring-blue-200" : ""}`}
+                        style={{ height: `${Math.max(58, 32 + visibleScheduledForSelectedDay.length * 34)}px` }}
+                        onDragOver={(event) => { if (workIdFromDrag(event)) { event.preventDefault(); event.dataTransfer.dropEffect = "move"; } }}
+                        onDrop={(event) => { if (workIdFromDrag(event)) void persistWorkScheduleDrop(event); }}
+                      >
                         <span className="absolute left-2 top-2 rounded-md bg-blue-100 px-2 py-1 text-[11px] font-semibold text-blue-800">{t.unassignedInNewCore}</span>
                         {visibleScheduledForSelectedDay.length === 0 ? (
                           <span className="absolute left-32 top-3 text-[11px] text-slate-400">{t.noScheduledWorkForDay}</span>
@@ -3398,13 +3486,16 @@ export default function Work10Dashboard({ data }: { data: Work10DashboardData })
                             <button
                               key={work.id}
                               type="button"
+                              draggable
                               title={`${work10ClockFromMinutes(work.plannedStartMinutes)}${end ? `–${end}` : ""} · ${work.title}`}
                               onClick={() => setSelectedWorkId(work.id)}
-                              onDragOver={(event) => { event.preventDefault(); event.dataTransfer.dropEffect = "copy"; setDropWorkId(work.id); }}
+                              onDragStart={(event) => { event.dataTransfer.setData("application/x-gloggt-work", String(work.id)); event.dataTransfer.effectAllowed = "move"; setDragWorkId(work.id); }}
+                              onDragEnd={() => setDragWorkId(null)}
+                              onDragOver={(event) => { if (!workIdFromDrag(event)) { event.preventDefault(); event.dataTransfer.dropEffect = "copy"; setDropWorkId(work.id); } }}
                               onDragLeave={() => setDropWorkId((current) => current === work.id ? null : current)}
-                              onDrop={(event) => handleWorkDrop(event, work)}
+                              onDrop={(event) => { if (!workIdFromDrag(event)) handleWorkDrop(event, work); }}
                               style={{ left: pos.left, width: pos.width, top: `${30 + index * 34}px`, minWidth: "12px" }}
-                              className={`absolute h-7 overflow-hidden rounded-md border px-1.5 text-left text-[10px] shadow-sm transition ${
+                              className={`absolute h-7 cursor-grab overflow-hidden rounded-md border px-1.5 text-left text-[10px] shadow-sm transition active:cursor-grabbing ${dragWorkId === work.id ? "opacity-60" : ""} ${
                                 dropWorkId === work.id ? "border-emerald-500 bg-emerald-100 ring-2 ring-emerald-200" : selectedWork?.id === work.id ? "border-blue-600 bg-blue-100 ring-2 ring-blue-100" : "border-blue-200 bg-white hover:border-blue-400"
                               }`}
                             >
@@ -3433,8 +3524,10 @@ export default function Work10Dashboard({ data }: { data: Work10DashboardData })
                               return (
                                 <div
                                   key={person.id}
-                                  className={`relative border-b ${snapshot?.kind === "actual" ? "bg-emerald-50/25" : snapshot?.kind === "planned" ? "bg-blue-50/25" : ""}`}
+                                  className={`relative border-b transition ${dragWorkId !== null ? "hover:bg-blue-50/60" : ""} ${snapshot?.kind === "actual" ? "bg-emerald-50/25" : snapshot?.kind === "planned" ? "bg-blue-50/25" : ""}`}
                                   style={{ height: `${PEOPLE_ROW_HEIGHT}px` }}
+                                  onDragOver={(event) => { if (workIdFromDrag(event)) { event.preventDefault(); event.dataTransfer.dropEffect = "move"; } }}
+                                  onDrop={(event) => { if (workIdFromDrag(event)) void persistWorkScheduleDrop(event, person.id); }}
                                 >
                                   {personPlanned.map((work) => {
                                     const pos = timelinePosition(work.plannedStartMinutes!, storedPlannedDurationMinutes(work), timelineStartMinutes, timelineEndMinutes);
@@ -3443,10 +3536,13 @@ export default function Work10Dashboard({ data }: { data: Work10DashboardData })
                                       <button
                                         key={`planned-${person.id}-${work.id}`}
                                         type="button"
+                                        draggable
                                         title={`${t.scheduleSlot}: ${work10ClockFromMinutes(work.plannedStartMinutes)}${end ? `–${end}` : ""} · ${work.title}`}
                                         onClick={() => setSelectedWorkId(work.id)}
+                                        onDragStart={(event) => { event.stopPropagation(); event.dataTransfer.setData("application/x-gloggt-work", String(work.id)); event.dataTransfer.effectAllowed = "move"; setDragWorkId(work.id); }}
+                                        onDragEnd={() => setDragWorkId(null)}
                                         style={{ left: pos.left, width: pos.width, minWidth: "12px" }}
-                                        className="absolute top-1 h-7 overflow-hidden rounded-md border border-blue-300 bg-blue-50 px-1.5 text-left text-[9px] shadow-sm"
+                                        className={`absolute top-1 h-7 cursor-grab overflow-hidden rounded-md border border-blue-300 bg-blue-50 px-1.5 text-left text-[9px] shadow-sm active:cursor-grabbing ${scheduleMoveBusyId === work.id ? "opacity-50" : ""}`}
                                       >
                                         <span className="block truncate font-semibold text-blue-950">{work.title}</span>
                                         <span className="block truncate text-[8px] text-blue-700">{work10ClockFromMinutes(work.plannedStartMinutes)}{end ? `–${end}` : ""}</span>
