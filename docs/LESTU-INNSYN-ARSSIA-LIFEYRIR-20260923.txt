@@ -1,0 +1,15 @@
+GLÖGGT – Innsýn – lífeyrir/greiðslur afmarkað við yfirstandandi ár
+23. september 2026
+
+Markmið
+- Lífeyrir og greiðslur á 2026-sýn sýna aðeins mánuði ársins 2026.
+- Fyrri ár eru áfram varðveitt í Innsýn en blandast ekki inn í mánaðalistann fyrir yfirstandandi ár.
+- Heild ársins og „Nýjasta tímabil“ nota sama ársafmarkaða gagnasafnið og listinn.
+
+Breyting
+- Bætt við pensionIncomeCurrentYearMonths sem síar pensionIncomeMonths með currentYear.
+- pensionIncomeCurrentYear er reiknað úr þessum ársafmarkaða lista.
+- latestPensionIncome er valið úr þessum ársafmarkaða lista.
+- Mánaðalistinn renderar aðeins pensionIncomeCurrentYearMonths.
+
+Gögn eru ekki eydd eða breytt; þetta er eingöngu framsetningar-/samantektarafmörkun.

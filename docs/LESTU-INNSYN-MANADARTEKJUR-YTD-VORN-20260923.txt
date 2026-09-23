@@ -1,0 +1,40 @@
+GLÖGGT – Innsýn mánaðartekjur / YTD-vörn – 23. september 2026
+
+Vandamál
+---------
+Í Innsýn birtust 9.723.475 kr. undir „Óstaðfestur greiðandi“ í janúar 2026.
+Talan var ekki bókuð greiðsla. Hún varð til þegar uppsafnaðar YEAR_TO_DATE staðreyndir
+úr greiðsluseðlum Greiðslustofu lífeyrissjóða fyrir júní, júlí og ágúst voru allar
+settar á janúar vegna þess að periodStart var 2026-01-01.
+
+Rót orsakar
+-----------
+Mánaðarleg samantekt valdi staðreyndir eftir texta eins og „örorkulífeyrir“ og notaði
+periodStart sem mánaðarlykil. Þannig gátu YTD/uppsafnaðar tölur sem náðu yfir marga
+mánuði litið út eins og rauninnkoma janúar.
+
+Almenn regla
+------------
+Staðreynd má aðeins teljast sjálfvirk rauninnkoma eins mánaðar ef hún er mánaðarlega
+afmarkað. Eftirfarandi eru áfram varðveittar sem Innsýn-staðreyndir en eru ekki lagðar
+inn í mánaðarlega rauninnkomu:
+
+- YEAR_TO_DATE / YTD
+- ANNUAL
+- ESTIMATED
+- FORECAST
+- CUMULATIVE
+- texti sem segir m.a. „frá áramótum“, „á árinu“, „árstekjur“ eða tekjuáætlun
+- staðreyndir þar sem periodStart og periodEnd falla í mismunandi mánuði
+
+Sama vörn er notuð á GROSS_PENSION fallback svo fjölmánaða heild geti ekki farið inn á
+upphafsmánuð fyrir slysni.
+
+Staðfest dæmi úr rannsókn
+-------------------------
+Rangar YTD-færslur sem samanlagt mynduðu 9.723.475 kr. komu úr skjölum fyrir júní,
+júlí og ágúst. Rétta janúarstaðreyndin í sama trace var 267.040 kr. frá
+Tryggingastofnun og nær aðeins yfir janúar.
+
+Engum InsightFact-gögnum er eytt með þessari breytingu. Breytingin snýr aðeins að því
+hvaða staðreyndir mega mynda mánaðarlega „Lífeyrir og greiðslur“ samantekt.

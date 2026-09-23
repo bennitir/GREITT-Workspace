@@ -151,19 +151,34 @@ function formatYearMonth(value: string | null, language: string = "is") {
   return `${monthName.charAt(0).toUpperCase()}${monthName.slice(1)} ${year}`;
 }
 
-function isActualDisabilityPensionFact(fact: {
+function isMonthlyIncomeScope(fact: {
   factType: string;
   label: string | null;
-  numberValue: unknown;
+  periodStart: Date | null;
+  periodEnd: Date | null;
 }) {
-  if (fact.numberValue === null) {
+  const type = normalizeFactType(fact.factType);
+  const label = normalizeText(fact.label);
+  const startMonth = yearMonthFromDate(fact.periodStart);
+  const endMonth = yearMonthFromDate(fact.periodEnd);
+
+  // Uppsafnaðar, ársbundnar og áætlaðar tölur eru gagnlegar staðreyndir
+  // í Innsýn en mega aldrei verða sjálfkrafa að rauninnkomu eins mánaðar.
+  if (
+    type.includes("YEAR_TO_DATE") ||
+    type.startsWith("YTD_") ||
+    type.includes("ANNUAL") ||
+    type.includes("ESTIMATED") ||
+    type.includes("FORECAST") ||
+    type.includes("CUMULATIVE")
+  ) {
     return false;
   }
 
-  const type = normalizeFactType(fact.factType);
-  const label = normalizeText(fact.label);
-
   if (
+    label.includes("fra aramotum") ||
+    label.includes("a arinu") ||
+    label.includes("arstekj") ||
     label.includes("tekjuaætlun") ||
     label.includes("tekjuaaetlun") ||
     label.includes("aætlad") ||
@@ -171,6 +186,29 @@ function isActualDisabilityPensionFact(fact: {
   ) {
     return false;
   }
+
+  // Ef staðreynd nær yfir fleiri en einn mánuð er hún ekki mánaðarleg
+  // raunfærsla. Við dreifum henni ekki eða setjum hana á upphafsmánuðinn.
+  if (startMonth && endMonth && startMonth !== endMonth) {
+    return false;
+  }
+
+  return true;
+}
+
+function isActualDisabilityPensionFact(fact: {
+  factType: string;
+  label: string | null;
+  numberValue: unknown;
+  periodStart: Date | null;
+  periodEnd: Date | null;
+}) {
+  if (fact.numberValue === null || !isMonthlyIncomeScope(fact)) {
+    return false;
+  }
+
+  const type = normalizeFactType(fact.factType);
+  const label = normalizeText(fact.label);
 
   if (
     label.includes("barnalifeyrir") ||
@@ -262,8 +300,10 @@ function isGrossPensionFallbackFact(fact: {
   factType: string;
   label: string | null;
   numberValue: unknown;
+  periodStart: Date | null;
+  periodEnd: Date | null;
 }) {
-  if (fact.numberValue === null) {
+  if (fact.numberValue === null || !isMonthlyIncomeScope(fact)) {
     return false;
   }
 
@@ -1636,18 +1676,19 @@ export default async function InnsynPage() {
       b.period.localeCompare(a.period)
     );
 
+  const pensionIncomeCurrentYearMonths =
+    pensionIncomeMonths.filter((item) =>
+      item.period.startsWith(`${currentYear}-`)
+    );
+
   const pensionIncomeCurrentYear =
-    pensionIncomeMonths
-      .filter((item) =>
-        item.period.startsWith(`${currentYear}-`)
-      )
-      .reduce(
-        (sum, item) => sum + item.amount,
-        0
-      );
+    pensionIncomeCurrentYearMonths.reduce(
+      (sum, item) => sum + item.amount,
+      0
+    );
 
   const latestPensionIncome =
-    pensionIncomeMonths[0] ?? null;
+    pensionIncomeCurrentYearMonths[0] ?? null;
 
   // Innsýn sýnir fjárhagsmyndina sem GLÖGGT þekkir, ekki aðeins bókaðar færslur.
   // Fyrsta skrefið: staðfestar lífeyris-/greiðslutekjur úr skjölum teljast með innkomu.
@@ -3279,9 +3320,9 @@ return {
                     </div>
                   </div>
 
-                  {pensionIncomeMonths.length > 0 && (
+                  {pensionIncomeCurrentYearMonths.length > 0 && (
                     <div className="mt-4 divide-y rounded-lg border">
-                      {pensionIncomeMonths.slice(0, 12).map((item) => (
+                      {pensionIncomeCurrentYearMonths.map((item) => (
                         <div key={item.period} className="px-4 py-3 text-sm">
                           <div className="flex items-center justify-between gap-4">
                             <span className="font-medium text-slate-700">
