@@ -1,5 +1,8 @@
 import { cookies } from "next/headers";
-import { prisma } from "@/lib/prisma";
+import {
+  getRequestAuthContext,
+  getRequestUserCompany,
+} from "@/lib/core/request-context";
 
 export const COMPANY_ACCESS_ROLES = [
   "OWNER",
@@ -28,28 +31,8 @@ const DENIED_ACCESS = {
 };
 
 export async function getEffectiveUser() {
-  const cookieStore = await cookies();
-  const sessionToken = cookieStore.get("sessionToken")?.value;
-  if (!sessionToken) return null;
-
-  const session = await prisma.session.findUnique({
-    where: { token: sessionToken },
-    include: { user: true },
-  });
-
-  if (!session || session.expiresAt <= new Date() || !session.user.isActive) {
-    return null;
-  }
-
-  const activeUserId = cookieStore.get("activeUserId")?.value;
-  if (session.user.role === "ADMIN" && activeUserId) {
-    const impersonated = await prisma.user.findUnique({
-      where: { id: Number(activeUserId) },
-    });
-    if (impersonated?.isActive) return impersonated;
-  }
-
-  return session.user;
+  const context = await getRequestAuthContext();
+  return context.effectiveUser;
 }
 
 export async function getCompanyAccess(companyId: number) {
@@ -75,9 +58,7 @@ export async function getCompanyAccess(companyId: number) {
     };
   }
 
-  const access = await prisma.userCompany.findUnique({
-    where: { userId_companyId: { userId: user.id, companyId } },
-  });
+  const access = await getRequestUserCompany(user.id, companyId);
 
   if (!access?.isActive) return { ...DENIED_ACCESS };
 

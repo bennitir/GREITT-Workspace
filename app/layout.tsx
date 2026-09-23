@@ -5,7 +5,7 @@ import TopClock from "@/components/TopClock";
 import Sidebar from "@/components/Sidebar";
 
 import { redirect } from "next/navigation";
-import { cookies, headers } from "next/headers";
+import { headers } from "next/headers";
 import { prisma } from "@/lib/prisma";
 
 import type { Metadata } from "next";
@@ -14,12 +14,15 @@ import { Geist, Geist_Mono } from "next/font/google";
 import "./globals.css";
 
 import {
-  getCompanyModuleSettings,
-} from "@/lib/core/company-module-repository";
-
-import {
   getEnabledCompanyModules,
 } from "@/lib/core/company-modules";
+
+import {
+  getRequestAuthContext,
+  getRequestCompanyModuleSettings,
+  getRequestUserCompany,
+  getRequestUserInterfaceSettings,
+} from "@/lib/core/request-context";
 
 import {
   clearActiveUser,
@@ -45,50 +48,34 @@ export default async function RootLayout({
 }: Readonly<{
   children: React.ReactNode;
 }>) {
-  const cookieStore = await cookies();
   const headerStore = await headers();
+  const requestContext = await getRequestAuthContext();
 
   const pathname =
     headerStore.get("x-gloggt-pathname") ?? "/";
 
-  const sessionToken =
-    cookieStore.get("sessionToken")?.value;
+  const {
+    sessionToken,
+    sessionUser,
+    effectiveUser: effectiveActiveUser,
+    activeCompanyId,
+    activeUserId,
+    postPasswordChangePath,
+  } = requestContext;
 
-  const session = sessionToken
-    ? await prisma.session.findUnique({
-        where: {
-          token: sessionToken,
-        },
-        include: {
-          user: true,
-        },
-      })
-    : null;
-
-  const sessionUser =
-    session &&
-    session.expiresAt > new Date() &&
-    session.user.isActive
-      ? session.user
-      : null;
-
-      const publicAuthPage =
-  pathname === "/innskraning" ||
-  pathname === "/gleymt-lykilord" ||
-  pathname === "/endurstilla-lykilord";
+  const publicAuthPage =
+    pathname === "/innskraning" ||
+    pathname === "/gleymt-lykilord" ||
+    pathname === "/endurstilla-lykilord";
 
   /*
     Ef session-cookie er til en sessionið sjálft er
     útrunnið, ógilt eða notandinn orðinn óvirkur,
     má viðkomandi ekki halda áfram inn í kerfið.
   */
-  if (
-  sessionToken &&
-  !sessionUser &&
-  !publicAuthPage
-) {
-  redirect("/innskraning");
-}
+  if (sessionToken && !sessionUser && !publicAuthPage) {
+    redirect("/innskraning");
+  }
 
   /*
     Skyldubreyting lykilorðs.
@@ -115,51 +102,14 @@ export default async function RootLayout({
     !sessionUser.mustChangePassword &&
     pathname === "/skipta-lykilordi"
   ) {
-    const postPasswordChangePath =
-      cookieStore.get("postPasswordChangePath")?.value === "/mobile"
-        ? "/mobile"
-        : "/";
     redirect(postPasswordChangePath);
   }
-
-  const activeCompanyId =
-    cookieStore.get("activeCompanyId")?.value;
-
-  const activeUserId =
-    cookieStore.get("activeUserId")?.value;
-
-  /*
-    activeUserId er aðeins virt þegar raunverulega
-    innskráði notandinn er ADMIN.
-  */
-  const activeUser =
-    sessionUser?.role === "ADMIN" && activeUserId
-      ? await prisma.user.findUnique({
-          where: {
-            id: Number(activeUserId),
-          },
-          select: {
-            id: true,
-            role: true,
-            isActive: true,
-          },
-        })
-      : sessionUser;
-
-  /*
-    Óvirkur impersonated notandi má ekki teljast
-    virkur notandi.
-  */
-  const effectiveActiveUser =
-    activeUser?.isActive
-      ? activeUser
-      : sessionUser;
 
   const activeCompany =
     activeCompanyId && effectiveActiveUser
       ? await prisma.company.findFirst({
           where: {
-            id: Number(activeCompanyId),
+            id: activeCompanyId,
 
             ...(effectiveActiveUser.role !== "ADMIN"
               ? {
@@ -183,19 +133,7 @@ export default async function RootLayout({
     activeCompany &&
     effectiveActiveUser &&
     effectiveActiveUser.role !== "ADMIN"
-      ? await prisma.userCompany.findUnique({
-          where: {
-            userId_companyId: {
-              userId: effectiveActiveUser.id,
-              companyId: activeCompany.id,
-            },
-          },
-          select: {
-            accessRole: true,
-            isActive: true,
-            canManageCompanySettings: true,
-          },
-        })
+      ? await getRequestUserCompany(effectiveActiveUser.id, activeCompany.id)
       : null;
 
   const canManageCompany = Boolean(
@@ -209,11 +147,11 @@ export default async function RootLayout({
   );
 
   const userSettings = effectiveActiveUser
-    ? await prisma.userSettings.findUnique({ where: { userId: effectiveActiveUser.id }, select: { interfaceLanguage: true } })
+    ? await getRequestUserInterfaceSettings(effectiveActiveUser.id)
     : null;
 
   const moduleSettings = activeCompany
-    ? await getCompanyModuleSettings(activeCompany.id)
+    ? await getRequestCompanyModuleSettings(activeCompany.id)
     : {};
 
   const enabledModuleIds =

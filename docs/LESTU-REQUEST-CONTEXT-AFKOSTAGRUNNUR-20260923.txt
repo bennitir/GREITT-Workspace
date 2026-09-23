@@ -1,0 +1,49 @@
+GLÖGGT – request-context afkastagrunnur
+Dagsetning: 23.09.2026
+
+MARKMIÐ
+Draga úr endurteknum DB-lestri á sömu request-gögnum án langlífs auth-cache.
+Þessi pakki snertir EKKI GPS-söfnun, Verk-gögn eða Prisma schema.
+
+SKRÁR
+- app/layout.tsx
+- lib/core/request-context.ts (ný)
+- lib/core/access-control.ts
+- lib/core/require-company-module.ts
+- lib/i18n/current-language.ts
+
+HVAÐ BREYTIST
+- Session + effective/impersonated user er reiknað einu sinni innan server request.
+- UserCompany lestrar eru request-scoped memoized eftir userId + companyId.
+- InterfaceLanguage lestur er request-scoped memoized eftir userId.
+- CompanyModule settings eru request-scoped memoized eftir companyId.
+- RootLayout, access-control, requireCompanyModule og current-language endurnýta sama grunn.
+- Engin gögn eru cache-uð milli requesta.
+
+VARÐVEITT HEGÐUN
+- Raunverulega innskráður ADMIN fer áfram fram hjá UserCompany-prófi í requireCompanyModule.
+- getCurrentInterfaceLanguage notar áfram tungumál raunverulega innskráða notandans.
+- RootLayout heldur áfram að nota effective/impersonated user fyrir shellið eins og áður.
+
+PRÓF ÁÐUR EN COMMIT
+1. Afrita skrárnar á samsvarandi staði í C:\GLÖGGT.
+2. Keyra:
+   npx tsc --noEmit
+3. Ef ein villa kemur: STOPP. Ekki commit/push.
+4. Smoke-test localhost:
+   - innskráning
+   - Heim
+   - skipta fyrirtæki
+   - Verk
+   - Stjórnun (ef heimild)
+   - impersonation úr GLÖGGT Admin ef það er hluti af venjulegu prófi
+5. Staðfesta að tungumál og virkar einingar í sidebar séu óbreytt.
+
+GIT
+Aldrei git add .
+Stage-a aðeins þessar fimm kóðaskrár (og LESTU skrá ef hún á í commit).
+Skoða git diff --cached --check áður en commit er tekið.
+
+ATHUGASEMD
+Þetta er fyrsti afkastagrunnurinn úr arkitektúrúttekt 22.09.2026.
+Næsta mælanlega skref eftir staðfestingu er að bera saman request/DB vinnu á Heim og Verk fyrir/eftir áður en farið er í stærri view-scoped gagnasókn.

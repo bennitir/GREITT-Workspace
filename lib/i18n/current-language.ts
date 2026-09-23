@@ -1,25 +1,19 @@
 import "server-only";
 
-import { cookies } from "next/headers";
-import { prisma } from "@/lib/prisma";
+import {
+  getRequestAuthContext,
+  getRequestUserInterfaceSettings,
+} from "@/lib/core/request-context";
 import { normalizeUiLanguage } from "@/lib/i18n/ui";
 
 export async function getCurrentInterfaceLanguage() {
-  const store = await cookies();
-  const token = store.get("sessionToken")?.value;
-  if (!token) return "is" as const;
+  const context = await getRequestAuthContext();
+  const sessionUser = context.sessionUser;
 
-  const session = await prisma.session.findUnique({
-    where: { token },
-    select: { userId: true, expiresAt: true },
-  });
+  if (!sessionUser) return "is" as const;
 
-  if (!session || session.expiresAt <= new Date()) return "is" as const;
-
-  const settings = await prisma.userSettings.findUnique({
-    where: { userId: session.userId },
-    select: { interfaceLanguage: true },
-  });
-
+  // Varðveitir núverandi hegðun: tungumál þess sem er raunverulega innskráður
+  // stýrir þessari helper-aðgerð, einnig þegar ADMIN vinnur í impersonation.
+  const settings = await getRequestUserInterfaceSettings(sessionUser.id);
   return normalizeUiLanguage(settings?.interfaceLanguage);
 }
