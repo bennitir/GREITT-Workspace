@@ -1,0 +1,40 @@
+GLÖGGT – Banki / Ársgreining afkastahressing
+Dagsetning: 23.09.2026
+
+Markmið
+- Ársgreining á ekki að lesa allar bankafærslur allra ára til að sýna eitt ár.
+- Nýta request-scoped auth/company/language grunninn sem þegar er kominn í production.
+- Varðveita fyrri rannsóknarhegðun fyrir tengdar eldri bankafærslur.
+
+Breytingar
+1. Áralisti
+   - Les aðeins DISTINCT ár með lítilli PostgreSQL aggregate-query.
+   - Les ekki fullar BankTransaction raðir til að byggja year selector.
+
+2. Valið ár
+   - BankTransaction er sótt aðeins innan [01.01.year, 01.01.nextYear).
+   - Nýtir núverandi @@index([bankAccountId, date]).
+   - Öll ársgreining, hópar, reikningsgreining og rannsókn innan árs lesa sama date-scoped safn.
+
+3. Eldri tengdar færslur
+   - findPriorRelatedBankTransactions þarf að geta farið allt að 120 daga aftur fyrir valda rannsóknarfærslu.
+   - Því er aðeins þegar slíkt drilldown er virkt sótt afmarkað 121 daga bakgluggasafn.
+   - Þetta varðveitir tengingu yfir áramót án þess að halda allri bankasögunni í minni.
+
+4. Request context
+   - Fjarlægð sér cookies/session/UserCompany/UserSettings endurlesning úr síðunni.
+   - Notar getRequestAuthContext, getRequestUserCompany og getRequestUserInterfaceSettings.
+   - Engin cross-request auth cache.
+
+Óbreytt
+- Engin Prisma migration.
+- Engin breyting á flokkunarreglum, annual.ts eða bókhaldsniðurstöðum.
+- Engin breyting á GPS.
+- Engin AI-köll bætt við.
+
+Prófun eftir innsetningu
+1. npx tsc --noEmit
+2. Opna /banki/arsgreining fyrir ár sem hefur gögn, t.d. 2025.
+3. Staðfesta að heildartölur/áraval séu óbreytt.
+4. Skipta milli ára ef fleiri en eitt ár er til.
+5. Opna rannsókn/drilldown sem notar tengdar bankafærslur ef slíkt dæmi er til.

@@ -1,8 +1,8 @@
 import { Fragment } from "react";
 import Link from "next/link";
-import { cookies } from "next/headers";
 import { redirect } from "next/navigation";
 import { prisma } from "@/lib/prisma";
+import { getRequestAuthContext, getRequestUserCompany, getRequestUserInterfaceSettings } from "@/lib/core/request-context";
 import { formatDate } from "@/lib/locale";
 import { formatNumber } from "@/app/banki/_lib/formatting/numbers";
 import { bankAnalysisLanguage } from "@/app/banki/_lib/i18n/analysis-text";
@@ -65,33 +65,19 @@ function filterGroupsBySearch<T extends SortableGroup>(groups: T[], q: string) {
 
 
 async function getContext() {
-  const store = await cookies();
-  const token = store.get("sessionToken")?.value;
-  const companyId = Number(store.get("activeCompanyId")?.value);
+  const context = await getRequestAuthContext();
+  const sessionUser = context.sessionUser;
+  const companyId = context.activeCompanyId;
 
-  if (!token) redirect("/innskraning?next=/banki/arsgreining");
-  if (!Number.isInteger(companyId) || companyId < 1) redirect("/fyrirtaeki");
+  if (!sessionUser) redirect("/innskraning?next=/banki/arsgreining");
+  if (!companyId) redirect("/fyrirtaeki");
 
-  const session = await prisma.session.findUnique({
-    where: { token },
-    include: { user: true },
-  });
-
-  if (!session || session.expiresAt < new Date() || !session.user.isActive) {
-    redirect("/innskraning?next=/banki/arsgreining");
-  }
-
-  if (session.user.role !== "ADMIN") {
-    const access = await prisma.userCompany.findUnique({
-      where: { userId_companyId: { userId: session.user.id, companyId } },
-    });
+  if (sessionUser.role !== "ADMIN") {
+    const access = await getRequestUserCompany(sessionUser.id, companyId);
     if (!access?.isActive) redirect("/fyrirtaeki");
   }
 
-  const userSettings = await prisma.userSettings.findUnique({
-    where: { userId: session.user.id },
-    select: { interfaceLanguage: true },
-  });
+  const userSettings = await getRequestUserInterfaceSettings(sessionUser.id);
 
   return { companyId, language: bankAnalysisLanguage(userSettings?.interfaceLanguage) };
 }
@@ -110,20 +96,37 @@ export default async function AnnualBankAnalysisPage({ searchParams }: Props) {
   const accountIds = accounts.map((account) => account.id);
   const accountById = new Map(accounts.map((account) => [account.id, account]));
 
-  const allTransactions = accountIds.length
-    ? await prisma.bankTransaction.findMany({
-        where: { bankAccountId: { in: accountIds } },
-        orderBy: [{ date: "asc" }, { id: "asc" }],
-      })
+  // Only the year selector needs cross-year information. Fetch distinct years
+  // as a tiny aggregate instead of loading every BankTransaction into memory.
+  const yearRows = accountIds.length
+    ? await prisma.$queryRaw<Array<{ year: number }>>`
+        SELECT DISTINCT EXTRACT(YEAR FROM bt."date")::int AS "year"
+        FROM "BankTransaction" bt
+        INNER JOIN "BankAccount" ba ON ba."id" = bt."bankAccountId"
+        WHERE ba."companyId" = ${companyId}
+          AND ba."isActive" = true
+        ORDER BY "year" DESC
+      `
     : [];
-
-  const years = Array.from(new Set(allTransactions.map((item) => item.date.getFullYear()))).sort((a, b) => b - a);
+  const years = yearRows.map((row) => Number(row.year)).filter((value) => Number.isInteger(value));
   const requestedYear = Number(query.year);
   const year = Number.isInteger(requestedYear) && years.includes(requestedYear)
     ? requestedYear
     : years[0] ?? new Date().getFullYear();
 
-  const mappedTransactions = allTransactions.map((item) => ({
+  const yearStart = new Date(Date.UTC(year, 0, 1));
+  const nextYearStart = new Date(Date.UTC(year + 1, 0, 1));
+  const yearTransactionRows = accountIds.length
+    ? await prisma.bankTransaction.findMany({
+        where: {
+          bankAccountId: { in: accountIds },
+          date: { gte: yearStart, lt: nextYearStart },
+        },
+        orderBy: [{ date: "asc" }, { id: "asc" }],
+      })
+    : [];
+
+  const yearTransactions = yearTransactionRows.map((item) => ({
     id: item.id,
     bankAccountId: item.bankAccountId,
     bankAccountName: accountById.get(item.bankAccountId)?.name ?? null,
@@ -132,7 +135,6 @@ export default async function AnnualBankAnalysisPage({ searchParams }: Props) {
     amount: Number(item.amount),
     sourceRawData: item.sourceRawData,
   }));
-  const yearTransactions = mappedTransactions.filter((item) => item.date.getFullYear() === year);
 
   const analysis = buildAnnualBankAnalysis(yearTransactions);
   const grantAccountIds = new Set(
@@ -375,10 +377,43 @@ export default async function AnnualBankAnalysisPage({ searchParams }: Props) {
       }
     : null;
   const recurringTransactionIds = new Set(selectedRecurringPattern?.transactionIds ?? []);
-  const relatedBankLinks = selectedResearchTransactions
-    .filter((item) => item.amount > 0 && analyzeIncomeEvidence(item).evidence === "loan-refund-link-needed")
-    .flatMap((target) => findPriorRelatedBankTransactions(mappedTransactions, target).map((link) => ({ target, link })));
-  const transactionById = new Map(mappedTransactions.map((item) => [item.id, item]));
+  const relatedBankTargets = selectedResearchTransactions.filter(
+    (item) => item.amount > 0 && analyzeIncomeEvidence(item).evidence === "loan-refund-link-needed",
+  );
+  const earliestRelatedTarget = relatedBankTargets.length
+    ? new Date(Math.min(...relatedBankTargets.map((item) => item.date.getTime())))
+    : null;
+  const latestRelatedTarget = relatedBankTargets.length
+    ? new Date(Math.max(...relatedBankTargets.map((item) => item.date.getTime())))
+    : null;
+  const priorRelatedRows = earliestRelatedTarget && latestRelatedTarget && accountIds.length
+    ? await prisma.bankTransaction.findMany({
+        where: {
+          bankAccountId: { in: accountIds },
+          date: {
+            gte: new Date(earliestRelatedTarget.getTime() - 121 * 86_400_000),
+            lt: latestRelatedTarget,
+          },
+        },
+        orderBy: [{ date: "asc" }, { id: "asc" }],
+      })
+    : [];
+  const priorRelatedTransactions = priorRelatedRows.map((item) => ({
+    id: item.id,
+    bankAccountId: item.bankAccountId,
+    bankAccountName: accountById.get(item.bankAccountId)?.name ?? null,
+    date: item.date,
+    text: item.text,
+    amount: Number(item.amount),
+    sourceRawData: item.sourceRawData,
+  }));
+  const relatedSearchTransactions = [...priorRelatedTransactions, ...relatedBankTargets];
+  const relatedBankLinks = relatedBankTargets.flatMap((target) =>
+    findPriorRelatedBankTransactions(relatedSearchTransactions, target).map((link) => ({ target, link })),
+  );
+  const transactionById = new Map(
+    [...yearTransactions, ...priorRelatedTransactions].map((item) => [item.id, item]),
+  );
 
   // First Bank -> Receipt bridge. Keep this deliberately conservative: exact
   // amount, a bounded date window, and optional counterparty identity evidence.
