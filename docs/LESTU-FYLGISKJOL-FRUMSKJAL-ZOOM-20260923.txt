@@ -1,0 +1,23 @@
+GLÖGGT – Fylgiskjöl / zoom á mynduð frumskjöl
+23. september 2026
+
+Markmið
+- Halda frumskjali inni í GLÖGGT.
+- Varðveita nettan ramma fyrir myndaðar kvittanir og kassastrimla.
+- Gera notanda kleift að stækka léleg eða smáleturs skjöl án þess að opna þau utan GLÖGGT.
+
+Breyting
+- Nýr client-side ImageDocumentViewer fyrir myndskjöl.
+- Zoom − / + í 25% skrefum.
+- Zoom frá 50% upp í 400%.
+- 100% hnappur.
+- „Passa í glugga“ heldur nettri sjálfgefinni sýn.
+- Stækkuð mynd helst inni í GLÖGGT og skrunast innan skjalarammans.
+- Lyklaborð: +, − og 0 þegar skjalaskoðarinn hefur fókus.
+- Zoom-stýringar eru i18n-ready fyrir is/en/pl/sr.
+
+Óbreytt
+- PDF-sýnin.
+- Storage/Supabase og signed URLs.
+- AI-vinnsla.
+- Bókun og fylgiskjalsgögn.

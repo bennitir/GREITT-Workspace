@@ -5,6 +5,9 @@ import Link from "next/link";
 import { prisma } from "@/lib/prisma";
 import { supabaseAdmin } from "@/lib/supabase";
 import { getCompanyAccess } from "@/lib/core/access-control";
+import { getCurrentInterfaceLanguage } from "@/lib/i18n/current-language";
+
+import ImageDocumentViewer from "./ImageDocumentViewer";
 
 export default async function FrumskjalPage({
   params,
@@ -27,7 +30,10 @@ export default async function FrumskjalPage({
     notFound();
   }
 
-  const access = await getCompanyAccess(companyId);
+  const [access, interfaceLanguage] = await Promise.all([
+    getCompanyAccess(companyId),
+    getCurrentInterfaceLanguage(),
+  ]);
 
   if (!access) {
     notFound();
@@ -75,23 +81,25 @@ export default async function FrumskjalPage({
   const isPdf = fileName.endsWith(".pdf");
 
   return (
-    <main className="min-h-screen bg-gray-100 p-4 md:p-6">
-      <div className="mx-auto max-w-7xl">
-        <div className="mb-4 flex flex-wrap items-center justify-between gap-3 rounded-xl bg-white p-4 shadow-sm">
-          <div>
-            <h1 className="text-2xl font-bold text-gray-900">
-              Frumskjal
-            </h1>
-
-            <p className="mt-1 text-sm text-gray-600">
-              {receipt.company.name} · Fylgiskjal #{receipt.id}
-            </p>
+    <main className="w-full px-3 py-3 md:px-4 md:py-4">
+      <div className="mx-auto max-w-[1180px]">
+        <div className="mb-3 flex flex-wrap items-center justify-between gap-3 border-b border-slate-200 pb-3">
+          <div className="min-w-0">
+            <div className="flex flex-wrap items-baseline gap-x-2 gap-y-1">
+              <h1 className="text-lg font-semibold text-slate-950">Frumskjal</h1>
+              <span className="text-sm text-slate-500">
+                {receipt.company.name} · #{receipt.id}
+              </span>
+            </div>
+            {receipt.fileName && (
+              <p className="mt-1 truncate text-xs text-slate-500">{receipt.fileName}</p>
+            )}
           </div>
 
-          <div className="flex flex-wrap gap-2">
+          <div className="flex flex-wrap items-center gap-2">
             <Link
               href={`/fylgiskjol/${receipt.id}`}
-              className="rounded-lg border border-gray-300 bg-white px-4 py-2 font-semibold text-gray-800 hover:bg-gray-50"
+              className="rounded-md border border-slate-300 bg-white px-3 py-1.5 text-sm font-semibold text-slate-800 hover:bg-slate-50"
             >
               ← Til baka
             </Link>
@@ -100,30 +108,30 @@ export default async function FrumskjalPage({
               href={originalFileUrl}
               target="_blank"
               rel="noopener noreferrer"
-              className="rounded-lg border border-gray-300 bg-white px-4 py-2 font-semibold text-blue-700 hover:bg-blue-50"
+              className="rounded-md border border-slate-300 bg-white px-3 py-1.5 text-sm font-semibold text-blue-700 hover:bg-blue-50"
             >
-              Opna eitt og sér
+              Opna eitt og sér ↗
             </a>
           </div>
         </div>
 
-        <div className="overflow-hidden rounded-xl bg-white shadow-sm">
-          {isPdf ? (
-            <iframe
-              src={originalFileUrl}
-              title="Frumskjal"
-              className="h-[calc(100vh-180px)] min-h-[700px] w-full"
-            />
-          ) : (
-            <div className="flex min-h-[700px] items-start justify-center overflow-auto bg-neutral-900 p-4 md:p-8">
-              <img
+        {isPdf ? (
+          <div className="flex justify-center">
+            <div className="w-full max-w-[900px] overflow-hidden rounded-lg border border-slate-200 bg-white shadow-sm">
+              <iframe
                 src={originalFileUrl}
-                alt="Frumskjal"
-                className="h-auto max-w-full rounded shadow-lg"
+                title="Frumskjal"
+                className="block h-[calc(100vh-165px)] min-h-[620px] w-full bg-white"
               />
             </div>
-          )}
-        </div>
+          </div>
+        ) : (
+          <ImageDocumentViewer
+            src={originalFileUrl}
+            alt="Frumskjal"
+            language={interfaceLanguage}
+          />
+        )}
       </div>
     </main>
   );
