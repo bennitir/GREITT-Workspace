@@ -1,7 +1,7 @@
 import { NextResponse } from "next/server";
 
 import { prisma } from "@/lib/prisma";
-import { haversineDistanceM } from "@/lib/work10/gps-tracking";
+import { acceptedGpsSegmentDistanceM } from "@/lib/work10/gps-tracking";
 import { requireMobileWorkEmployee } from "@/lib/work10/mobile-access";
 
 export const dynamic = "force-dynamic";
@@ -69,6 +69,15 @@ export async function POST(request: Request) {
       totalDistanceM: true,
       lastLatitude: true,
       lastLongitude: true,
+      lastAccuracyM: true,
+      points: {
+        orderBy: { sequence: "desc" },
+        take: 1,
+        select: {
+          accuracyM: true,
+          speedMps: true,
+        },
+      },
     },
   });
 
@@ -76,14 +85,17 @@ export async function POST(request: Request) {
     return NextResponse.json({ error: "TRACK_SESSION_NOT_ACTIVE" }, { status: 404 });
   }
 
-  const distanceDeltaM = session.lastLatitude !== null && session.lastLongitude !== null
-    ? haversineDistanceM(
-        { latitude: session.lastLatitude, longitude: session.lastLongitude },
-        { latitude, longitude },
+  const previousPoint = session.points[0] ?? null;
+  const safeDistanceDeltaM = session.lastLatitude !== null && session.lastLongitude !== null
+    ? acceptedGpsSegmentDistanceM(
+        {
+          latitude: session.lastLatitude,
+          longitude: session.lastLongitude,
+          accuracyM: previousPoint?.accuracyM ?? session.lastAccuracyM,
+          speedMps: previousPoint?.speedMps ?? null,
+        },
+        { latitude, longitude, accuracyM, speedMps },
       )
-    : 0;
-  const safeDistanceDeltaM = Number.isFinite(distanceDeltaM) && distanceDeltaM >= 0 && distanceDeltaM <= 10_000
-    ? distanceDeltaM
     : 0;
   const sequence = session.pointCount + 1;
 

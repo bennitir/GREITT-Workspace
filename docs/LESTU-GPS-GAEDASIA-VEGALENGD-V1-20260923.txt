@@ -1,0 +1,35 @@
+GLÖGGT – GPS gæðasía fyrir vegalengd v1
+23.09.2026
+
+Raunpróf
+- Session 4: 233 punktar, 35,305 km.
+- Session 5: 362 punktar, 35,623 km.
+- Samtals hrá vegalengd: 70,928 km.
+- Accuracy p50 um 3,8 m; p95 um 7,5–8,8 m.
+- Enginn segment-hraði yfir 140 km/klst.
+- Reported speed og implied speed pössuðu mjög vel á hraðaköflum.
+
+Read-only samanburður á kyrrstöðudrift
+- 1,0 × accuracy regla fjarlægði 3,94 m úr session 4 og 21,70 m úr session 5.
+- Samtals 25,63 m af 70,928 km, um 0,036%.
+- 1,5 × accuracy hefði fjarlægt um 77,69 m.
+- 2,0 × accuracy hefði fjarlægt um 133,92 m.
+
+Ákvörðun v1
+- Nota aðeins mjög varfærna 1,0 × accuracy reglu.
+- Segment er núllað í vegalengd eingöngu þegar BÁÐIR punktar hafa speed <= 1,5 m/s og mæld færsla er <= stærri accuracy-talan.
+- Ef speed eða accuracy vantar er segmentið ekki sléttað; fail-open gagnvart raunverulegri hreyfingu.
+- >10 km einstakt stökk er áfram hafnað.
+- Hráir GPS-punktar eru alltaf varðveittir óbreyttir.
+
+Mikilvægt
+- totalDistanceM verður frá þessari breytingu operational/accepted vegalengd, ekki einföld hrá summa.
+- Eldri lotur eru ekki endurreiknaðar sjálfkrafa í þessum patch.
+- Hrá vegalengd er alltaf hægt að endurreikna úr WorkTrackPoint.
+- Áður en sían er hert þarf sér raunpróf á göngu/hægri vinnuvél svo raunhreyfing verði ekki síuð út.
+
+Prófun
+1. npx tsc --noEmit
+2. git diff --check
+3. Næsta GPS-lota: bera saman totalDistanceM við raw recompute úr punktum.
+4. Staðfesta sérstaklega stopp/kyrrstöðu og hæga hreyfingu.
