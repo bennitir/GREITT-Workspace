@@ -997,6 +997,22 @@ entityType skal vera stutt stöðugt vélheiti.
 identifierType og identifierValue skulu aðeins
 vera fyllt ef auðkennið sést raunverulega.
 
+Notaðu þessi canonical identifierType-heiti þegar þau eiga við:
+- KENNITALA fyrir kennitölu fyrirtækis/einstaklings
+- REGISTRATION_NUMBER fyrir skráningarnúmer ökutækis
+- POLICY_NUMBER fyrir tryggingarskírteinisnúmer
+- LOAN_NUMBER fyrir raunverulegt lánsnúmer
+- METER_NUMBER fyrir mælanúmer
+- BANK_ACCOUNT_NUMBER fyrir fullt bankareikningsnúmer
+- PROPERTY_NUMBER fyrir fasteignanúmer
+- CONTRACT_NUMBER fyrir samningsnúmer
+- COLLECTION_LETTER_NUMBER fyrir innheimtubréfsnúmer
+- CARD_LAST_FOUR aðeins fyrir síðustu fjóra tölustafi greiðslukorts
+
+Ekki búa til samheiti eins og SKIRTEINISNUMER/CERTIFICATE_NUMBER eða
+MAELIR þegar canonical heiti að ofan á við. CARD_LAST_FOUR er veikt
+auðkenni og má ekki eitt og sér sanna að tvö kort séu sama kortið.
+
 Ekki álykta um persónulega eða viðkvæma
 eiginleika fólks.
 

@@ -1,0 +1,78 @@
+GLÖGGT – SAMEIGINLEGT CANONICAL IDENTITY-LAG
+23. september 2026
+
+MARKMIÐ
+-------
+Þessi breyting flytur entity-auðkenningu úr sérkóða einstakra skjala yfir í
+sameiginlegan kjarna sem bæði Fylgiskjöl og Innsýn nota.
+
+Ástæðan er að sama raunverulega einingin getur komið inn með mismunandi heiti á
+identifierType, t.d. POLICY_NUMBER, SKIRTEINISNUMER og CERTIFICATE_NUMBER.
+Áður gat það skapað fleiri en eitt InsightEntity fyrir sama skírteini.
+
+HVAÐ ER KOMIÐ
+-------------
+Ný skrá:
+  lib/insight/entity-identity.ts
+
+Hún sér um:
+- canonical identifierType aliases,
+- normalization á identifierValue,
+- styrk auðkenna: STRONG / EXACT / WEAK / NONE,
+- varfærna endurnýtingu núverandi InsightEntity,
+- forgang staðfests entity þegar semantic duplicates eru þegar til,
+- canonical stofnun nýrra entity.
+
+Dæmi um canonical aliases:
+- trygging: POLICY_NUMBER <- SKIRTEINISNUMER / CERTIFICATE_NUMBER
+- ökutæki: REGISTRATION_NUMBER <- FASTANUMER / PLATE_NUMBER
+- bankareikningur: BANK_ACCOUNT_NUMBER <- ACCOUNT_NUMBER
+- mælir: METER_NUMBER <- MAELIR
+- innheimtubréf: COLLECTION_LETTER_NUMBER <- COLLECTION_NOTICE_NUMBER /
+  INNHEIMTUBREF_NUMER
+
+Veik auðkenni, t.d. síðustu fjórir tölustafir greiðslukorts, eru EKKI notuð til
+að sameina entity sjálfkrafa nema bæði auðkenni og nákvæmt heiti passa.
+
+HVAR ER KJARNINN NOTAÐUR
+------------------------
+- lib/insight/worker.ts
+- lib/insight/receipt-derived.ts
+- app/actions/receiptActions.ts fyrir tryggingar og lán
+
+Innsýn document-analyzer fær jafnframt fyrirmæli um canonical identifierType-heiti
+svo ný AI-greining stofni síður ný samheiti.
+
+ÖRYGGI / FAIL-CLOSED
+--------------------
+- Engin gömul entity eru sameinuð eða eytt í þessari breytingu.
+- Staðfest entity fær forgang yfir óstaðfest semantic duplicate.
+- Sterk auðkenni mega matcha yfir canonical aliases.
+- Óþekkt identifierType er aðeins matchað við sama type + normalized value.
+- Veik auðkenni eru ekki notuð sem sjálfstæð sönnun um identity.
+- Ef sterkt auðkenni er til en ekkert match finnst er ekki fallback-að á nafn eitt
+  og sér; ný eining er stofnuð frekar en að sameina mögulega ólíka hluti.
+
+AF HVERJU ENGIN SCHEMA-MIGRATION NÚNA
+-------------------------------------
+Gögnin innihalda þegar semantic duplicates (21 hópur fannst í read-only greiningu).
+Því væri ótímabært að setja UNIQUE identityKey beint á gagnagrunninn áður en eldri
+gögn hafa verið sameinuð með rekjanlegu migration-ferli.
+
+Fyrst stöðvum við nýjar semantic duplicates með sameiginlegum resolver. Síðan má:
+1. byggja identityKey fyrir STRONG canonical identity,
+2. sameina eldri duplicates með sér migration,
+3. setja DB-level UNIQUE vörn eftir að gögnin eru hrein.
+
+NÆSTA ÁFANGI – RECONCILIATION / AI ROUTING
+-----------------------------------------
+Þessi pakki breytir ekki enn öllum analyzeReceiptWithAI() endurköllum eftir
+staðfestingu notanda. Næsti áfangi á að færa þau yfir í sameiginlegt flæði:
+
+  staðfesting / ný þekking
+      -> deterministic reconciliation
+      -> næg gögn? klára án AI
+      -> annars AI fallback
+
+Þetta á að vera sameiginlegt fyrir Fylgiskjöl og Innsýn og byggja á canonical
+entity-kjarnanum hér, ekki á birgja-hardkóðuðum reglum.

@@ -41,6 +41,10 @@ import { isCompanyModuleEnabled } from "@/lib/core/company-modules";
 import { supabaseAdmin } from "@/lib/supabase";
 import { revalidatePath } from "next/cache";
 import { receiptInventoryText } from "@/lib/i18n/receipt-inventory";
+import {
+  getCanonicalIdentifierAliases,
+  resolveCanonicalInsightEntity,
+} from "@/lib/insight/entity-identity";
 
 async function isInventoryModuleEnabled(companyId: number) {
   const moduleSettings = await getCompanyModuleSettings(companyId);
@@ -1091,7 +1095,10 @@ async function analyzeReceiptWithAIInternal(
   const confirmedInsurancePolicies = await prisma.insightEntity.findMany({
     where: {
       companyId: receipt.companyId, entityType: "INSURANCE_POLICY",
-      identifierType: "POLICY_NUMBER", status: "ACTIVE", relationshipStatus: "CONFIRMED",
+      identifierType: {
+        in: getCanonicalIdentifierAliases("INSURANCE_POLICY", "POLICY_NUMBER"),
+      },
+      status: "ACTIVE", relationshipStatus: "CONFIRMED",
       accountLinks: { some: { role: "EXPENSE", status: "CONFIRMED", account: { companyId: receipt.companyId, isActive: true } } },
     },
     select: {
@@ -2778,29 +2785,63 @@ if (hasInvalidDate) {
           const amount = typeof insuranceInfo?.amount === "number" && Number.isFinite(insuranceInfo.amount) && insuranceInfo.amount > 0
             ? insuranceInfo.amount : null;
 
-          let policyEntity = await tx.insightEntity.findFirst({
-            where: { companyId: receipt.companyId, entityType: "INSURANCE_POLICY", identifierType: "POLICY_NUMBER", identifierValue: policyNumber, status: "ACTIVE" },
-            include: { accountLinks: { where: { role: "EXPENSE", status: "CONFIRMED" }, include: { account: true } } },
+          const resolvedPolicy = await resolveCanonicalInsightEntity(tx, {
+            companyId: receipt.companyId,
+            entityType: "INSURANCE_POLICY",
+            name: insuranceType
+              ? `${insuranceType} – skírteini ${policyNumber}`
+              : `Trygging – skírteini ${policyNumber}`,
+            identifierType: "POLICY_NUMBER",
+            identifierValue: policyNumber,
+            relationshipStatus: "UNCONFIRMED",
+            metadata: {
+              insurerName: insurerName || null,
+              insuranceType: insuranceType || null,
+              insuredItem: insuredItem || null,
+              lastSeenAmount: amount,
+              firstSeenReceiptId: receiptId,
+              source: analysisSource,
+            },
           });
-          if (!policyEntity) {
-            policyEntity = await tx.insightEntity.create({
-              data: {
-                companyId: receipt.companyId, entityType: "INSURANCE_POLICY",
-                name: insuranceType ? `${insuranceType} – skírteini ${policyNumber}` : `Trygging – skírteini ${policyNumber}`,
-                identifierType: "POLICY_NUMBER", identifierValue: policyNumber, relationshipStatus: "UNCONFIRMED",
-                metadata: { insurerName: insurerName || null, insuranceType: insuranceType || null, insuredItem: insuredItem || null, lastSeenAmount: amount, firstSeenReceiptId: receiptId, source: "AI" },
+
+          let policyEntity = await tx.insightEntity.findUniqueOrThrow({
+            where: { id: resolvedPolicy.entity.id },
+            include: {
+              accountLinks: {
+                where: { role: "EXPENSE", status: "CONFIRMED" },
+                include: { account: true },
               },
-              include: { accountLinks: { where: { role: "EXPENSE", status: "CONFIRMED" }, include: { account: true } } },
-            });
-          } else {
-            const oldMetadata = policyEntity.metadata && typeof policyEntity.metadata === "object" && !Array.isArray(policyEntity.metadata) ? policyEntity.metadata : {};
+            },
+          });
+
+          if (!resolvedPolicy.created) {
+            const oldMetadata =
+              policyEntity.metadata &&
+              typeof policyEntity.metadata === "object" &&
+              !Array.isArray(policyEntity.metadata)
+                ? policyEntity.metadata
+                : {};
             policyEntity = await tx.insightEntity.update({
               where: { id: policyEntity.id },
               data: {
-                name: insuranceType ? `${insuranceType} – skírteini ${policyNumber}` : policyEntity.name,
-                metadata: { ...oldMetadata, insurerName: insurerName || null, insuranceType: insuranceType || null, insuredItem: insuredItem || null, lastSeenAmount: amount, lastSeenReceiptId: receiptId },
+                ...(policyEntity.relationshipStatus === "CONFIRMED" || !insuranceType
+                  ? {}
+                  : { name: `${insuranceType} – skírteini ${policyNumber}` }),
+                metadata: {
+                  ...oldMetadata,
+                  insurerName: insurerName || null,
+                  insuranceType: insuranceType || null,
+                  insuredItem: insuredItem || null,
+                  lastSeenAmount: amount,
+                  lastSeenReceiptId: receiptId,
+                },
               },
-              include: { accountLinks: { where: { role: "EXPENSE", status: "CONFIRMED" }, include: { account: true } } },
+              include: {
+                accountLinks: {
+                  where: { role: "EXPENSE", status: "CONFIRMED" },
+                  include: { account: true },
+                },
+              },
             });
           }
           await tx.documentEntityLink.upsert({
@@ -3013,14 +3054,24 @@ if (hasInvalidDate) {
         let confirmedLoanPrincipalAccountNumber: string | null = null;
 
         if (loanNumber) {
-          let loanEntity = await tx.insightEntity.findFirst({
-            where: {
-              companyId: receipt.companyId,
-              entityType: "LOAN",
-              identifierType: "LOAN_NUMBER",
-              identifierValue: loanNumber,
-              status: "ACTIVE",
+          const resolvedLoan = await resolveCanonicalInsightEntity(tx, {
+            companyId: receipt.companyId,
+            entityType: "LOAN",
+            name: lenderName
+              ? `${lenderName} – lán ${loanNumber}`
+              : `Lán ${loanNumber}`,
+            identifierType: "LOAN_NUMBER",
+            identifierValue: loanNumber,
+            relationshipStatus: "UNCONFIRMED",
+            metadata: {
+              lenderName: lenderName || null,
+              firstSeenReceiptId: receiptId,
+              source: analysisSource,
             },
+          });
+
+          const loanEntity = await tx.insightEntity.findUniqueOrThrow({
+            where: { id: resolvedLoan.entity.id },
             include: {
               accountLinks: {
                 where: {
@@ -3033,37 +3084,6 @@ if (hasInvalidDate) {
               },
             },
           });
-
-          if (!loanEntity) {
-            loanEntity = await tx.insightEntity.create({
-              data: {
-                companyId: receipt.companyId,
-                entityType: "LOAN",
-                name: lenderName
-                  ? `${lenderName} – lán ${loanNumber}`
-                  : `Lán ${loanNumber}`,
-                identifierType: "LOAN_NUMBER",
-                identifierValue: loanNumber,
-                relationshipStatus: "UNCONFIRMED",
-                metadata: {
-                  lenderName: lenderName || null,
-                  firstSeenReceiptId: receiptId,
-                  source: "AI",
-                },
-              },
-              include: {
-                accountLinks: {
-                  where: {
-                    role: "LIABILITY_PRINCIPAL",
-                    status: "CONFIRMED",
-                  },
-                  include: {
-                    account: true,
-                  },
-                },
-              },
-            });
-          }
 
           await tx.documentEntityLink.upsert({
             where: {
@@ -3342,33 +3362,20 @@ export async function confirmMissingLoanDetails(
   const confirmedAt = new Date();
 
   await prisma.$transaction(async (tx) => {
-    let loanEntity = await tx.insightEntity.findFirst({
-      where: {
-        companyId: document.receipt.companyId,
-        entityType: "LOAN",
-        identifierType: "LOAN_NUMBER",
-        identifierValue: cleanLoanNumber,
-        status: "ACTIVE",
+    const resolvedLoan = await resolveCanonicalInsightEntity(tx, {
+      companyId: document.receipt.companyId,
+      entityType: "LOAN",
+      name: `${lenderName} – lán ${cleanLoanNumber}`,
+      identifierType: "LOAN_NUMBER",
+      identifierValue: cleanLoanNumber,
+      relationshipStatus: "CONFIRMED",
+      metadata: {
+        lenderName,
+        firstSeenReceiptId: document.receiptId,
+        source: "USER",
       },
     });
-
-    if (!loanEntity) {
-      loanEntity = await tx.insightEntity.create({
-        data: {
-          companyId: document.receipt.companyId,
-          entityType: "LOAN",
-          name: `${lenderName} – lán ${cleanLoanNumber}`,
-          identifierType: "LOAN_NUMBER",
-          identifierValue: cleanLoanNumber,
-          relationshipStatus: "CONFIRMED",
-          metadata: {
-            lenderName,
-            firstSeenReceiptId: document.receiptId,
-            source: "USER",
-          },
-        },
-      });
-    }
+    const loanEntity = resolvedLoan.entity;
 
     await tx.documentEntityLink.upsert({
       where: {

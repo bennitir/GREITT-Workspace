@@ -1,5 +1,6 @@
 import { prisma } from "@/lib/prisma";
 import { RECEIPT_PROCESSING_VERSION } from "@/lib/receipts/ingestion";
+import { resolveCanonicalInsightEntity } from "@/lib/insight/entity-identity";
 
 export const RECEIPT_DERIVED_INSIGHT_SOURCE =
   `RECEIPT_EXTRACTION:${RECEIPT_PROCESSING_VERSION}`;
@@ -290,33 +291,20 @@ export async function persistReceiptDerivedInsight(documentId: number) {
     let merchantEntityId: number | null = null;
 
     if (merchantKennitala && document.merchantName?.trim()) {
-      let entity = await tx.insightEntity.findFirst({
-        where: {
-          companyId,
-          entityType: "ORGANIZATION",
-          identifierType: "KENNITALA",
-          identifierValue: merchantKennitala,
-          status: "ACTIVE",
+      const resolvedEntity = await resolveCanonicalInsightEntity(tx, {
+        companyId,
+        entityType: "ORGANIZATION",
+        name: document.merchantName.trim(),
+        identifierType: "KENNITALA",
+        identifierValue: merchantKennitala,
+        relationshipStatus: "UNCONFIRMED",
+        metadata: {
+          source,
+          firstSeenReceiptId: receiptId,
+          firstSeenDocumentId: documentId,
         },
       });
-
-      if (!entity) {
-        entity = await tx.insightEntity.create({
-          data: {
-            companyId,
-            entityType: "ORGANIZATION",
-            name: document.merchantName.trim(),
-            identifierType: "KENNITALA",
-            identifierValue: merchantKennitala,
-            relationshipStatus: "UNCONFIRMED",
-            metadata: {
-              source,
-              firstSeenReceiptId: receiptId,
-              firstSeenDocumentId: documentId,
-            },
-          },
-        });
-      }
+      const entity = resolvedEntity.entity;
 
       merchantEntityId = entity.id;
 

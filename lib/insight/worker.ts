@@ -1,5 +1,6 @@
 import { prisma } from "@/lib/prisma";
 import { recordAiUsage } from "@/lib/ai/usage";
+import { resolveCanonicalInsightEntity } from "@/lib/insight/entity-identity";
 
 import {
   analyzeDocumentForInsight,
@@ -62,50 +63,6 @@ function buildSemanticSource(
   return `AI_INNSYN:${processingVersion}`;
 }
 
-/*
- * Samræmum sterk auðkenni áður en entity er leitað/stofnað.
- *
- * AI getur lýst íslensku fastanúmeri ökutækis sem FASTANUMER,
- * en í InsightEntity notum við REGISTRATION_NUMBER sem canonical
- * identifierType. Þannig verður t.d. JUH30 alltaf sama ökutækið
- * óháð orðalagi í einstöku skjali.
- */
-function normalizeInsightEntityIdentifier(input: {
-  entityType: string;
-  identifierType: string | null;
-  identifierValue: string | null;
-}) {
-  let identifierType =
-    input.identifierType?.trim() || null;
-
-  let identifierValue =
-    input.identifierValue?.trim() || null;
-
-  if (
-    input.entityType === "VEHICLE" &&
-    identifierType === "FASTANUMER"
-  ) {
-    identifierType =
-      "REGISTRATION_NUMBER";
-  }
-
-  if (
-    input.entityType === "VEHICLE" &&
-    identifierType === "REGISTRATION_NUMBER" &&
-    identifierValue
-  ) {
-    identifierValue =
-      identifierValue
-        .toUpperCase()
-        .replace(/[^A-Z0-9]/g, "");
-  }
-
-  return {
-    identifierType,
-    identifierValue,
-  };
-}
-
 async function findOrCreateInsightEntity(
   tx: Parameters<
     Parameters<
@@ -133,104 +90,22 @@ async function findOrCreateInsightEntity(
     entity,
   } = input;
 
-  const normalizedIdentifier =
-    normalizeInsightEntityIdentifier({
-      entityType:
-        entity.entityType,
-      identifierType:
-        entity.identifierType,
-      identifierValue:
-        entity.identifierValue,
-    });
-
-  /*
-   * Sterkt auðkenni hefur forgang.
-   *
-   * Dæmi:
-   * LOAN + LOAN_NUMBER + 104907
-   * VEHICLE + REGISTRATION_NUMBER + ABC12
-   */
-  if (
-    normalizedIdentifier.identifierType &&
-    normalizedIdentifier.identifierValue
-  ) {
-    const existing =
-      await tx.insightEntity.findFirst({
-        where: {
-          companyId,
-          entityType:
-            entity.entityType,
-          identifierType:
-            normalizedIdentifier.identifierType,
-          identifierValue:
-            normalizedIdentifier.identifierValue,
-          status: "ACTIVE",
-        },
-      });
-
-    if (existing) {
-      return existing;
-    }
-  }
-
-  /*
-   * Ef sterkt auðkenni vantar reynum við
-   * mjög varfærna nákvæma samsvörun á
-   * entityType + name.
-   *
-   * Við reynum ekki fuzzy matching hér.
-   */
-  const existingByName =
-    await tx.insightEntity.findFirst({
-      where: {
-        companyId,
-        entityType:
-          entity.entityType,
-        name: entity.name,
-        status: "ACTIVE",
-      },
-    });
-
-  if (existingByName) {
-    return existingByName;
-  }
-
-  /*
-   * AI má greina einingu en má ekki staðfesta
-   * tengsl hennar við fyrirtækið/notandann.
-   */
-  return tx.insightEntity.create({
-    data: {
-      companyId,
-      entityType:
-        entity.entityType,
-      name: entity.name,
-      status: "ACTIVE",
-
-      identifierType:
-        normalizedIdentifier.identifierType,
-
-      identifierValue:
-        normalizedIdentifier.identifierValue,
-
-      relationshipStatus:
-        "UNCONFIRMED",
-
-      metadata: {
-        source:
-          buildSemanticSource(
-            processingVersion,
-          ),
-
-        processingVersion,
-        firstSeenProcessingItemId:
-          processingItemId,
-
-        aiConfidence:
-          entity.confidence,
-      },
+  const resolved = await resolveCanonicalInsightEntity(tx, {
+    companyId,
+    entityType: entity.entityType,
+    name: entity.name,
+    identifierType: entity.identifierType,
+    identifierValue: entity.identifierValue,
+    relationshipStatus: "UNCONFIRMED",
+    metadata: {
+      source: buildSemanticSource(processingVersion),
+      processingVersion,
+      firstSeenProcessingItemId: processingItemId,
+      aiConfidence: entity.confidence,
     },
   });
+
+  return resolved.entity;
 }
 
 async function persistInsightAnalysis(
