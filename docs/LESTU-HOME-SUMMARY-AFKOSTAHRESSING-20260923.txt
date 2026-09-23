@@ -1,0 +1,27 @@
+GLÖGGT – Home summary / afkastahressing
+Dagsetning: 2026-09-23
+
+Markmið
+- Nota nýja request-scoped application context á Home.
+- Hætta að sækja öll Receipt + AiDetectedDocument gögn bara til að reikna þrjár Home-tölur.
+- Létta hlutlausa fjöl-fyrirtækjasýn bókara/stjórnanda án þess að breyta merkingu talnanna.
+
+Breytingar
+1. app/page.tsx notar getRequestAuthContext(), getRequestUserInterfaceSettings()
+   og getRequestCompanyModuleSettings() í stað endurtekinna session/cookie/settings lestra.
+2. Virkt fyrirtæki sækir aðeins id, name og nextVoucherNumber á Home.
+3. Nýr lib/home/document-summary.ts reiknar uploaded/pending/booked í Postgres.
+   Hann varðveitir eldri fallback-reglu fyrir Receipt sem hefur engin AiDetectedDocument.
+4. Hlutlaus fjöl-fyrirtækjasýn sækir aðeins company id/name, document summary per company
+   og grouped task counts. Hún flytur ekki lengur allt Receipt/document safnið í Node bara til talningar.
+
+Engar schema/migration breytingar.
+Engin GPS breyting.
+Engin breyting á bókunar- eða fylgiskjalsgögnum.
+
+Próf eftir afþjöppun:
+  npx tsc --noEmit
+
+Síðan sjónrænt smoke-test:
+- Home með virkt fyrirtæki: Hlaðið inn / Í bið / Bókað bera saman við fyrri stöðu.
+- Home án virks fyrirtækis: fyrirtæki með óunnin fylgiskjöl/verkefni birtast áfram.

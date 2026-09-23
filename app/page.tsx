@@ -1,9 +1,7 @@
 import Greeting from "@/components/Greeting";
-import { getCompanyAccess, getEffectiveUser } from "@/lib/core/access-control";
-import { cookies } from "next/headers";
+import { getCompanyAccess } from "@/lib/core/access-control";
 import { prisma } from "@/lib/prisma";
 import StatCard from "@/components/StatCard";
-import { getCompanyModuleSettings } from "@/lib/core/company-module-repository";
 import { getEnabledCompanyModules } from "@/lib/core/company-modules";
 import Link from "next/link";
 import { uiOptions, uiText } from "@/lib/i18n/ui";
@@ -11,26 +9,24 @@ import { homeText } from "@/lib/i18n/home";
 import { setActiveCompany } from "@/app/actions/companyActions";
 import { ensureCompanyStatutoryTasks } from "@/lib/core/statutory-tasks";
 import { markCompanyMessageRead } from "@/app/actions/messageActions";
+import {
+  getRequestAuthContext,
+  getRequestCompanyModuleSettings,
+  getRequestUserInterfaceSettings,
+} from "@/lib/core/request-context";
+import {
+  EMPTY_HOME_DOCUMENT_SUMMARY,
+  getHomeDocumentSummaries,
+} from "@/lib/home/document-summary";
 
 export default async function Home() {
-  const cookieStore = await cookies();
-  const sessionToken = cookieStore.get("sessionToken")?.value;
+  const requestContext = await getRequestAuthContext();
+  const { sessionUser, effectiveUser, activeCompanyId } = requestContext;
 
-const session = sessionToken
-  ? await prisma.session.findUnique({
-      where: {
-        token: sessionToken,
-      },
-      include: {
-        user: true,
-      },
-    })
-  : null;
-
-  const effectiveUser = await getEffectiveUser();
-
-const loggedInUserName = effectiveUser?.name ?? "notandi";
-  const userSettings = effectiveUser ? await prisma.userSettings.findUnique({ where: { userId: effectiveUser.id }, select: { interfaceLanguage: true } }) : null;
+  const loggedInUserName = effectiveUser?.name ?? "notandi";
+  const userSettings = effectiveUser
+    ? await getRequestUserInterfaceSettings(effectiveUser.id)
+    : null;
   const language = userSettings?.interfaceLanguage ?? "is";
   const t = uiText(language);
   const o = uiOptions(language);
@@ -39,53 +35,35 @@ const loggedInUserName = effectiveUser?.name ?? "notandi";
   const now = new Date();
   const todayStart = new Date(now); todayStart.setHours(0,0,0,0);
   const weekStart = new Date(todayStart); weekStart.setDate(weekStart.getDate()-((weekStart.getDay()+6)%7));
-  const myServiceTimes = session?.user.id ? await prisma.serviceTimeEntry.findMany({
-    where: { userId: session.user.id, startedAt: { gte: weekStart } },
+  const myServiceTimes = sessionUser?.id ? await prisma.serviceTimeEntry.findMany({
+    where: { userId: sessionUser.id, startedAt: { gte: weekStart } },
     select: { durationSeconds:true, startedAt:true, company:{ select:{ name:true } }, module:true, category:true },
   }) : [];
   const serviceToday = myServiceTimes.filter(e=>e.startedAt>=todayStart).reduce((s,e)=>s+e.durationSeconds,0);
   const serviceWeek = myServiceTimes.reduce((s,e)=>s+e.durationSeconds,0);
   const latestService = [...myServiceTimes].sort((a,b)=>b.startedAt.getTime()-a.startedAt.getTime())[0];
   const fmtService=(s:number)=>{ const m=Math.floor(s/60), h=Math.floor(m/60), min=m%60; const units = language === "en" ? ["h","min"] : language === "pl" ? ["godz.","min"] : language === "sr" ? ["ч","мин"] : ["klst.","mín."]; return h ? `${h} ${units[0]} ${min ? `${min} ${units[1]}` : ""}`.trim() : `${m} ${units[1]}`; };
-  const activeCompanyId =
-    cookieStore.get("activeCompanyId")?.value;
+  const activeCompanyAccess = activeCompanyId
+    ? await getCompanyAccess(activeCompanyId)
+    : null;
 
-    const activeCompanyAccess =
-  session?.user.role === "ADMIN"
-    ? true
-    : activeCompanyId
-      ? await prisma.userCompany.findUnique({
-          where: {
-            userId_companyId: {
-              userId: session?.user.id ?? 0,
-              companyId: Number(activeCompanyId),
-            },
-          },
-        })
-      : null;
-
-  const company = activeCompanyId && activeCompanyAccess
+  const company = activeCompanyId && activeCompanyAccess?.allowed
     ? await prisma.company.findUnique({
-        where: {
-          id: Number(activeCompanyId),
-        },
-        include: {
-          receipts: {
-            include: {
-              aiDetectedDocuments: true,
-            },
-          },
+        where: { id: activeCompanyId },
+        select: {
+          id: true,
+          name: true,
+          nextVoucherNumber: true,
         },
       })
     : null;
 
-    const moduleSettings = company
-  ? await getCompanyModuleSettings(company.id)
-  : {};
+  const moduleSettings = company
+    ? await getRequestCompanyModuleSettings(company.id)
+    : {};
 
-const enabledModules = getEnabledCompanyModules(moduleSettings);
-
-  const companyAccess = company ? await getCompanyAccess(company.id) : null;
+  const enabledModules = getEnabledCompanyModules(moduleSettings);
+  const companyAccess = company ? activeCompanyAccess : null;
 
   if (company) {
     await ensureCompanyStatutoryTasks(company.id, now);
@@ -152,35 +130,42 @@ const enabledModules = getEnabledCompanyModules(moduleSettings);
         select: {
           id: true,
           name: true,
-          receipts: {
-            select: {
-              status: true,
-              aiDetectedDocuments: {
-                select: { approvedAt: true },
-              },
-            },
-          },
-          tasks: {
-            where: {
-              status: "OPEN",
-              OR: [{ assigneeUserId: null }, { assigneeUserId: effectiveUser.id }],
-            },
-            select: { id: true, dueAt: true },
-          },
         },
         orderBy: { name: "asc" },
       })
     : [];
 
+  const allCompanyIds = allCompanyWork.map((workCompany) => workCompany.id);
+  const allCompanyDocumentSummaries = allCompanyIds.length > 0
+    ? await getHomeDocumentSummaries(allCompanyIds)
+    : new Map<number, typeof EMPTY_HOME_DOCUMENT_SUMMARY>();
+
+  const allCompanyTaskRows = allCompanyIds.length > 0 && effectiveUser
+    ? await prisma.companyTask.groupBy({
+        by: ["companyId"],
+        where: {
+          companyId: { in: allCompanyIds },
+          status: "OPEN",
+          OR: [{ assigneeUserId: null }, { assigneeUserId: effectiveUser.id }],
+        },
+        _count: { _all: true },
+      })
+    : [];
+
+  const allCompanyTaskCountByCompanyId = new Map(
+    allCompanyTaskRows.map((row) => [row.companyId, row._count._all]),
+  );
+
   const allCompanyDocumentTasks = allCompanyWork
     .map((workCompany) => {
-      const pending = workCompany.receipts.reduce((total, receipt) => {
-        if (receipt.aiDetectedDocuments.length === 0) {
-          return total + (receipt.status === "APPROVED" ? 0 : 1);
-        }
-        return total + receipt.aiDetectedDocuments.filter((document) => document.approvedAt === null).length;
-      }, 0);
-      return { id: workCompany.id, name: workCompany.name, pending, taskCount: workCompany.tasks.length };
+      const summary = allCompanyDocumentSummaries.get(workCompany.id)
+        ?? EMPTY_HOME_DOCUMENT_SUMMARY;
+      return {
+        id: workCompany.id,
+        name: workCompany.name,
+        pending: summary.pending,
+        taskCount: allCompanyTaskCountByCompanyId.get(workCompany.id) ?? 0,
+      };
     })
     .filter((item) => item.pending > 0 || item.taskCount > 0);
 
@@ -190,47 +175,16 @@ const enabledModules = getEnabledCompanyModules(moduleSettings);
   const activeDueTodayTasks = activeCompanyTasks.filter((task) => task.dueAt && task.dueAt >= todayStart && task.dueAt < new Date(todayStart.getTime() + 86400000)).length;
   const activeDueSoonTasks = activeCompanyTasks.filter((task) => task.dueAt && task.dueAt >= new Date(todayStart.getTime() + 86400000) && task.dueAt < new Date(todayStart.getTime() + 4 * 86400000)).length;
 
-  const uploadedDocuments =
-  company?.receipts.reduce((total, receipt) => {
-    return (
-      total +
-      (receipt.aiDetectedDocuments.length > 0
-        ? receipt.aiDetectedDocuments.length
-        : 1)
-    );
-  }, 0) ?? 0;
+  const activeCompanyDocumentSummaries = company
+    ? await getHomeDocumentSummaries([company.id])
+    : new Map<number, typeof EMPTY_HOME_DOCUMENT_SUMMARY>();
+  const activeDocumentSummary = company
+    ? activeCompanyDocumentSummaries.get(company.id) ?? EMPTY_HOME_DOCUMENT_SUMMARY
+    : EMPTY_HOME_DOCUMENT_SUMMARY;
 
-const pendingDocuments =
-  company?.receipts.reduce((total, receipt) => {
-    if (receipt.aiDetectedDocuments.length === 0) {
-      return total + (receipt.status === "APPROVED" ? 0 : 1);
-    }
-
-    return (
-      total +
-      receipt.aiDetectedDocuments.filter(
-        (document) => document.approvedAt === null
-      ).length
-    );
-  }, 0) ?? 0;
-
-  const approvedVouchers =
-  company?.receipts.reduce((total, receipt) => {
-    if (receipt.aiDetectedDocuments.length === 0) {
-      return total + (receipt.voucherNumber !== null ? 1 : 0);
-    }
-
-    return (
-      total +
-      receipt.aiDetectedDocuments.filter(
-        (document) =>
-          document.approvedAt !== null &&
-          document.voucherNumber !== null
-      ).length
-    );
-  }, 0) ?? 0;
-
-  
+  const uploadedDocuments = activeDocumentSummary.uploaded;
+  const pendingDocuments = activeDocumentSummary.pending;
+  const approvedVouchers = activeDocumentSummary.booked;
 
   const mayWorkWithDocuments = Boolean(
     companyAccess?.canPrepareBookkeeping ||
@@ -348,7 +302,7 @@ const pendingDocuments =
             </section>
           )}
 
-          {session?.user && (
+          {sessionUser && (
             <Link href="/vinnustundir#vinnusaga-bokara" className="mt-8 block rounded-2xl bg-white p-6 shadow-sm transition hover:shadow-md">
               <div className="flex items-start justify-between gap-4">
                 <div><p className="text-sm font-semibold uppercase tracking-wide text-slate-500">{t.serviceTime}</p><h3 className="mt-1 text-xl font-bold text-slate-900">{t.myHistory}</h3></div>
