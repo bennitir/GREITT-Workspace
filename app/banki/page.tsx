@@ -5,6 +5,7 @@ import { bankAnalysisLanguage } from "@/app/banki/_lib/i18n/analysis-text";
 import { annualAnalysisText } from "@/app/banki/_lib/i18n/annual-analysis-text";
 import { annualStatementText } from "@/app/banki/_lib/i18n/annual-statement-text";
 import { bankText } from "@/lib/i18n/bank";
+import { paymentCardText } from "@/lib/i18n/payment-card";
 
 export default async function BankiPage() {
   const cookieStore = await cookies();
@@ -13,6 +14,7 @@ export default async function BankiPage() {
   const userSettings = session ? await prisma.userSettings.findUnique({ where: { userId: session.userId }, select: { interfaceLanguage: true } }) : null;
   const language = bankAnalysisLanguage(userSettings?.interfaceLanguage);
   const t = bankText(language);
+  const cardT = paymentCardText(language);
 
   const activeCompanyId = cookieStore.get("activeCompanyId")?.value;
   if (!activeCompanyId) {
@@ -47,15 +49,26 @@ export default async function BankiPage() {
     );
   }
 
-  const bankAccounts = await prisma.bankAccount.findMany({
-    where: {
-      companyId,
-      isActive: true,
-    },
-    orderBy: {
-      id: "asc",
-    },
-  });
+  const [bankAccounts, paymentCards] = await Promise.all([
+    prisma.bankAccount.findMany({
+      where: {
+        companyId,
+        isActive: true,
+      },
+      orderBy: {
+        id: "asc",
+      },
+    }),
+    prisma.paymentCard.findMany({
+      where: {
+        companyId,
+        isActive: true,
+      },
+      orderBy: {
+        id: "asc",
+      },
+    }),
+  ]);
 
   return (
     <main className="p-8">
@@ -121,6 +134,44 @@ export default async function BankiPage() {
     {account.iban ?? t.notRegistered}
   </p>
 </Link>
+            ))
+          )}
+        </div>
+      </div>
+
+      <div className="mt-6 rounded-lg border p-6">
+        <div className="flex flex-wrap items-start justify-between gap-4">
+          <div>
+            <h2 className="text-xl font-semibold">💳 {cardT.sectionTitle}</h2>
+            <p className="mt-2 max-w-3xl text-gray-600">{cardT.sectionHelp}</p>
+          </div>
+
+          <Link
+            href="/banki/kort/ny"
+            className="inline-block rounded-lg bg-blue-600 px-4 py-2 font-medium text-white"
+          >
+            {cardT.addCard}
+          </Link>
+        </div>
+
+        <div className="mt-6 space-y-4">
+          {paymentCards.length === 0 ? (
+            <div className="rounded-lg border bg-gray-50 p-4">
+              <p>{cardT.noCards}</p>
+            </div>
+          ) : (
+            paymentCards.map((card) => (
+              <Link
+                key={card.id}
+                href={`/banki/kort/${card.id}`}
+                className="block rounded-lg border bg-gray-50 p-4 hover:bg-gray-100"
+              >
+                <p className="text-lg font-semibold">{card.name}</p>
+                <p className="mt-2">
+                  {[card.issuerName, card.network].filter(Boolean).join(" · ") || cardT.card}
+                  {card.lastFour ? ` · •••• ${card.lastFour}` : ""}
+                </p>
+              </Link>
             ))
           )}
         </div>

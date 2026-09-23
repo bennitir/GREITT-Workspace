@@ -1,0 +1,84 @@
+GLÖGGT – greiðslukort / kortayfirlit
+23. september 2026
+
+Markmið
+- Ekki skrá kreditkort sem BankAccount.
+- Halda BankAccount -> BankTransaction óbreyttu.
+- Bæta við sér rekstrarlagi:
+  Company -> PaymentCard -> PaymentCardTransaction.
+- Kortayfirlit fer fyrst í forskoðun og stofnar engar færslur fyrr en notandi staðfestir.
+- Hrá gögn úr Excel-röð eru varðveitt í sourceRawData / ImportRow.rawData.
+- Tvíteknivörn byggir á fingerprint innan valins korts.
+- Síðustu fjórir tölustafir korts eru VEIKT auðkenni og eru ekki notaðir til sjálfvirkrar canonical sameiningar.
+
+Raunskrár sem hönnunin var prófuð gegn
+1. gullkort 2026 (1).xlsx
+   - vinnublað: Yfirlit kreditkortafærslna
+   - header í röð 4
+   - 101 gagnaraðir
+   - tímabil í skránni: 202511 og 202512
+   - dagsetningar u.þ.b. 27.11.2025–26.12.2025
+   - 0 raðir vantaði Dagsetningu / Upphæð(ISK) / Söluaðila eða skýringu
+
+2. platinum kort 2026 (1).xlsx
+   - vinnublað: Yfirlit kreditkortafærslna
+   - header í röð 4
+   - 371 gagnaraðir
+   - tímabil í skránni: 202606, 202607, 202608 og 202609
+   - dagsetningar u.þ.b. 04.06.2026–20.09.2026
+   - 0 raðir vantaði Dagsetningu / Upphæð(ISK) / Söluaðila eða skýringu
+
+Dálkar sem adapterinn les
+- Dagsetning
+- Söluaðili eða skýring
+- Söluaðilaflokkun
+- Erlend upphæð
+- Gjaldmiðill
+- Gengi
+- Upphæð(ISK)
+- Skýring
+- Korta tímabil
+
+Mikilvægt um merkingu
+- Neikvæð Upphæð(ISK) er útstreymi/kortakaup.
+- Jákvæð Upphæð(ISK) getur verið Innborgun eða bakfærsla/endurgreiðsla.
+- Importerinn á EKKI að túlka allar jákvæðar færslur sem bankagreiðslu. Hann varðveitir texta og gögn; seinna reconciliation-lag getur greint uppgjör/bakfærslu.
+- Skrárnar innihalda ekki áreiðanlegt kortanúmer eða last-four í sjálfu gagnasettinu. Notandi velur því kortið ÁÐUR en skrá er lesin.
+
+Nýjar leiðir
+- /banki/kort/ny
+- /banki/kort/[id]
+- /banki/kort/[id]/innflutningur
+- /banki/kort/[id]/innflutningur/[batchId]
+
+Ný model
+- PaymentCard
+- PaymentCardTransaction
+- ImportBatch.paymentCardId
+
+Source type
+- PAYMENT_CARD_STATEMENT_XLSX
+
+Uppsetning / próf eftir að pakkinn er settur yfir C:\GLÖGGT
+1. npx prisma validate
+2. npx prisma generate
+3. npx prisma migrate deploy
+4. npx tsc --noEmit
+
+Production smoke-test
+1. Velja Sturla Ólafsson.
+2. Banki -> Bæta við greiðslukorti.
+3. Stofna kortin TVÖ sérstaklega. Ekki giska á hvaða last-four tilheyrir Gull/Platinum; skrá það aðeins þegar það er staðfest.
+4. Opna rétt kort -> Flytja inn kortayfirlit.
+5. Prófa fyrst að lesa XLSX og skoða forskoðun.
+6. Staðfesta að fjöldi raða passi:
+   - Gullkort-skrá: 101
+   - Platinum-skrá: 371
+7. Staðfesta innflutning.
+8. Flytja sömu skrá aftur inn og staðfesta að raðir séu merktar Þegar innflutt / DUPLICATE og engar tvíteknar PaymentCardTransaction verði til.
+
+Ekki gert í þessum áfanga
+- Engin sjálfvirk tenging PaymentCard við InsightEntity út frá last-four; það er of veikt auðkenni.
+- Engin sjálfvirk afstemming kortauppgjörs við bankafærslu enn.
+- Engin bókun verður til sjálfkrafa úr kortafærslu.
+- Engin AI-köll.
