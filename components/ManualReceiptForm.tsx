@@ -175,7 +175,7 @@ export default function ManualReceiptForm({
                 rel="noopener noreferrer"
                 className="mt-2 inline-block font-medium text-blue-700 underline"
               >
-                Opna frumskjalið í nýjum flipa
+                Opna frumskjal í GLÖGGT
               </a>
             ) : (
               <p className="mt-2 text-sm text-amber-700">

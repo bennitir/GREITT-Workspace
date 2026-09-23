@@ -1,0 +1,20 @@
+GLÖGGT – Fylgiskjöl: allar helstu frumskjalaleiðir inn í GLÖGGT
+Dagsetning: 23. september 2026
+
+Vandamál
+- Óunnið fylgiskjal var komið með innri GLÖGGT-frumskjalaskoðara.
+- Bókuð fylgiskjöl og Handvirk skráning bjuggu hins vegar enn til signed Supabase-slóð og opnuðu frumskjalið beint utan GLÖGGT.
+- Því var hegðunin ósamræmd eftir því hvaðan frumskjal var opnað.
+
+Breyting
+- Bókuð fylgiskjöl -> Opna frumskjal vísar nú á /fylgiskjol/[receiptId]/frumskjal.
+- Handvirk skráning fær sömu innri GLÖGGT-slóð fyrir fyrirliggjandi frumskjal.
+- Handvirka formið opnar skjalið áfram í nýjum flipa svo óvistað form-state glatist ekki, en flipinn er nú GLÖGGT-síða með skjalaskoðara/zoom, ekki hrá Supabase-slóð.
+- Signed URL er aðeins búin til inni í sjálfum innri frumskjalaskoðaranum til að birta skrána, ekki sem aðalleið notandans.
+
+Engin breyting á
+- bókunarreglum
+- AI-vinnslu
+- storage-gögnum
+- Prisma schema
+- GPS

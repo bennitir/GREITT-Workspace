@@ -1,0 +1,20 @@
+GLÖGGT – Fylgiskjöl / nettari myndarammi
+23. september 2026
+
+Markmið
+- Láta rammann utan um myndað frumskjal fylgja sjálfu skjalinu.
+- Forðast stóran gráan bakgrunnsflöt sem nær yfir allt vinnusvæðið.
+- Halda kvittunum og öðrum myndskjölum miðjuðum og læsilegum innan GLÖGGT.
+
+Breyting
+- Ytri fullbreiður grár myndarammi fjarlægður.
+- Rammi er nú aðeins utan um sjálfa myndina.
+- Mynd er miðjuð og hámarksbreidd er 680 px eða minna ef skjárinn er mjórri.
+- Hæð fylgir eðlilegu hlutfalli myndarinnar; ekki er breytt frumskjalinu sjálfu.
+- PDF-sýnin er ósnert.
+
+Óbreytt
+- Storage/Supabase.
+- AI-vinnsla.
+- Bókun og fylgiskjalsgögn.
+- Signed URL öryggi.

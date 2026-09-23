@@ -409,7 +409,7 @@ const getNextUnresolvedDocument = (currentDocumentId: number) =>
 
       <span className="text-slate-400">•</span>
 
-      {receipt.filePath && (
+      {originalFileUrl && (
         <>
           <span>
             <strong>Skjal:</strong>{" "}
@@ -426,16 +426,14 @@ const getNextUnresolvedDocument = (currentDocumentId: number) =>
   {formatNumber(headerAmount)} kr.
 </span>
 
-      {receipt.filePath && (
+      {originalFileUrl && (
   <>
-    <a
-      href={originalFileUrl ?? "#"}
-      target="_blank"
-      rel="noopener noreferrer"
+    <Link
+      href={`/fylgiskjol/${receipt.id}/frumskjal`}
       className="ml-2 rounded border px-3 py-2 font-medium text-blue-600 hover:bg-blue-50"
     >
       Opna frumskjal
-    </a>
+    </Link>
 
     <TraceDetails summary={`Rekjanleiki (${receiptTraceItems.length})`}>
       <div className="fixed left-1/2 top-20 z-50 max-h-[calc(100vh-7rem)] w-[min(58rem,calc(100vw-2rem))] -translate-x-1/2 overflow-y-auto rounded-xl border border-slate-300 bg-white p-6 shadow-2xl">

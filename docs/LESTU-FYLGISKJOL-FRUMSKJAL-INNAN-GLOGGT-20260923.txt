@@ -1,0 +1,29 @@
+GLÖGGT – Fylgiskjöl / frumskjal innan GLÖGGT
+23. september 2026
+
+Markmið
+- Færa Opna frumskjal aftur yfir á innri GLÖGGT-sýn í stað þess að fara beint á signed storage-slóð.
+- Halda möguleikanum Opna eitt og sér sem aukaaðgerð.
+- Gera rammann utan um frumskjalið nettari og skjalsmiðaðri.
+- Kassastrimlar/myndir fá ramma sem fylgir raunverulegri myndbreidd eins langt og skjár leyfir.
+- PDF fær miðjaðan, afmarkaðan vinnuramma í stað fullrar breiddar.
+
+Breytt
+- app/fylgiskjol/[id]/page.tsx
+- app/fylgiskjol/[id]/frumskjal/page.tsx
+
+Ekki breytt
+- AI-vinnsla
+- bókunarreglur
+- samþykktir
+- Prisma schema
+- Supabase storage-gögn
+
+Prófun
+1. Opna fylgiskjal sem er í Supabase Storage.
+2. Smella Opna frumskjal.
+3. Staðfesta að frumskjalið opnist innan GLÖGGT shell.
+4. Prófa bæði PDF og mynd/kassastrimil ef til er.
+5. Staðfesta að Til baka fari aftur á sama fylgiskjal.
+6. Staðfesta að Opna eitt og sér opni frumslóð í nýjum flipa.
+7. npx tsc --noEmit

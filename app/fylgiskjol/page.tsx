@@ -1,12 +1,15 @@
-import { getEffectiveUser } from "@/lib/core/access-control";
+import {
+  getRequestAuthContext,
+  getRequestCompanyModuleSettings,
+  getRequestUserCompany,
+  getRequestUserInterfaceSettings,
+} from "@/lib/core/request-context";
+import { isCompanyModuleEnabled } from "@/lib/core/company-modules";
 import {
   formatDate,
   formatNumber,
 } from "@/lib/locale";
 import { redirect } from "next/navigation";
-import { getCompanyModuleSettings } from "@/lib/core/company-module-repository";
-import { getEnabledCompanyModules } from "@/lib/core/company-modules";
-import { cookies } from "next/headers";
 import { prisma } from "@/lib/prisma";
 import { uiText } from "@/lib/i18n/ui";
 
@@ -14,52 +17,34 @@ import PageHeader from "@/components/ui/PageHeader";
 import EmptyState from "@/components/ui/EmptyState";
 
 export default async function FylgiskjolPage() {
-  const cookieStore = await cookies();
-
-  const activeUser = await getEffectiveUser();
+  const context = await getRequestAuthContext();
+  const activeUser = context.effectiveUser;
 
   if (!activeUser) {
     redirect("/innskraning");
   }
 
-  const userSettings = await prisma.userSettings.findUnique({
-    where: { userId: activeUser.id },
-    select: { interfaceLanguage: true },
-  });
+  const userSettings = await getRequestUserInterfaceSettings(activeUser.id);
   const t = uiText(userSettings?.interfaceLanguage);
 
-  const activeCompanyId = cookieStore.get("activeCompanyId")?.value;
-
-  const companyId = activeCompanyId
-    ? Number(activeCompanyId)
-    : null;
+  const companyId = context.activeCompanyId;
 
   if (!companyId) {
     redirect("/fyrirtaeki");
   }
 
+  // Varðveitir fyrri hegðun þessarar síðu: aðgangur miðast við effective user.
   if (activeUser.role !== "ADMIN") {
-    const access = await prisma.userCompany.findUnique({
-      where: {
-        userId_companyId: {
-          userId: activeUser.id,
-          companyId,
-        },
-      },
-    });
+    const access = await getRequestUserCompany(activeUser.id, companyId);
 
-    if (!access || !access.isActive) {
+    if (!access?.isActive) {
       redirect("/fyrirtaeki");
     }
   }
 
-  const moduleSettings = await getCompanyModuleSettings(companyId);
+  const moduleSettings = await getRequestCompanyModuleSettings(companyId);
 
-  const enabledModuleIds = getEnabledCompanyModules(moduleSettings).map(
-    (module) => module.id,
-  );
-
-  if (!enabledModuleIds.includes("bokhald")) {
+  if (!isCompanyModuleEnabled("bokhald", moduleSettings)) {
     redirect("/");
   }
 
@@ -70,12 +55,33 @@ export default async function FylgiskjolPage() {
         not: "APPROVED",
       },
     },
-
-    include: {
-      company: true,
+    select: {
+      id: true,
+      date: true,
+      aiDate: true,
+      description: true,
+      amount: true,
+      voucherNumber: true,
+      status: true,
+      company: {
+        select: {
+          name: true,
+        },
+      },
       aiDetectedDocuments: {
         orderBy: {
           id: "asc",
+        },
+        select: {
+          id: true,
+          disposedAt: true,
+          disposition: true,
+          approvedAt: true,
+          voucherNumber: true,
+          merchantName: true,
+          date: true,
+          totalAmount: true,
+          reviewedAt: true,
         },
       },
     },

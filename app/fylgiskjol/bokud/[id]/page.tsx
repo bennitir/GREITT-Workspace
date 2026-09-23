@@ -4,7 +4,6 @@ import { notFound, redirect } from "next/navigation";
 import { cookies } from "next/headers";
 
 import { prisma } from "@/lib/prisma";
-import { supabaseAdmin } from "@/lib/supabase";
 import { getCompanyModuleSettings } from "@/lib/core/company-module-repository";
 import { getEnabledCompanyModules } from "@/lib/core/company-modules";
 
@@ -227,17 +226,9 @@ export default async function BokudFylgiskjalPage({
       )
     : auditEvents.find((event) => event.action === "BOOK_RECEIPT");
 
-  let originalFileUrl = document.receipt.filePath ?? null;
-
-  if (document.receipt.storagePath) {
-    const { data } = await supabaseAdmin.storage
-      .from("fylgiskjol")
-      .createSignedUrl(document.receipt.storagePath, 60 * 10);
-
-    if (data?.signedUrl) {
-      originalFileUrl = data.signedUrl;
-    }
-  }
+  const hasOriginalFile = Boolean(
+    document.receipt.filePath || document.receipt.storagePath,
+  );
 
   const totalDebit = document.bookingEntries.reduce(
     (sum, entry) => sum + entry.debit,
@@ -278,15 +269,13 @@ export default async function BokudFylgiskjalPage({
           </div>
 
           <div className="flex gap-3">
-            {document.receipt.filePath ? (
-              <a
-                href={originalFileUrl ?? "#"}
-                target="_blank"
-                rel="noopener noreferrer"
+            {hasOriginalFile ? (
+              <Link
+                href={`/fylgiskjol/${document.receipt.id}/frumskjal`}
                 className="rounded border border-blue-600 px-4 py-2 font-medium text-blue-700 hover:bg-blue-50"
               >
                 Opna frumskjal
-              </a>
+              </Link>
             ) : (
               <span className="rounded border px-4 py-2 text-slate-500">
                 Frumskjal fylgdi ekki innflutningi

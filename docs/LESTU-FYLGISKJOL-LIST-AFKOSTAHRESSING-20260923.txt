@@ -1,0 +1,31 @@
+GLÖGGT – Fylgiskjöl listi, afkastahressing
+Dagsetning: 23. september 2026
+
+Markmið
+- Létta /fylgiskjol án þess að breyta bókunar-, AI- eða yfirferðarreglum.
+- Endurnýta request-scoped auth/fyrirtækja/tungumáls/module context sem kom inn í cee8687.
+- Hætta að sækja full Receipt, Company og AiDetectedDocument gögn þegar listinn notar aðeins lítið brot þeirra.
+
+Breyting
+1. /fylgiskjol notar getRequestAuthContext(), getRequestUserInterfaceSettings(),
+   getRequestUserCompany() og getRequestCompanyModuleSettings().
+2. Aðgangshegðun síðunnar er varðveitt: effective user er áfram notaður fyrir
+   fyrirtækisaðgang þessarar síðu.
+3. Receipt findMany notar explicit select fyrir þau svið sem listinn birtir.
+4. Company relation sækir aðeins name.
+5. AiDetectedDocument sækir aðeins svið sem þarf til að ákveða hvort skjalið
+   birtist og til að teikna listalínuna.
+
+Óbreytt
+- Engin Prisma migration.
+- Engin breyting á status-/review-/booking-reglum.
+- Engin breyting á AI-vinnslu.
+- Engin breyting á sorting eða sýnilegri hegðun listans.
+- Engin pagination sett inn í þessum áfanga; fyrst er payload/query width minnkað
+  án þess að breyta því hvaða skjöl notandinn sér.
+
+Próf eftir yfirlagningu
+1. npx tsc --noEmit
+2. Opna /fylgiskjol hjá fyrirtæki með óunnin skjöl.
+3. Staðfesta fjölda/lista, dagsetningar, fjárhæðir, stöður og Opna-tengla.
+4. Opna a.m.k. eitt venjulegt Receipt og eitt AiDetectedDocument ef bæði eru til.

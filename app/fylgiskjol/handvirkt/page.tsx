@@ -1,7 +1,6 @@
 import { redirect } from "next/navigation";
 import { cookies } from "next/headers";
 import { prisma } from "@/lib/prisma";
-import { supabaseAdmin } from "@/lib/supabase";
 import { getCompanyModuleSettings } from "@/lib/core/company-module-repository";
 import { getEnabledCompanyModules } from "@/lib/core/company-modules";
 import ManualReceiptForm from "@/components/ManualReceiptForm";
@@ -91,17 +90,10 @@ export default async function ManualReceiptPage() {
 
   const pendingReceipts = (await Promise.all(
     pendingReceiptRows.map(async (receipt) => {
-      let originalFileUrl = receipt.filePath ?? null;
-
-      if (receipt.storagePath) {
-        const { data } = await supabaseAdmin.storage
-          .from("fylgiskjol")
-          .createSignedUrl(receipt.storagePath, 60 * 10);
-
-        if (data?.signedUrl) {
-          originalFileUrl = data.signedUrl;
-        }
-      }
+      const originalFileUrl =
+        receipt.filePath || receipt.storagePath
+          ? `/fylgiskjol/${receipt.id}/frumskjal`
+          : null;
 
       const fallbackLabel = `${receipt.fileName ?? receipt.description ?? `Skjal ${receipt.id}`} · móttekið ${receipt.createdAt.toLocaleDateString("is-IS")}`;
 
