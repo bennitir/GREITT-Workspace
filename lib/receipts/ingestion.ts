@@ -2,7 +2,7 @@ import crypto from "crypto";
 
 import { extractTextFromPdfBuffer } from "@/lib/core/pdf-text";
 
-export const RECEIPT_PROCESSING_VERSION = "receipt-v2-data-first";
+export const RECEIPT_PROCESSING_VERSION = "receipt-v3-ai-gated";
 
 export type ReceiptSourceSnapshot = {
   sourceText: string | null;
@@ -68,6 +68,244 @@ function collectRegexMatches(text: string, regex: RegExp, limit: number) {
   }
 
   return values;
+}
+
+function parseIcelandicDateToIso(value: string) {
+  const match = value.trim().match(/^(\d{1,2})[./-](\d{1,2})[./-](\d{2}|\d{4})$/);
+  if (!match) return null;
+
+  const day = Number(match[1]);
+  const month = Number(match[2]);
+  const year = Number(match[3].length === 2 ? `20${match[3]}` : match[3]);
+  const parsed = new Date(Date.UTC(year, month - 1, day));
+
+  if (
+    parsed.getUTCFullYear() !== year ||
+    parsed.getUTCMonth() !== month - 1 ||
+    parsed.getUTCDate() !== day
+  ) {
+    return null;
+  }
+
+  return `${String(year).padStart(4, "0")}-${String(month).padStart(2, "0")}-${String(day).padStart(2, "0")}`;
+}
+
+function parseIcelandicAmount(value: string) {
+  const compact = value.replace(/\s+/g, "").trim();
+  if (!compact) return null;
+
+  const normalized = compact.includes(",")
+    ? compact.replace(/\./g, "").replace(",", ".")
+    : compact.replace(/\./g, "");
+  const amount = Number(normalized);
+
+  return Number.isFinite(amount) ? Math.round(amount * 100) / 100 : null;
+}
+
+function roundMoney(value: number) {
+  return Math.round(value * 100) / 100;
+}
+
+export type DeterministicReceiptAccount = {
+  number: string;
+  name: string;
+  type: string;
+  entryRole?: string | null;
+  isActive?: boolean;
+};
+
+/**
+ * Fyrsta alvöru 0-AI leið fylgiskjala.
+ *
+ * Hún er vísvitandi þröng: aðeins texta-PDF úr Konto þar sem fyrirtækið sjálft
+ * er ótvíræður seljandi, einn 24% VSK-stofn er á skjalinu og reikningslykillinn
+ * gefur nákvæmlega einn öruggan viðskiptakröfu-, tekju- og útskattsreikning.
+ * Ef eitt einasta skilyrði bregst skilar fallið null og núverandi AI-leið tekur
+ * við óbreytt. Engin ágiskun er leyfð í deterministic leiðinni.
+ */
+export function tryParseDeterministicKontoSalesInvoice(input: {
+  sourceText: string;
+  companyName?: string | null;
+  companyKennitala?: string | null;
+  companyVatRegistered?: boolean | null;
+  accounts: DeterministicReceiptAccount[];
+}) {
+  const text = input.sourceText.replace(/\r\n?/g, "\n").trim();
+
+  if (!/reikningur\s+útgefinn\s+af\s+reikningakerfi\s+konto\b/i.test(text)) {
+    return null;
+  }
+
+  if (!/^\s*REIKNINGUR\s*$/im.test(text)) return null;
+  if (/KREDITREIKNINGUR/i.test(text)) return null;
+  if (!/Gjaldmiðill\s+á\s+reikningi:\s*ISK\b/i.test(text)) return null;
+  if (input.companyVatRegistered !== true) return null;
+
+  const sellerMatch = text.match(
+    /(?:^|\n)\s*([^\n|]{2,120}?)\s*\|\s*(\d{6}[- ]?\d{4})\s*(?:\n|$)/m,
+  );
+  if (!sellerMatch) return null;
+
+  const sellerName = normalizeWhitespace(sellerMatch[1]);
+  const sellerKennitala = sellerMatch[2].replace(/\D/g, "");
+  const companyKennitala = normalizeReference(input.companyKennitala).replace(/\D/g, "");
+
+  if (!/^\d{10}$/.test(companyKennitala) || sellerKennitala !== companyKennitala) {
+    return null;
+  }
+
+  const invoiceNumberMatch = text.match(
+    /Reikn\.?\s*nr\.?\s*[:#-]?\s*([A-Z0-9][A-Z0-9./_-]{2,})/i,
+  );
+  const issueDateMatch = text.match(/ÚTGÁFUDAGUR\s*\n\s*([0-9./-]+)/i);
+  const dueDateMatch = text.match(/GJALDDAGI\s*\n\s*([0-9./-]+)/i);
+  const finalDueDateMatch = text.match(/EINDAGI\s*\n\s*([0-9./-]+)/i);
+  const payerMatch = text.match(/GREIÐANDI\s*\n\s*([^\n]+)/i);
+
+  const receiptNumber = invoiceNumberMatch?.[1]?.trim() ?? "";
+  const issueDate = issueDateMatch ? parseIcelandicDateToIso(issueDateMatch[1]) : null;
+  const dueDate = dueDateMatch ? parseIcelandicDateToIso(dueDateMatch[1]) : null;
+  const finalDueDate = finalDueDateMatch
+    ? parseIcelandicDateToIso(finalDueDateMatch[1])
+    : null;
+  const payerName = payerMatch?.[1] ? normalizeWhitespace(payerMatch[1]) : null;
+
+  if (!receiptNumber || !issueDate) return null;
+
+  const totalMatch =
+    text.match(/Heildarupphæð:\s*([0-9][0-9.\s]*(?:,[0-9]{1,2})?)\s*ISK\b/i) ??
+    text.match(/TIL\s+GREIÐSLU\s+([0-9][0-9.\s]*(?:,[0-9]{1,2})?)/i);
+  const totalAmount = totalMatch ? parseIcelandicAmount(totalMatch[1]) : null;
+  if (totalAmount === null || totalAmount <= 0) return null;
+
+  const taxRows = Array.from(
+    text.matchAll(
+      /S\(\s*(\d{1,2}(?:[,.]\d+)?)%\s*\)\s+([0-9][0-9.\s]*(?:,[0-9]{1,2})?)\s+([0-9][0-9.\s]*(?:,[0-9]{1,2})?)/gi,
+    ),
+  );
+
+  // Fyrsta útgáfa styður aðeins einn skýran 24% VSK-stofn.
+  if (taxRows.length !== 1) return null;
+
+  const vatRate = Number(taxRows[0][1].replace(",", "."));
+  const netAmount = parseIcelandicAmount(taxRows[0][2]);
+  const vatAmount = parseIcelandicAmount(taxRows[0][3]);
+
+  if (vatRate !== 24 || netAmount === null || vatAmount === null) return null;
+  if (netAmount <= 0 || vatAmount < 0) return null;
+  if (roundMoney(netAmount + vatAmount) !== roundMoney(totalAmount)) return null;
+  if (roundMoney(netAmount * (vatRate / 100)) !== roundMoney(vatAmount)) return null;
+
+  const activeAccounts = input.accounts.filter((account) => account.isActive !== false);
+  const receivableAccounts = activeAccounts.filter(
+    (account) => account.type === "ACCOUNTS_RECEIVABLE",
+  );
+  const revenueAccounts = activeAccounts.filter(
+    (account) => account.type === "REVENUE" && account.entryRole === "REVENUE",
+  );
+  const vatOutputAccounts = activeAccounts.filter(
+    (account) => account.type === "VAT_OUTPUT",
+  );
+
+  if (
+    receivableAccounts.length !== 1 ||
+    revenueAccounts.length !== 1 ||
+    vatOutputAccounts.length !== 1
+  ) {
+    return null;
+  }
+
+  const receivableAccount = receivableAccounts[0];
+  const revenueAccount = revenueAccounts[0];
+  const vatOutputAccount = vatOutputAccounts[0];
+
+  const bookingEntries = [
+    {
+      account: receivableAccount.number,
+      text: `Viðskiptakrafa vegna reiknings ${receiptNumber}${payerName ? ` – ${payerName}` : ""}`,
+      debit: totalAmount,
+      credit: 0,
+      entryRole: "GENERAL",
+    },
+    {
+      account: revenueAccount.number,
+      text: `Sölutekjur skv. reikningi ${receiptNumber}`,
+      debit: 0,
+      credit: netAmount,
+      entryRole: "GENERAL",
+    },
+    {
+      account: vatOutputAccount.number,
+      text: `${vatRate}% útskattur vegna reiknings ${receiptNumber}`,
+      debit: 0,
+      credit: vatAmount,
+      entryRole: "GENERAL",
+    },
+  ];
+
+  const totalDebit = roundMoney(
+    bookingEntries.reduce((sum, entry) => sum + entry.debit, 0),
+  );
+  const totalCredit = roundMoney(
+    bookingEntries.reduce((sum, entry) => sum + entry.credit, 0),
+  );
+  if (totalDebit !== totalCredit || totalDebit !== roundMoney(totalAmount)) {
+    return null;
+  }
+
+  const summaryParts = [
+    `Sölureikningur ${receiptNumber} frá ${sellerName}${payerName ? ` til ${payerName}` : ""}.`,
+    `Útgáfudagur ${issueDate}.`,
+    dueDate ? `Gjalddagi ${dueDate}.` : null,
+    finalDueDate ? `Eindagi ${finalDueDate}.` : null,
+    `Samtals án VSK ${netAmount} kr., ${vatRate}% VSK ${vatAmount} kr. og heild ${totalAmount} kr.`,
+  ].filter((value): value is string => Boolean(value));
+  const summary = summaryParts.join(" ");
+
+  const document = {
+    merchantName: sellerName,
+    merchantKennitala: sellerKennitala,
+    date: issueDate,
+    receiptNumber,
+    totalAmount,
+    summary,
+    documentType: "ACCOUNTING_DOCUMENT",
+    documentRole: "BOOKABLE",
+    classificationConfidence: 1,
+    environmentReviewRequired: false,
+    environmentReviewReason: null,
+    loanInfo: null,
+    insuranceInfo: null,
+    insurancePolicies: [],
+    paymentSchedule: null,
+    purchaseLines: [],
+    bookingEntries,
+    pageNumber: 1,
+  };
+
+  return {
+    analysisSource: "DETERMINISTIC_TEMPLATE" as const,
+    templateId: "KONTO_SALES_INVOICE_V1" as const,
+    result: {
+      documentCount: 1,
+      documents: [document],
+      merchantName: sellerName,
+      date: issueDate,
+      receiptNumber,
+      totalAmount,
+      confidence: 1,
+      summary,
+      suggestedDebitAccount: receivableAccount.number,
+      suggestedCreditAccount: revenueAccount.number,
+      suggestedBookingText: `Sölureikningur ${receiptNumber}`,
+      bookingEntries: bookingEntries.map((entry) => ({
+        account: entry.account,
+        text: entry.text,
+        debit: entry.debit,
+        credit: entry.credit,
+      })),
+    },
+  };
 }
 
 function buildDeterministicData(text: string) {

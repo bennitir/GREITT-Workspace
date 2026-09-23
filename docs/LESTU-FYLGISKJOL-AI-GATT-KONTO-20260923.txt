@@ -1,0 +1,70 @@
+GLÖGGT – Fylgiskjöl: fyrsta 0-AI gáttin fyrir Konto-sölureikninga
+Dagsetning: 23.09.2026
+
+MARKMIÐ
+- Færa receipt pipeline úr "gögn fyrst, AI síðan" yfir í "gögn fyrst, AI aðeins ef þarf".
+- Fyrsta vísvitandi þrönga 0-AI leiðin er fyrir texta-PDF sölureikninga úr Konto.
+- Öll önnur skjöl falla áfram örugglega í núverandi GPT-5.6 leið.
+
+BREYTTAR SKRÁR
+- app/actions/receiptActions.ts
+- lib/receipts/ingestion.ts
+
+VINNSLUVERSION
+- receipt-v3-ai-gated
+
+0-AI SKILYRÐI – ÖLL VERÐA AÐ STANDAST
+1. PDF-texti ber ótvírætt Konto-snið.
+2. Skjalið er venjulegur REIKNINGUR, ekki kreditreikningur.
+3. Gjaldmiðill er ISK.
+4. Fyrirtækið er staðfest VSK-skráð.
+5. Kennitala seljanda á skjalinu er nákvæmlega kennitala virka fyrirtækisins.
+6. Reikningsnúmer og útgáfudagur finnast ótvírætt.
+7. Heildarupphæð finnst.
+8. Nákvæmlega einn 24% VSK-stofn finnst.
+9. Nettó + VSK = heild og 24% af nettó = VSK.
+10. Reikningslykill hefur nákvæmlega einn virkan ACCOUNTS_RECEIVABLE,
+    einn type=REVENUE + entryRole=REVENUE og einn VAT_OUTPUT reikning.
+11. Bókunin jafnast áður en hún er samþykkt sem deterministic niðurstaða.
+
+EF EITTHVAÐ BREGST
+- Parser skilar null.
+- Engin ágiskun er gerð.
+- Núverandi AI-leið tekur við óbreytt.
+
+REKJANLEIKI
+- classificationSource = DETERMINISTIC_TEMPLATE fyrir 0-AI leið.
+- extractionMetadata.analysisSource = DETERMINISTIC_TEMPLATE.
+- extractionMetadata.deterministicTemplateId = KONTO_SALES_INVOICE_V1.
+- Receipt ocrStatus = "Lesið án AI".
+- Engin AiUsage færsla er búin til þegar deterministic leiðin tekst.
+- AI fallback heldur classificationSource=AI og skráir AiUsage eins og áður.
+
+STAÐFEST PRÓF Á GÖGNUM FRÁ STURLU
+Parser var keyrður á rauntexta receipt 295–298:
+- CODW-1022: 830.800 = 670.000 + 160.800
+- CODW-1021: 1.016.800 = 820.000 + 196.800
+- CODW-1020: 880.400 = 710.000 + 170.400
+- CODW-1019: 1.140.800 = 920.000 + 220.800
+Öll 4 skiluðu jafnvægisbókun á account types sem í Stulla-umhverfinu vísa í
+1600 Viðskiptakröfur, 3000 Sölutekjur og 2510 Útskatt – án hardkóðunar númeranna.
+
+FAIL-CLOSED PRÓF
+Parser hafnaði réttilega:
+- rangri kennitölu fyrirtækis,
+- fyrirtæki sem ekki er staðfest VSK-skráð,
+- fleiri en einum mögulegum venjulegum tekjureikningi,
+- fjárhæðum sem stemma ekki,
+- skjali sem er ekki úr Konto,
+- kreditreikningsmerki.
+
+ATHUGIÐ
+- Þessi breyting minnkar AI-kallafjölda fyrir þekkt Konto-snið.
+- Hún minnkar EKKI enn prompt-stærð AI fallback leiðarinnar; það er sér næsti áfangi.
+- Ekki stage-a aðrar óskyldar breytingar/eyðingar í working tree.
+
+FYRSTA PRÓF EFTIR YFIRLÖGN
+1. npx tsc --noEmit
+2. Prófa read-only deterministic parser á receipt 295–298 áður en endurlestur er keyrður.
+3. Staðfesta að öll 4 fari í DETERMINISTIC_TEMPLATE og jafni.
+4. Fyrst þá velja stjórnað end-to-end próf á óbókuðu/óyfirförnu skjali eða nýju Konto-skali.

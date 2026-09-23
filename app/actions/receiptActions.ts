@@ -15,6 +15,7 @@ import {
   matchPurchaseLineToInventory,
   isInventoryEligiblePurchaseLine,
   shouldRunDeepInsight,
+  tryParseDeterministicKontoSalesInvoice,
 } from "@/lib/receipts/ingestion";
 import {
   requireActiveCompanyWriteAccess,
@@ -402,10 +403,9 @@ export async function createReceipt(formData: FormData) {
         error,
       );
 
-      // AiUsage er skráð um leið og OpenAI hefur svarað og svarið hefur verið
-      // JSON-lesið. Ef slík færsla er til úr ÞESSARI keyrslu þá vitum við að
-      // kostnaðarsama AI-kallið tókst, en vistun/úrvinnsla niðurstöðunnar bilaði
-      // síðar. Þetta má ekki birtast sem „AI-lestur mistókst“.
+      // AiUsage er aðeins skráð þegar OpenAI var raunverulega kallað og svaraði.
+      // 0-AI deterministic leiðin býr því aldrei til AiUsage. Ef slík færsla er
+      // til úr ÞESSARI keyrslu vitum við að AI-kallið tókst en eftirvinnsla bilaði.
       const successfulAiCall = await prisma.aiUsage.findFirst({
         where: {
           receiptId: createdReceipt.id,
@@ -420,13 +420,13 @@ export async function createReceipt(formData: FormData) {
       const aiResponded = Boolean(successfulAiCall);
       const visibleStatus = aiResponded
         ? "AI svaraði en úrvinnsla niðurstöðu mistókst"
-        : "AI-lestur mistókst";
+        : "Vinnsla fylgiskjals mistókst";
       const auditAction = aiResponded
         ? "RECEIPT_ANALYSIS_POSTPROCESS_FAILED"
         : "RECEIPT_ANALYSIS_FAILED";
       const auditDescription = aiResponded
         ? `AI-kall tókst, en vistun eða úrvinnsla niðurstöðunnar mistókst: ${errorMessage}`
-        : `AI-lestur fylgiskjals mistókst: ${errorMessage}`;
+        : `Vinnsla fylgiskjals mistókst áður en staðfest AI-svar lá fyrir: ${errorMessage}`;
 
       await prisma.$transaction([
         prisma.receipt.update({
@@ -933,11 +933,17 @@ async function analyzeReceiptWithAIInternal(
   receiptId: number,
   options: { skipAccessCheck?: boolean; skipRevalidate?: boolean } = {}
 ) {
-  const openai = new OpenAI({
-  apiKey: process.env.OPENAI_API_KEY,
-  timeout: 180 * 1000,
-  maxRetries: 0,
-});
+  let openaiClient: OpenAI | null = null;
+  const getOpenAi = () => {
+    if (!openaiClient) {
+      openaiClient = new OpenAI({
+        apiKey: process.env.OPENAI_API_KEY,
+        timeout: 180 * 1000,
+        maxRetries: 0,
+      });
+    }
+    return openaiClient;
+  };
   if (!options.skipAccessCheck) {
     await requireActiveCompanyWriteAccess();
   }
@@ -1237,6 +1243,21 @@ async function analyzeReceiptWithAIInternal(
     });
   }
 
+  // AI-gátt: þekkt, fullstaðfest Konto-sölureikningssnið má fara alla leið
+  // án OpenAI-kalls. Fallið er fail-closed: ef eitt skilyrði vantar tekur
+  // núverandi AI-leið einfaldlega við óbreytt.
+  const deterministicAnalysis = sourceTextForAnalysis
+    ? tryParseDeterministicKontoSalesInvoice({
+        sourceText: sourceTextForAnalysis,
+        companyName: receipt.company.name,
+        companyKennitala: receipt.company.kennitala,
+        companyVatRegistered: receipt.company.vatRegistered,
+        accounts: receipt.company.accounts,
+      })
+    : null;
+  const analysisSource = deterministicAnalysis?.analysisSource ?? "AI";
+  const deterministicTemplateId = deterministicAnalysis?.templateId ?? null;
+
   let uploadedFileId: string | null = null;
   let imageDataUrl: string | null = null;
 
@@ -1261,7 +1282,7 @@ async function analyzeReceiptWithAIInternal(
     await writeFile(temporaryPath, sourceBuffer);
 
     try {
-      const uploadedFile = await openai.files.create({
+      const uploadedFile = await getOpenAi().files.create({
         file: createReadStream(temporaryPath),
         purpose: "user_data",
       });
@@ -1273,7 +1294,12 @@ async function analyzeReceiptWithAIInternal(
 
   const analysisStartedAt = Date.now();
 
-  const response = await openai.responses.create({
+  const response = deterministicAnalysis
+    ? {
+        usage: undefined,
+        output_text: JSON.stringify(deterministicAnalysis.result),
+      }
+    : await getOpenAi().responses.create({
     model: "gpt-5.6",
     input: [
       {
@@ -2010,7 +2036,7 @@ const totalTokens = response.usage?.total_tokens ?? 0;
 
   if (documentCountMismatch) {
     console.warn(
-      `⚠️ Fjöldi fylgiskjala stemmir ekki. AI sagði ${reportedDocumentCount}, en documents inniheldur ${rawDocuments.length}.`,
+      `⚠️ Fjöldi fylgiskjala stemmir ekki. ${analysisSource === "AI" ? "AI" : "Deterministic parser"} sagði ${reportedDocumentCount}, en documents inniheldur ${rawDocuments.length}.`,
     );
   }
 
@@ -2020,33 +2046,35 @@ const totalTokens = response.usage?.total_tokens ?? 0;
     );
   }
 
-await recordAiUsage({
-  companyId: receipt.companyId,
-  receiptId,
-  action: "RECEIPT_ANALYSIS",
-  pipelineStage: "RECEIPT_INGEST",
-  operationKey: `RECEIPT:${receiptId}:${RECEIPT_PROCESSING_VERSION}`,
-  model: "gpt-5.6",
-  usage: {
-    inputTokens,
-    cachedInputTokens,
-    outputTokens,
-    totalTokens,
-  },
-  durationMs: Date.now() - analysisStartedAt,
-  metadata: {
-    processingVersion: RECEIPT_PROCESSING_VERSION,
-    rawDocumentCount: rawDocuments.length,
-    persistedDocumentCount: actualDocumentCount,
-    droppedDuplicateDocuments: dedupedDocuments.droppedCount,
-    deterministicSourceTextAvailable: Boolean(sourceTextForAnalysis),
-    aiInputMode: isImage
-      ? "IMAGE"
-      : sourceTextForAnalysis
-        ? "PDF_TEXT_ONLY"
-        : "FILE_UPLOAD",
-  },
-});
+  if (analysisSource === "AI") {
+    await recordAiUsage({
+      companyId: receipt.companyId,
+      receiptId,
+      action: "RECEIPT_ANALYSIS",
+      pipelineStage: "RECEIPT_INGEST",
+      operationKey: `RECEIPT:${receiptId}:${RECEIPT_PROCESSING_VERSION}`,
+      model: "gpt-5.6",
+      usage: {
+        inputTokens,
+        cachedInputTokens,
+        outputTokens,
+        totalTokens,
+      },
+      durationMs: Date.now() - analysisStartedAt,
+      metadata: {
+        processingVersion: RECEIPT_PROCESSING_VERSION,
+        rawDocumentCount: rawDocuments.length,
+        persistedDocumentCount: actualDocumentCount,
+        droppedDuplicateDocuments: dedupedDocuments.droppedCount,
+        deterministicSourceTextAvailable: Boolean(sourceTextForAnalysis),
+        aiInputMode: isImage
+          ? "IMAGE"
+          : sourceTextForAnalysis
+            ? "PDF_TEXT_ONLY"
+            : "FILE_UPLOAD",
+      },
+    });
+  }
 
 const createdDocumentIds: number[] = [];
 const inventoryModuleEnabled = await isInventoryModuleEnabled(receipt.companyId);
@@ -2074,8 +2102,10 @@ const inventoryModuleEnabled = await isInventoryModuleEnabled(receipt.companyId)
         ocrText: result.summary,
         ocrStatus:
           dedupedDocuments.droppedCount > 0
-            ? `Lesið með AI · ${dedupedDocuments.droppedCount} tvítekin skjalaniðurstaða sameinuð`
-            : "Lesið með AI",
+            ? `${analysisSource === "AI" ? "Lesið með AI" : "Lesið án AI"} · ${dedupedDocuments.droppedCount} tvítekin skjalaniðurstaða sameinuð`
+            : analysisSource === "AI"
+              ? "Lesið með AI"
+              : "Lesið án AI",
         processingVersion: RECEIPT_PROCESSING_VERSION,
         lastAnalyzedAt: new Date(),
 
@@ -2313,7 +2343,12 @@ if (hasInvalidDate) {
               documentFingerprint,
               processingVersion: RECEIPT_PROCESSING_VERSION,
               extractionMetadata: {
-                source: "RECEIPT_ANALYSIS",
+                source:
+                  analysisSource === "AI"
+                    ? "RECEIPT_ANALYSIS"
+                    : "DETERMINISTIC_TEMPLATE",
+                analysisSource,
+                deterministicTemplateId,
                 sourceTextHash: receipt.sourceTextHash ?? null,
                 sourceTextSource: receipt.sourceTextSource ?? null,
                 canonicalExtraction: {
@@ -2360,7 +2395,7 @@ if (hasInvalidDate) {
               classificationConfidence:
                 document.classificationConfidence,
 
-              classificationSource: "AI",
+              classificationSource: analysisSource,
 
               environmentReviewRequired:
                 document.environmentReviewRequired === true,
@@ -2605,9 +2640,12 @@ if (hasInvalidDate) {
                       ...normalizedLine,
                       matchedItemId: match?.itemId ?? null,
                     }),
-                  extractionSource: sourceTextForAnalysis
-                    ? "AI_FROM_SOURCE_TEXT"
-                    : "AI_VISION",
+                  extractionSource:
+                    analysisSource === "AI"
+                      ? sourceTextForAnalysis
+                        ? "AI_FROM_SOURCE_TEXT"
+                        : "AI_VISION"
+                      : "DETERMINISTIC_TEMPLATE",
                   extractionConfidence: normalizedLine.extractionConfidence,
                   matchedItemId: match?.itemId ?? null,
                   matchSource: match?.source ?? null,
