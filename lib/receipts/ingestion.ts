@@ -1,6 +1,7 @@
 import crypto from "crypto";
 
 import { extractTextFromPdfBuffer } from "@/lib/core/pdf-text";
+import { inspectCanonicalReceiptKnowledge } from "@/lib/insight/reconciliation";
 
 export const RECEIPT_PROCESSING_VERSION = "receipt-v3-ai-gated";
 
@@ -509,34 +510,14 @@ export function shouldRunDeepInsight(document: DetectedDocumentLike) {
       : 0;
   const summary = normalizeIdentityText(document.summary);
 
-  const extractionMetadata =
-    document.extractionMetadata &&
-    typeof document.extractionMetadata === "object" &&
-    !Array.isArray(document.extractionMetadata)
-      ? (document.extractionMetadata as Record<string, unknown>)
-      : null;
-
-  const canonicalExtraction =
-    extractionMetadata?.canonicalExtraction &&
-    typeof extractionMetadata.canonicalExtraction === "object" &&
-    !Array.isArray(extractionMetadata.canonicalExtraction)
-      ? (extractionMetadata.canonicalExtraction as Record<string, unknown>)
-      : null;
-
-  const hasCanonicalLoan = Boolean(
-    canonicalExtraction?.loanInfo &&
-      typeof canonicalExtraction.loanInfo === "object",
+  // Sama canonical staðreyndalag er notað í Fylgiskjölum og Innsýn.
+  // Innsýn á því ekki að búa til sína eigin skilgreiningu á því hvort fyrri
+  // lestur hafi þegar skilað endurnýtanlegum staðreyndum.
+  const canonicalKnowledge = inspectCanonicalReceiptKnowledge(
+    document.extractionMetadata,
   );
-  const canonicalInsurancePolicies = Array.isArray(
-    canonicalExtraction?.insurancePolicies,
-  )
-    ? canonicalExtraction.insurancePolicies
-    : [];
-  const hasCanonicalInsurance = Boolean(
-    (canonicalExtraction?.insuranceInfo &&
-      typeof canonicalExtraction.insuranceInfo === "object") ||
-      canonicalInsurancePolicies.length > 0,
-  );
+  const hasCanonicalLoan = canonicalKnowledge.hasCanonicalLoan;
+  const hasCanonicalInsurance = canonicalKnowledge.hasCanonicalInsurance;
   const hasPaymentSchedule = Boolean(
     document.paymentSchedule &&
       typeof document.paymentSchedule === "object" &&

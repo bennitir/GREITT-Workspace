@@ -1,0 +1,101 @@
+GLÖGGT – Sameiginlegt known-facts reconciliation fyrir Fylgiskjöl + Innsýn
+23. september 2026
+
+MARKMIÐ
+Byggja almennt lag á milli staðfestrar þekkingar og AI svo kerfið þurfi ekki að
+endurlesa sama frumskjal með AI bara vegna þess að notandi staðfesti entity,
+reikningstengingu eða annað atriði sem GLÖGGT veit nú þegar.
+
+Þetta er EKKI Sjóvá-, Konto-, Ergo- eða annar birgja-hardkóði.
+Skjalasnið/adapters mega finna staðreyndir, en reconciliation notar almennt:
+- canonical extraction,
+- canonical entity identity,
+- staðfest relationship,
+- staðfesta account links,
+- virka reikningslykla,
+- og jafnvægispróf.
+
+FLÆÐI
+notandi staðfestir þekkingu
+  -> reconcileReceiptFromKnownFacts()
+  -> canonical staðreyndir + staðfest entity/reikningstengsl nægja?
+       JÁ: bókun endurmetin án nýs AI-kalls
+       NEI, fleiri notandastaðfestingar vantar: bíða án AI
+       NEI, raunverulegt túlkunargat er eftir: AI fallback þar sem það var áður leyft
+
+INNSÝN
+lib/receipts/ingestion.ts notar nú inspectCanonicalReceiptKnowledge() úr sama
+shared reconciliation-lagi þegar ákveðið er hvort sjálfvirk djúp-Innsýn þurfi AI.
+Fylgiskjöl og Innsýn hafa því ekki lengur sitt hvora skilgreiningu á því hvort
+canonical lán/trygging/bókunarstaðreyndir séu þegar tiltækar.
+
+ÖRYGGISREGLUR / FAIL CLOSED
+- Aldrei búa til reikningslykil eða bókunarupphæð með ágiskun.
+- Allar canonical bookingEntries þurfa að vísa á virkan reikning eftir reconciliation.
+- Debet og kredit verða að stemma áður en niðurstaða er vistuð.
+- LOAN_PRINCIPAL má aðeins færa á nákvæmlega eina staðfesta LOAN -> LIABILITY_PRINCIPAL tengingu.
+- Tryggingalína er pöruð við skírteini með canonical sterku auðkenni; staðfest EXPENSE-tenging vinnur.
+- Fjölskírteinaskjal bíður án AI meðan fleiri skírteini/reikningstengingar eru óstaðfestar.
+- Vanti DocumentEntityLink alveg er það ekki túlkað sem venjuleg bið eftir notanda; þá má fyrra AI-fallback flæði taka við.
+- REVIEW er aðeins hækkað í BOOKABLE þegar review-ástandið er þekkt mapping-gat sem staðfest þekking leysir. Önnur REVIEW-ástand falla áfram fail-closed.
+- Veik auðkenni og canonical identity-reglur eru áfram meðhöndluð af sameiginlega entity-identity laginu.
+
+AI-KOSTNAÐARHEGÐUN
+Aðgerðir sem áður kölluðu AI geta nú farið fyrst í reconciliation:
+- staðfesting á vöntuðu lánsnúmeri/skuldareikningi,
+- höfnun á rangri lánatengingu,
+- stofnun + staðfesting tryggingareiknings,
+- stofnun almenns reikningslykils úr skjali.
+
+Aðgerðir sem áður kölluðu EKKI AI fá ekki ný sjálfvirk AI-köll:
+- staðfesting á fyrirliggjandi tryggingarskírteini/reikningi,
+- staðfesting á fyrirliggjandi lánareikningstengingu.
+Þær reyna deterministic reconciliation en ef það dugar ekki bíða þær; notandi getur
+enn valið handvirkt „Lesa fylgiskjal aftur með AI“.
+
+FJÖLSKÍRTEINAHEGÐUN
+Kerfið keyrir ekki AI eftir hvert staðfest skírteini. Ef 8 af 9 eru staðfest bíður
+reconciliation. Þegar öll nauðsynleg canonical tengsl eru staðfest og fyrri canonical
+bookingEntries stemma getur skjalið orðið BOOKABLE án annars AI-lesturs.
+
+REKJANLEIKI
+Árangursríkt 0-AI reconciliation:
+- skrifar RECONCILE_RECEIPT_FROM_KNOWN_FACTS AuditEvent,
+- varðveitir aiCalled=false í reconciliation metadata,
+- varðveitir hvaða confirmed knowledge var notað,
+- eyðir ekki frum-canonical extraction,
+- breytir ekki classificationSource í „AI-laust“ ef upphaflega extraction kom frá AI.
+
+EKKI GERT Í ÞESSUM ÁFANGA
+- Engin Prisma schema migration.
+- Gömlu 21 semantic duplicate-hóparnir eru ekki sameinaðir hér.
+- Engir nýir birgja-/skjalasniðsparsers.
+- Handvirkur explicit AI-endurlestur er áfram leyfður.
+- Initial upload routing er áfram receipt-v3-ai-gated (Konto deterministic gate + AI fallback).
+
+BREYTTAR/NÝJAR SKRÁR
+M app/actions/receiptActions.ts
+M lib/receipts/ingestion.ts
+A lib/insight/reconciliation.ts
+A lib/receipts/reconciliation.ts
+A docs/LESTU-INNSYN-FYLGISKJOL-RECONCILIATION-20260923.txt
+
+PRÓF HÉR ÁÐUR EN PAKKI VAR BÚINN TIL
+- TypeScript syntax/transpile: 4/4 breyttar TS-skrár hreinar.
+- Pure reconciliation-próf: 6/6:
+  1. fjölskírteini með staðfestum reikningum -> RECONCILED
+  2. eitt óstaðfest skírteini -> NEEDS_AI/pending knowledge
+  3. vantað document entity link -> MISSING_ENTITY_LINK
+  4. staðfest lán + skuldareikningur -> LOAN_PRINCIPAL endurvarpað og jafnvægi
+  5. óþekkt REVIEW-ástand -> fail closed
+  6. eitt tryggingarskírteini án númers í booking texta en ótvíræð fjárhæð -> örugg mapping
+
+MIKILVÆGT FYRIR REPO-PRÓF
+Eftir yfirlagningu í C:\GLÖGGT þarf að keyra:
+  npx tsc --noEmit
+
+Ekki commit-a fyrr en það er hreint. Síðan:
+  git diff --check
+  git status --short
+
+Stage-a aðeins skrár þessa áfanga.

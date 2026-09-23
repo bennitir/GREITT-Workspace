@@ -45,6 +45,9 @@ import {
   getCanonicalIdentifierAliases,
   resolveCanonicalInsightEntity,
 } from "@/lib/insight/entity-identity";
+import {
+  reconcileReceiptFromKnownFacts,
+} from "@/lib/receipts/reconciliation";
 
 async function isInventoryModuleEnabled(companyId: number) {
   const moduleSettings = await getCompanyModuleSettings(companyId);
@@ -3285,6 +3288,52 @@ export async function analyzeReceiptWithAI(receiptId: number) {
   );
 }
 
+async function reconcileReceiptAfterKnowledgeChange(input: {
+  receiptId: number;
+  reason: string;
+  userId?: number | null;
+  allowAiFallback?: boolean;
+}) {
+  const reconciliation = await reconcileReceiptFromKnownFacts({
+    receiptId: input.receiptId,
+    reason: input.reason,
+    userId: input.userId ?? null,
+  });
+
+  if (reconciliation.status === "RECONCILED") {
+    await runAutomaticInsightForDocuments(
+      reconciliation.reconciledDocumentIds,
+    );
+
+    revalidatePath(`/fylgiskjol/${input.receiptId}`);
+    revalidatePath("/fylgiskjol");
+
+    return {
+      createdDocumentIds: reconciliation.reconciledDocumentIds,
+      reconciliationSource: "KNOWN_FACTS" as const,
+    };
+  }
+
+  // Á meðan fleiri staðfestingar vantar (t.d. 8 af 9 tryggingarskírteinum)
+  // má ekki keyra AI eftir hvert skref. Reconciliation-lagið segir aðeins til
+  // um AI fallback þegar canonical þekking er fullnýtt en raunverulegt gat er enn.
+  if (input.allowAiFallback === false || !reconciliation.aiFallbackRecommended) {
+    revalidatePath(`/fylgiskjol/${input.receiptId}`);
+    revalidatePath("/fylgiskjol");
+
+    return {
+      createdDocumentIds: reconciliation.documentIds,
+      reconciliationSource: "PENDING_KNOWN_FACTS" as const,
+    };
+  }
+
+  const analysisResult = await analyzeReceiptWithAI(input.receiptId);
+  return {
+    ...analysisResult,
+    reconciliationSource: "AI_FALLBACK" as const,
+  };
+}
+
 export async function analyzeReceiptWithAIForMaintenance(receiptId: number) {
   if (process.env.GLOGGT_ALLOW_MAINTENANCE_REANALYZE !== "1") {
     throw new Error(
@@ -3493,9 +3542,13 @@ export async function confirmMissingLoanDetails(
     });
   });
 
-  // Endurlesum strax. analyzeReceiptWithAI tekur nú handvirkt staðfesta
-  // lánsnúmerið með sér yfir endurlesturinn og notar staðfesta skuldareikninginn.
-  const analysisResult = await analyzeReceiptWithAI(document.receiptId);
+  // Gögn fyrst: staðfest lánsnúmer + skuldareikningur fara fyrst í sameiginlegt
+  // reconciliation-lag. AI er aðeins fallback ef canonical gögn duga ekki.
+  const analysisResult = await reconcileReceiptAfterKnowledgeChange({
+    receiptId: document.receiptId,
+    reason: "CONFIRM_LOAN_DETAILS",
+    userId: user.id,
+  });
 
   revalidatePath(`/fylgiskjol/${document.receiptId}`);
   revalidatePath("/fylgiskjol");
@@ -3583,10 +3636,13 @@ export async function rejectIncorrectLoanEntityLink(
     });
   });
 
-  // Endurlesum eftir að röng tenging hefur verið fjarlægð. Gamla AI-tengingin
-  // verður því ekki tekin með sem handvirk vísbending og nýja stranga
-  // lánsnúmerareglan fær hreina prófun á frumskjalinu.
-  const analysisResult = await analyzeReceiptWithAI(document.receiptId);
+  // Röng sterk tenging var fjarlægð. Reconciliation reynir fyrst að nota önnur
+  // staðfest gögn; ef þau duga ekki er AI leyft sem fail-closed fallback.
+  const analysisResult = await reconcileReceiptAfterKnowledgeChange({
+    receiptId: document.receiptId,
+    reason: "REJECT_DOCUMENT_LOAN_LINK",
+    userId: user.id,
+  });
 
   revalidatePath(`/fylgiskjol/${document.receiptId}`);
   revalidatePath("/fylgiskjol");
@@ -3626,10 +3682,15 @@ export async function confirmInsurancePolicyProfile(documentId: number, entityId
       afterData: { environment, accountNumber: account.number, accountId: account.id }, metadata: { receiptId: document.receiptId, detectedDocumentId: document.id },
     } });
   });
-  // Ekki endurkeyra AI eftir hvert skírteini. Fjölskírteinaskjöl geta haft mörg
-  // ólík skírteini og notandinn á að geta staðfest þau öll áður en ein endurlestur fer fram.
-  revalidatePath(`/fylgiskjol/${document.receiptId}`); revalidatePath("/fylgiskjol");
-  return { createdDocumentIds: [document.id] };
+  // Eftir hverja staðfestingu reynir sameiginlega reconciliation-lagið að klára
+  // án AI. Ef fleiri skírteini vantar bíður það hljóðlega; AI er ekki keyrt eftir
+  // hvert skref í fjölskírteinaskjali.
+  return reconcileReceiptAfterKnowledgeChange({
+    receiptId: document.receiptId,
+    reason: "CONFIRM_INSURANCE_POLICY_PROFILE",
+    userId: user.id,
+    allowAiFallback: false,
+  });
 }
 
 export async function createAndConfirmInsurancePolicyProfile(
@@ -3761,9 +3822,11 @@ export async function createAndConfirmInsurancePolicyProfile(
     });
   });
 
-  const analysisResult = await analyzeReceiptWithAI(document.receiptId);
-  revalidatePath(`/fylgiskjol/${document.receiptId}`);
-  revalidatePath("/fylgiskjol");
+  const analysisResult = await reconcileReceiptAfterKnowledgeChange({
+    receiptId: document.receiptId,
+    reason: "CREATE_AND_CONFIRM_INSURANCE_POLICY_PROFILE",
+    userId: user.id,
+  });
   revalidatePath(`/fyrirtaeki/${document.receipt.companyId}/reikningslyklar`);
   return analysisResult;
 }
@@ -3919,6 +3982,13 @@ export async function confirmInsightEntityAccountLink(
         },
       },
     });
+  });
+
+  await reconcileReceiptAfterKnowledgeChange({
+    receiptId: document.receiptId,
+    reason: "CONFIRM_ACCOUNT_LINK",
+    userId: user.id,
+    allowAiFallback: false,
   });
 
   revalidatePath(`/fylgiskjol/${document.receiptId}`);
@@ -6425,8 +6495,11 @@ export async function createAccountForDetectedDocument(
     },
   });
 
-  const result = await analyzeReceiptWithAI(document.receiptId);
-  revalidatePath(`/fylgiskjol/${document.receiptId}`);
+  const result = await reconcileReceiptAfterKnowledgeChange({
+    receiptId: document.receiptId,
+    reason: "CREATE_ACCOUNT_FROM_DOCUMENT",
+    userId: user?.id ?? null,
+  });
   revalidatePath(`/fyrirtaeki/${document.receipt.companyId}/reikningslyklar`);
   return result;
 }
