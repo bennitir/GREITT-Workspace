@@ -3,7 +3,7 @@ import crypto from "crypto";
 import { extractTextFromPdfBuffer } from "@/lib/core/pdf-text";
 import { inspectCanonicalReceiptKnowledge } from "@/lib/insight/reconciliation";
 
-export const RECEIPT_PROCESSING_VERSION = "receipt-v3-ai-gated";
+export const RECEIPT_PROCESSING_VERSION = "receipt-v4-data-first-labeled";
 
 export type ReceiptSourceSnapshot = {
   sourceText: string | null;
@@ -105,6 +105,211 @@ function parseIcelandicAmount(value: string) {
 
 function roundMoney(value: number) {
   return Math.round(value * 100) / 100;
+}
+
+
+function normalizeKennitala(value: unknown) {
+  return normalizeReference(value).replace(/\D/g, "");
+}
+
+function titleCaseDomainBrand(value: string) {
+  return value
+    .split(/[-_.]+/)
+    .filter(Boolean)
+    .map((part) => part.charAt(0).toUpperCase() + part.slice(1).toLowerCase())
+    .join(" ");
+}
+
+function findLabeledInvoiceNumber(text: string) {
+  const match = text.match(
+    /(?:reikningsnr\.?|reiknings\s*nr\.?|reikningsn(?:ú|u)mer|reikn\.?\s*nr\.?|reikningur\s*nr\.?|invoice\s*(?:no\.?|number))\s*[:#-]?\s*([A-Z0-9][A-Z0-9./_-]{2,})/i,
+  );
+  return match?.[1]?.trim() ?? null;
+}
+
+function findLabeledInvoiceDate(text: string) {
+  const patterns = [
+    /\bdagsetning\s+reiknings\s*[:#-]?\s*(\d{1,2}[./-]\d{1,2}[./-](?:20)?\d{2})/i,
+    /(?:^|\n)\s*dags\.?\s*[:#-]?\s*(\d{1,2}[./-]\d{1,2}[./-](?:20)?\d{2})/im,
+    /\bútgáfudagur\s*[:#-]?\s*(\d{1,2}[./-]\d{1,2}[./-](?:20)?\d{2})/i,
+  ];
+
+  for (const pattern of patterns) {
+    const match = text.match(pattern);
+    if (!match) continue;
+    const parsed = parseIcelandicDateToIso(match[1]);
+    if (parsed) return parsed;
+  }
+
+  return null;
+}
+
+function findLabeledTotalAmount(text: string) {
+  const amount = String.raw`([0-9][0-9.\s]*(?:,[0-9]{1,2})?)`;
+  const patterns = [
+    new RegExp(String.raw`Samtals\s+ISK\s+með\s+VSK\s*[:#-]?\s*${amount}`, "i"),
+    new RegExp(String.raw`(?:^|\n)\s*Samtals\s*[:#-]?\s*${amount}\s*kr\.?\b`, "im"),
+    new RegExp(String.raw`Heildarupphæð\s*[:#-]?\s*${amount}\s*(?:kr\.?|ISK)\b`, "i"),
+    new RegExp(String.raw`Til\s+greiðslu\s*[:#-]?\s*${amount}\s*(?:kr\.?|ISK)?\b`, "i"),
+  ];
+
+  for (const pattern of patterns) {
+    const match = text.match(pattern);
+    if (!match) continue;
+    const parsed = parseIcelandicAmount(match[1]);
+    if (parsed !== null && parsed > 0) return parsed;
+  }
+
+  return null;
+}
+
+function findVatBreakdown(text: string, totalAmount: number) {
+  const netDirect = text.match(
+    /Samtals\s+ISK\s+án\s+VSK\s*[:#-]?\s*([0-9][0-9.\s]*(?:,[0-9]{1,2})?)/i,
+  );
+  const vatDirect = text.match(
+    /(\d{1,2}(?:[,.]\d+)?)\s*%\s*VSK\s*[:#-]?\s*([0-9][0-9.\s]*(?:,[0-9]{1,2})?)/i,
+  );
+
+  if (netDirect && vatDirect) {
+    const netAmount = parseIcelandicAmount(netDirect[1]);
+    const vatRate = Number(vatDirect[1].replace(",", "."));
+    const vatAmount = parseIcelandicAmount(vatDirect[2]);
+    if (
+      netAmount !== null &&
+      vatAmount !== null &&
+      vatRate > 0 &&
+      roundMoney(netAmount + vatAmount) === roundMoney(totalAmount)
+    ) {
+      return { netAmount, vatRate, vatAmount };
+    }
+  }
+
+  const tableMatches = Array.from(
+    text.matchAll(
+      /([0-9][0-9.\s]*(?:,[0-9]{1,2})?)\s*kr\.?\s+(\d{1,2}(?:[,.]\d+)?)\s*%\s+([0-9][0-9.\s]*(?:,[0-9]{1,2})?)\s*kr\.?\s+([0-9][0-9.\s]*(?:,[0-9]{1,2})?)\s*kr\.?/gi,
+    ),
+  );
+
+  for (const match of tableMatches) {
+    const netAmount = parseIcelandicAmount(match[1]);
+    const vatRate = Number(match[2].replace(",", "."));
+    const vatAmount = parseIcelandicAmount(match[3]);
+    const rowTotal = parseIcelandicAmount(match[4]);
+    if (
+      netAmount !== null &&
+      vatAmount !== null &&
+      rowTotal !== null &&
+      roundMoney(rowTotal) === roundMoney(totalAmount) &&
+      roundMoney(netAmount + vatAmount) === roundMoney(totalAmount)
+    ) {
+      return { netAmount, vatRate, vatAmount };
+    }
+  }
+
+  return null;
+}
+
+function findSellerIdentityFromLabeledVatLine(
+  text: string,
+  companyKennitala: string,
+  companyName?: string | null,
+) {
+  const lines = text.replace(/\r\n?/g, "\n").split("\n");
+  const sellerCandidates: Array<{ kennitala: string; lineIndex: number }> = [];
+
+  for (let index = 0; index < lines.length; index += 1) {
+    const line = lines[index];
+    if (!/\bvsk\b/i.test(line)) continue;
+    const ktMatch = line.match(/\b(\d{6}[- ]?\d{4})\b/);
+    if (!ktMatch) continue;
+    const kennitala = normalizeKennitala(ktMatch[1]);
+    if (!/^\d{10}$/.test(kennitala) || kennitala === companyKennitala) continue;
+    sellerCandidates.push({ kennitala, lineIndex: index });
+  }
+
+  const uniqueKennitolur = [...new Set(sellerCandidates.map((item) => item.kennitala))];
+  if (uniqueKennitolur.length !== 1) return null;
+
+  const sellerKennitala = uniqueKennitolur[0];
+  const candidate = sellerCandidates.find((item) => item.kennitala === sellerKennitala)!;
+  const nearbyLines = lines
+    .slice(Math.max(0, candidate.lineIndex - 4), Math.min(lines.length, candidate.lineIndex + 2))
+    .map((line) => normalizeWhitespace(line))
+    .filter(Boolean);
+  const normalizedCompanyName = normalizeIdentityText(companyName);
+
+  const legalEntityPattern = /\b([A-ZÁÉÍÓÚÝÞÆÖ0-9][^|]{1,80}?\b(?:ehf|hf|ohf|sf|slf|ses|bs)\.?)\b/i;
+  for (const line of nearbyLines) {
+    const match = line.match(legalEntityPattern);
+    if (
+      match &&
+      (!normalizedCompanyName || normalizeIdentityText(match[1]) !== normalizedCompanyName)
+    ) {
+      return {
+        merchantName: normalizeWhitespace(match[1]),
+        merchantKennitala: sellerKennitala,
+      };
+    }
+  }
+
+  for (const line of lines) {
+    const normalized = normalizeWhitespace(line);
+    const match = normalized.match(legalEntityPattern);
+    if (
+      match &&
+      (!normalizedCompanyName || normalizeIdentityText(match[1]) !== normalizedCompanyName)
+    ) {
+      return {
+        merchantName: normalizeWhitespace(match[1]),
+        merchantKennitala: sellerKennitala,
+      };
+    }
+  }
+
+  const domainMatch = text.match(/(?:@|\b(?:www\.)?)([a-z0-9][a-z0-9-]{1,40})\.(?:is|com|net|org)\b/i);
+  const merchantName = domainMatch
+    ? titleCaseDomainBrand(domainMatch[1])
+    : `Seljandi ${sellerKennitala}`;
+
+  return {
+    merchantName,
+    merchantKennitala: sellerKennitala,
+  };
+}
+
+function findPaymentInfo(text: string) {
+  const labeledMethod = text.match(/GREIÐSLUMÁTI\s*[:#-]?\s*([^\n]+)/i);
+  const cardMatch = text.match(/Greiðslukort\s+(VISA|MASTERCARD|MAESTRO|AMEX|AMERICAN\s+EXPRESS)\b/i);
+  const cardLastFourMatch = text.match(
+    /\b(VISA|MASTERCARD|MAESTRO|AMEX|AMERICAN\s+EXPRESS)\b[^\n]{0,40}(?:kreditkort|kort)?\s*(?:\n\s*)?(\d{4})\b/i,
+  );
+
+  if (cardMatch || cardLastFourMatch) {
+    const network = normalizeWhitespace((cardLastFourMatch?.[1] ?? cardMatch?.[1] ?? "").toUpperCase());
+    return {
+      method: "CARD",
+      rawLabel: cardMatch?.[0] ?? cardLastFourMatch?.[0] ?? "Greiðslukort",
+      network: network || null,
+      lastFour: cardLastFourMatch?.[2] ?? null,
+      source: "DOCUMENT_TEXT",
+    };
+  }
+
+  if (labeledMethod) {
+    const rawLabel = normalizeWhitespace(labeledMethod[1]);
+    return {
+      method: normalizeIdentityText(rawLabel).includes("heimabanki")
+        ? "BANK_CLAIM"
+        : "OTHER",
+      rawLabel,
+      network: null,
+      lastFour: null,
+      source: "DOCUMENT_TEXT",
+    };
+  }
+
+  return null;
 }
 
 export type DeterministicReceiptAccount = {
@@ -309,6 +514,111 @@ export function tryParseDeterministicKontoSalesInvoice(input: {
   };
 }
 
+
+/**
+ * Almenn 0-AI leið fyrir stutt, skýrt merkt innkaupareiknings-PDF.
+ *
+ * Fallið er fail-closed og reynir ekki að giska á bókhaldslykla. Það þarf:
+ * - kennitölu virka fyrirtækisins í textanum,
+ * - nákvæmlega eina aðra kennitölu á VSK-línu sem útgefanda,
+ * - skýrt merkt reikningsnúmer,
+ * - skýrt merkta reikningsdagsetningu,
+ * - skýrt merkta heildarupphæð.
+ *
+ * Þegar þessi grunnatriði eru ótvíræð er óþarfi að greiða AI fyrir að lesa þau.
+ * Bókunarlínur eru vísvitandi tómar þar til reikningslykill/mótreikningur er
+ * staðfestur með fyrri þekkingu eða af notanda.
+ */
+export function tryParseDeterministicLabeledPurchaseInvoice(input: {
+  sourceText: string;
+  companyName?: string | null;
+  companyKennitala?: string | null;
+}) {
+  const text = input.sourceText.replace(/\r\n?/g, "\n").trim();
+  const companyKennitala = normalizeKennitala(input.companyKennitala);
+
+  if (!text || text.length > 20_000) return null;
+  if (!/^\d{10}$/.test(companyKennitala)) return null;
+  if (!text.replace(/\D/g, "").includes(companyKennitala)) return null;
+  if (!/\breikningur\b/i.test(text)) return null;
+  if (/\bkreditreikningur\b/i.test(text)) return null;
+
+  // Mörg skjöl/yfirlit mega ekki detta inn í eins-skjal deterministic parser.
+  const visibleDates = collectRegexMatches(
+    text,
+    /\b(\d{1,2}[./-]\d{1,2}[./-](?:20)?\d{2}|20\d{2}[./-]\d{1,2}[./-]\d{1,2})\b/g,
+    30,
+  );
+  if (visibleDates.length > 10) return null;
+
+  const seller = findSellerIdentityFromLabeledVatLine(
+    text,
+    companyKennitala,
+    input.companyName,
+  );
+  const receiptNumber = findLabeledInvoiceNumber(text);
+  const issueDate = findLabeledInvoiceDate(text);
+  const totalAmount = findLabeledTotalAmount(text);
+
+  if (!seller || !receiptNumber || !issueDate || totalAmount === null || totalAmount <= 0) {
+    return null;
+  }
+
+  const vat = findVatBreakdown(text, totalAmount);
+  const paymentInfo = findPaymentInfo(text);
+  const summaryParts = [
+    `Reikningur ${receiptNumber} frá ${seller.merchantName}.`,
+    `Dagsetning ${issueDate}.`,
+    vat
+      ? `Samtals án VSK ${vat.netAmount} kr., ${vat.vatRate}% VSK ${vat.vatAmount} kr. og heild ${totalAmount} kr.`
+      : `Heild ${totalAmount} kr.`,
+    paymentInfo?.rawLabel ? `Greiðslumáti: ${paymentInfo.rawLabel}.` : null,
+    "Bókunarlykill og greiðslumótreikningur hafa ekki verið ágiskuð; þau bíða staðfestingar.",
+  ].filter((value): value is string => Boolean(value));
+  const summary = summaryParts.join(" ");
+
+  const document = {
+    merchantName: seller.merchantName,
+    merchantKennitala: seller.merchantKennitala,
+    date: issueDate,
+    receiptNumber,
+    totalAmount,
+    summary,
+    documentType: "ACCOUNTING_DOCUMENT",
+    documentRole: "BOOKABLE",
+    classificationConfidence: 0.98,
+    environmentReviewRequired: false,
+    environmentReviewReason: null,
+    loanInfo: null,
+    insuranceInfo: null,
+    insurancePolicies: [],
+    paymentSchedule: null,
+    paymentInfo,
+    purchaseLines: [],
+    bookingEntries: [],
+    pageNumber: 1,
+  };
+
+  return {
+    analysisSource: "DETERMINISTIC_TEMPLATE" as const,
+    templateId: "LABELED_PURCHASE_INVOICE_V1" as const,
+    result: {
+      documentCount: 1,
+      documents: [document],
+      merchantName: seller.merchantName,
+      date: issueDate,
+      receiptNumber,
+      totalAmount,
+      confidence: 0.98,
+      summary,
+      suggestedDebitAccount: null,
+      suggestedCreditAccount: null,
+      suggestedBookingText: `${seller.merchantName} – ${receiptNumber}`,
+      bookingEntries: [],
+    },
+  };
+}
+
 function buildDeterministicData(text: string) {
   const kennitolur = collectRegexMatches(
     text,
@@ -324,14 +634,39 @@ function buildDeterministicData(text: string) {
 
   const invoiceReferences = collectRegexMatches(
     text,
-    /(?:reikningsn(?:ú|u)mer|reikn\.?\s*nr\.?|reikningur\s*nr\.?|n(?:ó|o)ta\s*nr\.?|invoice\s*(?:no\.?|number))\s*[:#-]?\s*([A-Z0-9][A-Z0-9./_-]{2,})/gi,
+    /(?:reikningsnr\.?|reiknings\s*nr\.?|reikningsn(?:ú|u)mer|reikn\.?\s*nr\.?|reikningur\s*nr\.?|n(?:ó|o)ta\s*nr\.?|invoice\s*(?:no\.?|number))\s*[:#-]?\s*([A-Z0-9][A-Z0-9./_-]{2,})/gi,
     20,
   );
 
-  const amountCandidates = collectRegexMatches(
+  const amountCandidates = [
+    ...collectRegexMatches(
+      text,
+      /\b(\d{1,3}(?:\.\d{3})+(?:,\d{1,2})?|\d+(?:,\d{1,2})?)\s*(?:kr\.?|ISK)\b/gi,
+      40,
+    ),
+    ...collectRegexMatches(
+      text,
+      /\bISK\s*(\d{1,3}(?:\.\d{3})+(?:,\d{1,2})?|\d+(?:,\d{1,2})?)\b/gi,
+      40,
+    ),
+  ].filter((value, index, values) => values.indexOf(value) === index).slice(0, 40);
+
+  const vatNumbers = collectRegexMatches(
     text,
-    /\b(\d{1,3}(?:\.\d{3})+(?:,\d{1,2})?|\d+(?:,\d{1,2})?)\s*(?:kr\.?|ISK)\b/gi,
-    40,
+    /\bVSK\.?\s*(?:nr\.?|númer)?\s*[:#-]?\s*(\d{4,8})\b/gi,
+    10,
+  );
+
+  const paymentMethods = collectRegexMatches(
+    text,
+    /(?:GREIÐSLUMÁTI\s*[:#-]?\s*([^\n]+)|Greiðslukort\s+([^\n]+))/gi,
+    10,
+  );
+
+  const cardLastFour = collectRegexMatches(
+    text,
+    /\b(?:VISA|MASTERCARD|MAESTRO|AMEX|AMERICAN\s+EXPRESS)\b[^\n]{0,40}(?:kreditkort|kort)?\s*(?:\n\s*)?(\d{4})\b/gi,
+    10,
   );
 
   return {
@@ -339,6 +674,9 @@ function buildDeterministicData(text: string) {
     dates,
     invoiceReferences,
     amountCandidates,
+    vatNumbers,
+    paymentMethods,
+    cardLastFour,
     characterCount: text.length,
   };
 }

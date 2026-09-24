@@ -16,6 +16,7 @@ import {
   isInventoryEligiblePurchaseLine,
   shouldRunDeepInsight,
   tryParseDeterministicKontoSalesInvoice,
+  tryParseDeterministicLabeledPurchaseInvoice,
 } from "@/lib/receipts/ingestion";
 import {
   requireActiveCompanyWriteAccess,
@@ -523,63 +524,81 @@ export async function createManualReceipt(formData: FormData) {
     );
   }
 
- const uploaded =
-  file instanceof File && file.size > 0
-    ? await saveReceiptFile(file, Number(activeCompanyId))
-    : null;
+  const companyId = Number(activeCompanyId);
+  const rawVoucherNumber =
+    String(formData.get("voucherNumber") || "").trim();
 
-    const rawVoucherNumber =
-  String(formData.get("voucherNumber") || "").trim();
+  const voucherNumber =
+    rawVoucherNumber !== ""
+      ? Number(rawVoucherNumber)
+      : null;
 
-const voucherNumber =
-  rawVoucherNumber !== ""
-    ? Number(rawVoucherNumber)
-    : null;
-
-if (
-  voucherNumber !== null &&
-  (!Number.isInteger(voucherNumber) || voucherNumber <= 0)
-) {
-  throw new Error("Fylgiskjalsnúmer verður að vera jákvæð heiltala.");
-}
-
-if (voucherNumber !== null) {
-  const existingVoucher = await prisma.receipt.findFirst({
-    where: {
-      companyId: Number(activeCompanyId),
-      voucherNumber,
-    },
-  });
-
-  if (existingVoucher) {
-    throw new Error(
-      `Fylgiskjalsnúmer ${voucherNumber} er þegar í notkun.`
-    );
+  if (
+    voucherNumber !== null &&
+    (!Number.isInteger(voucherNumber) || voucherNumber <= 0)
+  ) {
+    throw new Error("Fylgiskjalsnúmer verður að vera jákvæð heiltala.");
   }
-}
 
-  const createdReceipt =
-    await prisma.receipt.create({
-      data: {
-                date: parsedDate,
-        description:
-          String(
-            formData.get("description") || ""
-          ).trim() || "Handvirkt fylgiskjal",
-        amount: formData.get("amount")
-          ? Number(formData.get("amount"))
-                    : 0,
-                    receiptNumber: String(formData.get("receiptNumber") || "").trim() || null,
-                    voucherNumber,
-merchantName: String(formData.get("merchantName") || "").trim() || null,
-merchantKennitala:
-  String(formData.get("merchantKennitala") || "").trim() || null,
-        companyId: Number(activeCompanyId),
-        fileName: uploaded?.fileName ?? null,
-filePath: uploaded?.filePath ?? null,
-        status: "NEW",
+  if (voucherNumber !== null) {
+    const existingVoucher = await prisma.receipt.findFirst({
+      where: {
+        companyId,
+        voucherNumber,
       },
     });
+
+    if (existingVoucher) {
+      throw new Error(
+        `Fylgiskjalsnúmer ${voucherNumber} er þegar í notkun.`
+      );
+    }
+  }
+
+  // Validate first, then upload. This avoids leaving an orphan Storage object
+  // when a manual voucher number is invalid or already in use.
+  const uploaded =
+    file instanceof File && file.size > 0
+      ? await saveReceiptFile(file, companyId)
+      : null;
+
+  let createdReceipt: { id: number };
+
+  try {
+    createdReceipt = await prisma.receipt.create({
+      data: {
+        date: parsedDate,
+        description:
+          String(formData.get("description") || "").trim() ||
+          "Handvirkt fylgiskjal",
+        amount: formData.get("amount")
+          ? Number(formData.get("amount"))
+          : 0,
+        receiptNumber:
+          String(formData.get("receiptNumber") || "").trim() || null,
+        voucherNumber,
+        merchantName:
+          String(formData.get("merchantName") || "").trim() || null,
+        merchantKennitala:
+          String(formData.get("merchantKennitala") || "").trim() || null,
+        companyId,
+        fileName: uploaded?.fileName ?? null,
+        filePath: uploaded?.filePath ?? null,
+        storagePath: uploaded?.storagePath ?? null,
+        status: "NEW",
+      },
+      select: { id: true },
+    });
+  } catch (error) {
+    if (uploaded?.storagePath) {
+      await supabaseAdmin.storage
+        .from("fylgiskjol")
+        .remove([uploaded.storagePath])
+        .catch(() => undefined);
+    }
+
+    throw error;
+  }
 
   revalidatePath("/fylgiskjol");
 
@@ -1289,6 +1308,11 @@ async function analyzeReceiptWithAIInternal(
         companyKennitala: receipt.company.kennitala,
         companyVatRegistered: receipt.company.vatRegistered,
         accounts: receipt.company.accounts,
+      }) ??
+      tryParseDeterministicLabeledPurchaseInvoice({
+        sourceText: sourceTextForAnalysis,
+        companyName: receipt.company.name,
+        companyKennitala: receipt.company.kennitala,
       })
     : null;
   const analysisSource = deterministicAnalysis?.analysisSource ?? "AI";
@@ -2441,6 +2465,12 @@ if (hasInvalidDate) {
                   purchaseLines: Array.isArray(document.purchaseLines)
                     ? document.purchaseLines
                     : [],
+                  paymentInfo:
+                    document.paymentInfo &&
+                    typeof document.paymentInfo === "object" &&
+                    !Array.isArray(document.paymentInfo)
+                      ? document.paymentInfo
+                      : null,
                   bookingEntries: Array.isArray(document.bookingEntries)
                     ? document.bookingEntries
                     : [],
