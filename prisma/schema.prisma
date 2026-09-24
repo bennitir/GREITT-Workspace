@@ -35,6 +35,11 @@ model Company {
   vatConfirmedAt      DateTime?
   vatConfirmedBy      String?
 
+  // Fyrirtækisregla fyrir einfalt tilfelli þar sem fyrirtækið notar ekki VSK-bíl.
+  // true = harður stopp-punktur: bílatengdur kostnaður má ekki mynda innskatt.
+  // false = óstaðfest á fyrirtækisstigi; GLÖGGT má ekki túlka það sem VSK-rétt.
+  vehicleVatDeductionBlocked Boolean @default(false)
+
   // Launagreiðendaskrá / staðgreiðsla og tryggingagjald
   payrollRegistered       Boolean?
   payrollRegistrationDate DateTime?
@@ -487,6 +492,7 @@ model User {
   voidedWorkPartUsageFacts        WorkPartUsageFact[] @relation("WorkPartUsageFactVoidedBy")
   createdWorkResources             WorkResource[] @relation("WorkResourceCreatedBy")
   updatedWorkResources             WorkResource[] @relation("WorkResourceUpdatedBy")
+  confirmedVehicleVatResources     WorkResource[] @relation("WorkResourceVatEligibilityConfirmedBy")
   createdWorkResourceMembers       WorkResourceMember[] @relation("WorkResourceMemberCreatedBy")
   createdWorkResourceMeterReadings WorkResourceMeterReading[] @relation("WorkResourceMeterReadingCreatedBy")
   createdInventoryItems           InventoryItem[] @relation("InventoryItemCreatedBy")
@@ -1943,6 +1949,14 @@ model WorkResource {
 
   qrToken    String? @unique
 
+  // VSK-hæfi ökutækis er fyrirtækis-/ökutækjastaðreynd, ekki bókunarregla.
+  // VAT_ELIGIBLE þýðir aðeins að ökutækið megi fara í frekara innskattsmat;
+  // það kveikir aldrei eitt og sér á innskatti fyrir tiltekna færslu.
+  vatEligibilityStatus        String   @default("UNCONFIRMED") // UNCONFIRMED | NO_VAT_DEDUCTION | VAT_ELIGIBLE
+  vatEligibilityValidFrom     DateTime?
+  vatEligibilityConfirmedAt   DateTime?
+  vatEligibilityConfirmedById Int?
+
   isActive Boolean @default(true)
 
   createdById Int?
@@ -1953,6 +1967,7 @@ model WorkResource {
   company   Company @relation(fields: [companyId], references: [id], onDelete: Cascade)
   createdBy User? @relation("WorkResourceCreatedBy", fields: [createdById], references: [id], onDelete: SetNull)
   updatedBy User? @relation("WorkResourceUpdatedBy", fields: [updatedById], references: [id], onDelete: SetNull)
+  vatEligibilityConfirmedBy User? @relation("WorkResourceVatEligibilityConfirmedBy", fields: [vatEligibilityConfirmedById], references: [id], onDelete: SetNull)
   assignments WorkPartAssignment[]
   usageFacts WorkPartUsageFact[]
   members WorkResourceMember[]
@@ -1963,6 +1978,8 @@ model WorkResource {
 
   @@unique([companyId, code])
   @@index([companyId, kind, isActive])
+  @@index([companyId, kind, vatEligibilityStatus])
+  @@index([vatEligibilityConfirmedById])
   @@index([companyId, status])
   @@index([companyId, name])
 }

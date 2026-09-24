@@ -3,7 +3,10 @@ import Link from "next/link";
 import { redirect } from "next/navigation";
 
 import { prisma } from "@/lib/prisma";
-import { getEffectiveUser } from "@/lib/core/access-control";
+import { getCompanyAccess, getEffectiveUser } from "@/lib/core/access-control";
+import { getCurrentInterfaceLanguage } from "@/lib/i18n/current-language";
+import { companyVehicleText } from "@/lib/i18n/company-vehicles";
+import { updateCompanyVehicleVatPolicy } from "@/app/fyrirtaeki/[id]/okutaeki/actions";
 import DeleteCompanyButton from "@/components/DeleteCompanyButton";
 import CompanyAccountAiSuggestion from "@/components/CompanyAccountAiSuggestion";
 import {
@@ -35,19 +38,16 @@ export default async function FyrirtaekiDetailPage({
     redirect("/innskraning");
   }
 
-  if (activeUser.role !== "ADMIN") {
-    const access = await prisma.userCompany.findUnique({
-      where: {
-        userId_companyId: {
-          userId: activeUser.id,
-          companyId,
-        },
-      },
-    });
+  let canManageCompanySettings = activeUser.role === "ADMIN";
 
-    if (!access || !access.isActive) {
+  if (activeUser.role !== "ADMIN") {
+    const access = await getCompanyAccess(companyId);
+
+    if (!access.allowed) {
       redirect("/fyrirtaeki");
     }
+
+    canManageCompanySettings = access.canManageCompanySettings;
   }
 
   const company = await prisma.company.findUnique({
@@ -82,6 +82,9 @@ export default async function FyrirtaekiDetailPage({
   if (!company) {
     redirect("/fyrirtaeki");
   }
+
+  const interfaceLanguage = await getCurrentInterfaceLanguage();
+  const vehicleT = companyVehicleText(interfaceLanguage);
 
   const rskActivities = company.activities.filter(
     (activity) => activity.registeredAtRsk
@@ -147,6 +150,61 @@ export default async function FyrirtaekiDetailPage({
               ].filter(Boolean).join(" · ")
             : "Ekki skráð"}
         </p>
+
+        <div className="mt-8 rounded-lg border p-4">
+          <h2 className="text-xl font-semibold">
+            {vehicleT.companyPolicyTitle}
+          </h2>
+          <p className="mt-1 max-w-3xl text-sm text-slate-500">
+            {vehicleT.companyPolicyHelp}
+          </p>
+
+          <form
+            action={updateCompanyVehicleVatPolicy}
+            className="mt-4 space-y-3"
+          >
+            <input type="hidden" name="companyId" value={company.id} />
+
+            <label className="flex max-w-3xl items-start gap-3 rounded-lg border border-slate-200 bg-slate-50 p-4">
+              <input
+                type="checkbox"
+                name="vehicleVatDeductionBlocked"
+                defaultChecked={company.vehicleVatDeductionBlocked}
+                disabled={!company.isActive || !canManageCompanySettings}
+                className="mt-1 h-4 w-4"
+              />
+              <span>
+                <span className="block font-semibold text-slate-900">
+                  {vehicleT.noVatVehicleLabel}
+                </span>
+                <span className="mt-1 block text-sm text-slate-600">
+                  {vehicleT.noVatVehicleHelp}
+                </span>
+              </span>
+            </label>
+
+            <p className="text-sm text-slate-700">
+              <strong>
+                {company.vehicleVatDeductionBlocked
+                  ? vehicleT.companyPolicyBlocked
+                  : vehicleT.companyPolicyUnconfirmed}
+              </strong>
+            </p>
+
+            {company.isActive && canManageCompanySettings ? (
+              <button
+                type="submit"
+                className="rounded bg-blue-600 px-4 py-2 font-medium text-white hover:bg-blue-700"
+              >
+                {vehicleT.saveCompanyPolicy}
+              </button>
+            ) : (
+              <p className="text-sm text-slate-500">
+                {!company.isActive ? vehicleT.inactive : vehicleT.readOnly}
+              </p>
+            )}
+          </form>
+        </div>
 
         <div className="mt-8 rounded-lg border p-4">
           <h2 className="mb-3 text-xl font-semibold">
