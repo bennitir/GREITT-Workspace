@@ -9,6 +9,8 @@ import {
   confirmDetectedDocumentEnvironment,
   retainDetectedDocumentForInsight,
   resolveDetectedDocumentAsSupporting,
+  confirmDetectedDocumentDuplicate,
+  rejectDetectedDocumentDuplicate,
   confirmInsightEntityAccountLink,
   confirmMissingLoanDetails,
   confirmInsurancePolicyProfile,
@@ -40,6 +42,8 @@ import { cookies } from "next/headers";
 import { getCompanyModuleSettings } from "@/lib/core/company-module-repository";
 import { getEnabledCompanyModules } from "@/lib/core/company-modules";
 import { getCurrentInterfaceLanguage } from "@/lib/i18n/current-language";
+import { uiText } from "@/lib/i18n/ui";
+
 export default async function ReceiptPage({
     params,
   searchParams,
@@ -49,6 +53,7 @@ export default async function ReceiptPage({
 }) {
     const cookieStore = await cookies();
   const interfaceLanguage = await getCurrentInterfaceLanguage();
+  const t = uiText(interfaceLanguage);
   const activeUserId = cookieStore.get("activeUserId")?.value;
 
   const activeCompanyId = cookieStore.get("activeCompanyId")?.value;
@@ -500,7 +505,8 @@ const getNextUnresolvedDocument = (currentDocumentId: number) =>
   !receipt.aiDetectedDocuments.some(
     (document) =>
       document.voucherNumber !== null ||
-      document.disposedAt !== null
+      document.disposedAt !== null ||
+      document.duplicateMarkedAt !== null
   ) && (
     <form
       action={async () => {
@@ -865,6 +871,8 @@ const getNextUnresolvedDocument = (currentDocumentId: number) =>
                               </div>
 
                               {canEdit &&
+                                !document.duplicateMarkedAt &&
+                                !document.disposedAt &&
                                 (!latestInsightItem ||
                                   latestAttemptFailed) &&
                                 insightPrivacyParam ===
@@ -917,6 +925,8 @@ const getNextUnresolvedDocument = (currentDocumentId: number) =>
                                 )}
 
                               {canEdit &&
+                                !document.duplicateMarkedAt &&
+                                !document.disposedAt &&
                                 (!latestInsightItem ||
                                   latestAttemptFailed) &&
                                 insightPrivacyParam !==
@@ -1690,7 +1700,13 @@ const getNextUnresolvedDocument = (currentDocumentId: number) =>
         ? "Varðveitt fyrir Innsýn – ekki bókfært"
         : document.disposition === "SUPPORTING_RESOLVED"
           ? "Afgreitt sem stuðningsskjal – ekki bókfært"
-          : "Ekki bókfært – utan rekstrar"}
+          : document.disposition === "DUPLICATE_RESOLVED"
+            ? `${t.duplicateResolved}${
+                document.duplicateVoucherNumber !== null
+                  ? ` – ${t.duplicateOfVoucher} ${document.duplicateVoucherNumber}`
+                  : ""
+              }`
+            : "Ekki bókfært – utan rekstrar"}
     </div>
     {document.dispositionReason && (
       <p className="mt-2 text-sm text-slate-700">
@@ -1700,6 +1716,11 @@ const getNextUnresolvedDocument = (currentDocumentId: number) =>
     <p className="mt-1 text-sm text-slate-600">
       <strong>Afgreitt:</strong> {formatDate(document.disposedAt)}
     </p>
+    {document.disposition === "DUPLICATE_RESOLVED" ? (
+      <p className="mt-2 text-sm text-slate-700">
+        {t.duplicateConfirmedHelp}
+      </p>
+    ) : null}
   </div>
 ) : document.documentRole === "BOOKABLE" ? (
   <DetectedDocumentEntriesEditor
@@ -1716,16 +1737,18 @@ const getNextUnresolvedDocument = (currentDocumentId: number) =>
     duplicateVoucherNumber={document.duplicateVoucherNumber}
     duplicateMarkedAt={document.duplicateMarkedAt}
     canBook={canBook}
-    canEdit={canEdit}
+    canEdit={canEdit && !document.duplicateMarkedAt}
   />
 ) : null}
                               
 
                     {document.disposedAt ? (
   <>
-    <div className="mt-3 rounded border border-slate-300 bg-slate-50 p-3 text-slate-700">
-      Skjalið hefur verið afgreitt án bókunar og er varðveitt með rekjanleika.
-    </div>
+    {document.disposition !== "DUPLICATE_RESOLVED" ? (
+      <div className="mt-3 rounded border border-slate-300 bg-slate-50 p-3 text-slate-700">
+        Skjalið hefur verið afgreitt án bókunar og er varðveitt með rekjanleika.
+      </div>
+    ) : null}
     {(() => {
       const nextDocument = getNextUnresolvedDocument(document.id);
       return nextDocument ? (
@@ -1792,6 +1815,7 @@ const getNextUnresolvedDocument = (currentDocumentId: number) =>
  
      <>               
                         {document.documentRole === "BOOKABLE" &&
+                          !document.duplicateMarkedAt &&
                           document.environmentReviewRequired &&
                           !document.environmentConfirmedAt && (
                             <div className="mt-3 rounded border border-amber-300 bg-amber-50 p-3 text-sm text-amber-950">
@@ -1803,7 +1827,87 @@ const getNextUnresolvedDocument = (currentDocumentId: number) =>
                             </div>
                           )}
 
+                        {canBook &&
+                          document.documentRole === "BOOKABLE" &&
+                          document.duplicateMarkedAt &&
+                          !document.disposedAt && (
+                            <div className="mt-3 rounded border border-amber-300 bg-amber-50 p-4 text-amber-950">
+                              <p className="font-semibold">
+                                {t.duplicateCandidate}
+                                {document.duplicateVoucherNumber !== null
+                                  ? ` – ${t.duplicateOfVoucher} ${document.duplicateVoucherNumber}`
+                                  : ""}
+                              </p>
+                              <p className="mt-1 text-sm">
+                                {t.duplicateConfirmHelp}
+                              </p>
+                              <div className="mt-3 flex flex-wrap gap-2">
+                                <form
+                                  action={async () => {
+                                    "use server";
+
+                                    await confirmDetectedDocumentDuplicate(document.id);
+
+                                    const nextDocument =
+                                      await prisma.aiDetectedDocument.findFirst({
+                                        where: {
+                                          id: { not: document.id },
+                                          reviewedAt: null,
+                                          approvedAt: null,
+                                          disposedAt: null,
+                                          receipt: {
+                                            companyId: receipt.companyId,
+                                          },
+                                        },
+                                        orderBy: [
+                                          { date: "asc" },
+                                          { id: "asc" },
+                                        ],
+                                        select: {
+                                          id: true,
+                                          receiptId: true,
+                                        },
+                                      });
+
+                                    if (nextDocument) {
+                                      redirect(
+                                        `/fylgiskjol/${nextDocument.receiptId}?document=${nextDocument.id}`
+                                      );
+                                    }
+
+                                    redirect("/fylgiskjol");
+                                  }}
+                                >
+                                  <button
+                                    type="submit"
+                                    className="rounded bg-amber-600 px-4 py-2 font-semibold text-white hover:bg-amber-700"
+                                  >
+                                    {t.confirmDuplicate}
+                                  </button>
+                                </form>
+
+                                <form
+                                  action={async () => {
+                                    "use server";
+                                    await rejectDetectedDocumentDuplicate(document.id);
+                                    redirect(
+                                      `/fylgiskjol/${receipt.id}?document=${document.id}`
+                                    );
+                                  }}
+                                >
+                                  <button
+                                    type="submit"
+                                    className="rounded border border-slate-300 bg-white px-4 py-2 font-semibold text-slate-800 hover:bg-slate-50"
+                                  >
+                                    {t.rejectDuplicate}
+                                  </button>
+                                </form>
+                              </div>
+                            </div>
+                          )}
+
                         {document.documentRole === "BOOKABLE" &&
+                          !document.duplicateMarkedAt &&
                           (!document.environmentReviewRequired || document.environmentConfirmedAt) && (
                         <form
                           action={async () => {

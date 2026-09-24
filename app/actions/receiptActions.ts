@@ -242,6 +242,7 @@ async function runAutomaticInsightForDocuments(documentIds: number[]) {
           paymentSchedule: true,
           extractionMetadata: true,
           disposition: true,
+          duplicateMarkedAt: true,
           _count: {
             select: { bookingEntries: true },
           },
@@ -249,6 +250,14 @@ async function runAutomaticInsightForDocuments(documentIds: number[]) {
       });
 
       if (!document) continue;
+
+      // Sterk tvíteknivísbending stöðvar sjálfvirka Innsýn-vinnslu þar til
+      // notandi hefur staðfest eða hafnað tvíritinu. persistReceiptDerivedInsight
+      // hreinsar jafnframt eldri afleiddar staðreyndir fyrir tvírit án AI-kalls.
+      if (document.duplicateMarkedAt) {
+        await persistReceiptDerivedInsight(documentId);
+        continue;
+      }
 
       // Varnarregla: þegar fylgiskjalagreiningin hefur þegar búið til
       // raunverulegar bókunarlínur má sjálfvirk Innsýn aldrei lesa sama
@@ -1024,6 +1033,23 @@ async function analyzeReceiptWithAIInternal(
     },
     select: { id: true },
   });
+
+  if (!options.skipAccessCheck) {
+    const unresolvedDuplicate = await prisma.aiDetectedDocument.findFirst({
+      where: {
+        receiptId,
+        duplicateMarkedAt: { not: null },
+        disposedAt: null,
+      },
+      select: { id: true },
+    });
+
+    if (unresolvedDuplicate) {
+      throw new Error(
+        "Fylgiskjalið inniheldur óafgreidda tvíteknivísbendingu. Staðfesta þarf tvíritið eða hafna vísbendingunni áður en AI-endurlestur er leyfður."
+      );
+    }
+  }
 
   if (finalizedDetectedDocument) {
     throw new Error(
@@ -4581,6 +4607,12 @@ export async function reopenDocumentInventoryLine(formData: FormData) {
     throw new Error("Þetta fylgiskjal hefur þegar verið yfirfarið.");
   }
 
+  if (document.duplicateMarkedAt) {
+    throw new Error(
+      "Skjalið er merkt sem mögulegt tvírit. Staðfesta þarf tvíritið eða hafna tvíteknivísbendingunni áður en venjuleg yfirferð heldur áfram."
+    );
+  }
+
   await prisma.$transaction(async (tx) => {
     await tx.aiDetectedDocument.update({
       where: {
@@ -4758,7 +4790,11 @@ export async function resolveDetectedDocumentAsSupporting(
 
 async function finalizeDetectedDocumentWithoutBooking(
   documentId: number,
-  disposition: "OUTSIDE_BUSINESS" | "INSIGHT_ONLY" | "SUPPORTING_RESOLVED",
+  disposition:
+    | "OUTSIDE_BUSINESS"
+    | "INSIGHT_ONLY"
+    | "SUPPORTING_RESOLVED"
+    | "DUPLICATE_RESOLVED",
   reason: string
 ) {
   const document = await prisma.aiDetectedDocument.findUnique({
@@ -4796,15 +4832,35 @@ async function finalizeDetectedDocumentWithoutBooking(
       ? "RETAIN_FOR_INSIGHT"
       : disposition === "SUPPORTING_RESOLVED"
         ? "RESOLVE_SUPPORTING_DOCUMENT"
-        : "MARK_OUTSIDE_BUSINESS";
+        : disposition === "DUPLICATE_RESOLVED"
+          ? "CONFIRM_DUPLICATE_DOCUMENT"
+          : "MARK_OUTSIDE_BUSINESS";
   const description =
     disposition === "INSIGHT_ONLY"
       ? "Fylgiskjal varðveitt fyrir Innsýn án bókunar."
       : disposition === "SUPPORTING_RESOLVED"
         ? "Fylgiskjal afgreitt sem stuðningsskjal án sjálfstæðrar bókunar."
-        : "Fylgiskjal afgreitt án bókunar – utan atvinnurekstrarbókhalds.";
+        : disposition === "DUPLICATE_RESOLVED"
+          ? "Tvírit staðfest og afgreitt án nýrrar bókunar."
+          : "Fylgiskjal afgreitt án bókunar – utan atvinnurekstrarbókhalds.";
 
   await prisma.$transaction(async (tx) => {
+    if (disposition === "DUPLICATE_RESOLVED") {
+      // Tvírit má ekki tvítelja staðreyndir eða entity-tengingar í Innsýn.
+      await tx.insightFact.deleteMany({
+        where: {
+          companyId: document.receipt.companyId,
+          documentId: document.id,
+        },
+      });
+
+      await tx.documentEntityLink.deleteMany({
+        where: {
+          documentId: document.id,
+        },
+      });
+    }
+
     await tx.aiDetectedDocument.update({
       where: { id: document.id },
       data: {
@@ -4843,6 +4899,8 @@ async function finalizeDetectedDocumentWithoutBooking(
           documentType: document.documentType,
           documentRole: document.documentRole,
           reason: cleanReason,
+          duplicateOfDocumentId: document.duplicateOfDocumentId,
+          duplicateVoucherNumber: document.duplicateVoucherNumber,
         },
       },
     });
@@ -4877,6 +4935,158 @@ async function finalizeDetectedDocumentWithoutBooking(
   revalidatePath("/");
 }
 
+export async function confirmDetectedDocumentDuplicate(
+  documentId: number
+) {
+  const document = await prisma.aiDetectedDocument.findUnique({
+    where: { id: documentId },
+    include: { receipt: true },
+  });
+
+  if (!document) {
+    throw new Error("Greint fylgiskjal fannst ekki.");
+  }
+
+  await requireCompanyBookAccess(document.receipt.companyId);
+
+  if (document.approvedAt || document.voucherNumber != null) {
+    throw new Error("Bókað fylgiskjal getur ekki verið afgreitt sem tvírit.");
+  }
+
+  if (document.disposedAt || document.disposition) {
+    throw new Error("Þetta fylgiskjal hefur þegar verið endanlega afgreitt.");
+  }
+
+  if (
+    !document.duplicateMarkedAt ||
+    !document.duplicateOfDocumentId ||
+    !document.duplicateVoucherNumber
+  ) {
+    throw new Error("Skjalið er ekki merkt með fullnægjandi tvíteknivísbendingu.");
+  }
+
+  const original = await prisma.aiDetectedDocument.findFirst({
+    where: {
+      id: document.duplicateOfDocumentId,
+      receipt: {
+        companyId: document.receipt.companyId,
+      },
+    },
+    select: {
+      id: true,
+      approvedAt: true,
+      voucherNumber: true,
+    },
+  });
+
+  if (
+    !original ||
+    original.voucherNumber !== document.duplicateVoucherNumber ||
+    (original.approvedAt === null && original.voucherNumber === null)
+  ) {
+    throw new Error(
+      "Upprunalega bókaða fylgiskjalið fannst ekki eða tengingin er ekki lengur gild."
+    );
+  }
+
+  return finalizeDetectedDocumentWithoutBooking(
+    documentId,
+    "DUPLICATE_RESOLVED",
+    `Tvírit af bókuðu fylgiskjali ${document.duplicateVoucherNumber}.`
+  );
+}
+
+export async function rejectDetectedDocumentDuplicate(
+  documentId: number
+) {
+  const document = await prisma.aiDetectedDocument.findUnique({
+    where: { id: documentId },
+    include: { receipt: true },
+  });
+
+  if (!document) {
+    throw new Error("Greint fylgiskjal fannst ekki.");
+  }
+
+  await requireCompanyBookAccess(document.receipt.companyId);
+
+  const user = await getEffectiveUser();
+  if (!user) {
+    throw new Error("Innskráning er nauðsynleg.");
+  }
+
+  if (document.approvedAt || document.voucherNumber != null) {
+    throw new Error("Ekki er hægt að hafna tvíteknivísbendingu á bókuðu fylgiskjali.");
+  }
+
+  if (document.disposedAt || document.disposition) {
+    throw new Error("Þetta fylgiskjal hefur þegar verið endanlega afgreitt.");
+  }
+
+  if (!document.duplicateMarkedAt) {
+    throw new Error("Skjalið er ekki merkt sem mögulegt tvírit.");
+  }
+
+  const beforeData = {
+    duplicateMarkedAt: document.duplicateMarkedAt.toISOString(),
+    duplicateOfDocumentId: document.duplicateOfDocumentId,
+    duplicateVoucherNumber: document.duplicateVoucherNumber,
+  };
+
+  await prisma.$transaction(async (tx) => {
+    await tx.aiDetectedDocument.update({
+      where: { id: document.id },
+      data: {
+        duplicateMarkedAt: null,
+        duplicateOfDocumentId: null,
+        duplicateVoucherNumber: null,
+      },
+    });
+
+    await tx.auditEvent.create({
+      data: {
+        companyId: document.receipt.companyId,
+        userId: user.id,
+        entityType: "Receipt",
+        entityId: document.receiptId,
+        action: "REJECT_DUPLICATE_DOCUMENT_MATCH",
+        parentEntityType: "AiDetectedDocument",
+        parentEntityId: document.id,
+        source: "USER",
+        description:
+          "Notandi hafnaði tvíteknivísbendingu og skjalið fer aftur í venjulegt yfirferðarflæði.",
+        beforeData,
+        afterData: {
+          duplicateMarkedAt: null,
+          duplicateOfDocumentId: null,
+          duplicateVoucherNumber: null,
+        },
+        metadata: {
+          detectedDocumentId: document.id,
+          receiptId: document.receiptId,
+          learningEffect: "NONE",
+        },
+      },
+    });
+  });
+
+  // Endurbyggjum aðeins ódýrar, þegar lesnar Innsýn-staðreyndir.
+  // Engin ný AI-lestur er ræstur við höfnun á tvíteknivísbendingu.
+  try {
+    await persistReceiptDerivedInsight(document.id);
+  } catch (error) {
+    console.error(
+      `Ekki tókst að endurbyggja receipt-derived Innsýn fyrir document ${document.id}:`,
+      error
+    );
+  }
+
+  revalidatePath(`/fylgiskjol/${document.receiptId}`);
+  revalidatePath("/fylgiskjol");
+  revalidatePath("/innsyn");
+  revalidatePath("/");
+}
+
 export async function markDetectedDocumentDuplicate(
   documentId: number,
   duplicateOfDocumentId: number,
@@ -4901,8 +5111,18 @@ export async function markDetectedDocumentDuplicate(
     },
   });
 
+  try {
+    await persistReceiptDerivedInsight(document.id);
+  } catch (error) {
+    console.error(
+      `Ekki tókst að hreinsa receipt-derived Innsýn fyrir tvírit document ${document.id}:`,
+      error
+    );
+  }
+
   revalidatePath(`/fylgiskjol/${document.receiptId}`);
   revalidatePath("/fylgiskjol");
+  revalidatePath("/innsyn");
 }
 
 
@@ -5194,6 +5414,12 @@ async function learnConfirmedAccountSelectionPatterns(
 
   if (document.disposedAt || document.disposition) {
     throw new Error("Ekki er hægt að bóka fylgiskjal sem hefur verið afgreitt án bókunar.");
+  }
+
+  if (document.duplicateMarkedAt) {
+    throw new Error(
+      "Skjalið er merkt sem mögulegt tvírit og má ekki bóka fyrr en tvíteknivísbendingunni hefur verið hafnað."
+    );
   }
 
   if (!document.reviewedAt) {

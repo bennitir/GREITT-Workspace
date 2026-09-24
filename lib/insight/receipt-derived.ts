@@ -70,6 +70,26 @@ export async function persistReceiptDerivedInsight(documentId: number) {
       },
     });
 
+    // Sterk tvíteknivísbending er biðstaða, ekki ný fjárhagsstaðreynd.
+    // Við hreinsum afleidd gögn og bíðum eftir notandastaðfestingu áður
+    // en skjalið fær aftur að leggja sjálfstæðar staðreyndir inn í Innsýn.
+    if (
+      document.duplicateMarkedAt ||
+      document.disposition === "DUPLICATE_RESOLVED"
+    ) {
+      await tx.aiDetectedDocument.update({
+        where: { id: documentId },
+        data: {
+          insightMode: null,
+        },
+      });
+
+      return {
+        factCount: 0,
+        merchantEntityId: null,
+      };
+    }
+
     const facts: Array<{
       factType: string;
       label: string;

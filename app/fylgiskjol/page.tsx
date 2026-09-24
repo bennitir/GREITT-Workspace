@@ -82,6 +82,8 @@ export default async function FylgiskjolPage() {
           date: true,
           totalAmount: true,
           reviewedAt: true,
+          duplicateMarkedAt: true,
+          duplicateVoucherNumber: true,
         },
       },
     },
@@ -108,6 +110,7 @@ export default async function FylgiskjolPage() {
     date: Date | null;
     amount: number;
     statusText: string;
+    duplicateVoucherNumber: number | null;
   };
 
   const displayItems: DisplayItem[] = [];
@@ -136,9 +139,12 @@ export default async function FylgiskjolPage() {
           companyName: receipt.company.name,
           date: document.date,
           amount: document.totalAmount ?? 0,
-          statusText: document.reviewedAt
-            ? "Yfirfarið"
-            : "Til yfirferðar",
+          statusText: document.duplicateMarkedAt
+            ? "DUPLICATE_CANDIDATE"
+            : document.reviewedAt
+              ? "Yfirfarið"
+              : "Til yfirferðar",
+          duplicateVoucherNumber: document.duplicateVoucherNumber,
         });
       }
     } else {
@@ -155,6 +161,7 @@ export default async function FylgiskjolPage() {
           receipt.status === "REVIEWED"
             ? "Yfirfarið"
             : receipt.status,
+        duplicateVoucherNumber: null,
       });
     }
   }
@@ -183,9 +190,11 @@ export default async function FylgiskjolPage() {
       const statusClass =
         item.statusText === "Yfirfarið"
           ? "text-green-700"
-          : item.statusText === "NEEDS_ATTENTION"
-            ? "text-orange-700"
-            : "text-red-600";
+          : item.statusText === "DUPLICATE_CANDIDATE"
+            ? "text-amber-700"
+            : item.statusText === "NEEDS_ATTENTION"
+              ? "text-orange-700"
+              : "text-red-600";
 
       const statusLabel =
         item.statusText === "NEW"
@@ -194,9 +203,11 @@ export default async function FylgiskjolPage() {
             ? t.statusNeedsAttention
             : item.statusText === "Yfirfarið"
               ? t.statusReviewed
-              : item.statusText === "Til yfirferðar"
-                ? t.statusForReview
-                : item.statusText;
+              : item.statusText === "DUPLICATE_CANDIDATE"
+                ? t.duplicateCandidate
+                : item.statusText === "Til yfirferðar"
+                  ? t.statusForReview
+                  : item.statusText;
 
       return (
         <a
@@ -216,8 +227,9 @@ export default async function FylgiskjolPage() {
             </p>
 
             <p className="text-sm text-slate-500">
-              {t.voucher}:{" "}
-              {item.voucherNumber ?? t.noVoucher}
+              {item.duplicateVoucherNumber !== null
+                ? `${t.duplicateOfVoucher} ${item.duplicateVoucherNumber}`
+                : `${t.voucher}: ${item.voucherNumber ?? t.noVoucher}`}
             </p>
           </div>
 

@@ -155,6 +155,7 @@ export async function queueInsightForDocument(
       documentType: true,
       documentRole: true,
       disposition: true,
+      duplicateMarkedAt: true,
       receipt: {
         select: {
           id: true,
@@ -171,6 +172,15 @@ export async function queueInsightForDocument(
 
   if (!document) {
     throw new Error("Skjalið fannst ekki.");
+  }
+
+  if (
+    document.duplicateMarkedAt ||
+    document.disposition === "DUPLICATE_RESOLVED"
+  ) {
+    throw new Error(
+      "Innsýn er ekki keyrð á skjali sem er merkt sem mögulegt eða staðfest tvírit."
+    );
   }
 
   if (

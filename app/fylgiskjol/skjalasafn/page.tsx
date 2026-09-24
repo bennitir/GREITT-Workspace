@@ -108,6 +108,7 @@ export default async function SkjalasafnPage({
     | "SUPPORTING"
     | "INSIGHT"
     | "OUTSIDE_BUSINESS"
+    | "DUPLICATE"
     | "FINALIZED";
 
   type ArchiveItem = {
@@ -176,6 +177,16 @@ export default async function SkjalasafnPage({
               archiveStatus = "OUTSIDE_BUSINESS";
               statusLabel = t.outsideBusinessStatus;
               statusClass = "text-slate-600";
+              break;
+
+            case "DUPLICATE_RESOLVED":
+              archiveStatus = "DUPLICATE";
+              statusLabel = t.duplicateResolved;
+              statusClass = "text-amber-700";
+              detail =
+                document.duplicateVoucherNumber !== null
+                  ? `${t.duplicateOfVoucher} ${document.duplicateVoucherNumber}`
+                  : document.dispositionReason ?? null;
               break;
 
             default:
@@ -282,6 +293,10 @@ export default async function SkjalasafnPage({
       return item.status === "OUTSIDE_BUSINESS";
     }
 
+    if (statusOption === "duplicates") {
+      return item.status === "DUPLICATE";
+    }
+
     return true;
   });
 
@@ -383,6 +398,10 @@ export default async function SkjalasafnPage({
     (item) => item.status === "OUTSIDE_BUSINESS",
   ).length;
 
+  const duplicateCount = archiveItems.filter(
+    (item) => item.status === "DUPLICATE",
+  ).length;
+
   return (
     <main className="p-8">
       <PageHeader
@@ -454,6 +473,17 @@ export default async function SkjalasafnPage({
           }`}
         >
           {t.outsideAccounting} ({outsideBusinessCount})
+        </Link>
+
+        <Link
+          href="/fylgiskjol/skjalasafn?status=duplicates"
+          className={`rounded border px-3 py-2 text-sm font-semibold transition ${
+            statusOption === "duplicates"
+              ? "border-blue-600 bg-blue-600 text-white"
+              : "border-slate-300 bg-white text-slate-700 hover:bg-slate-50"
+          }`}
+        >
+          {t.duplicateFilter} ({duplicateCount})
         </Link>
       </div>
 
@@ -622,9 +652,11 @@ export default async function SkjalasafnPage({
 
                     <td className="border-b p-0">
                       <Link href={href} className="block p-3">
-                        {item.bookingAccounts.length > 0
-                          ? item.bookingAccounts.join(", ")
-                          : "—"}
+                        {item.status === "DUPLICATE"
+                          ? t.duplicateNoBooking
+                          : item.bookingAccounts.length > 0
+                            ? item.bookingAccounts.join(", ")
+                            : "—"}
                       </Link>
                     </td>
 
