@@ -20,7 +20,6 @@ import {
   deleteDetectedDocument,
   deleteReceipt,
   markReceiptNeedsAttention,
-  cancelManualReceipt,
   repairDeleteLegacyReceipt,
 } from "@/app/actions/receiptActions";
 import DetectedDocumentEntriesEditor from "@/components/DetectedDocumentEntriesEditor";
@@ -389,6 +388,14 @@ const headerAmount =
   receipt.aiAmount ??
   receipt.amount;
 
+const isManualBookedReceipt =
+  receipt.status === "APPROVED" &&
+  receipt.voucherNumber != null &&
+  receipt.aiDetectedDocuments.length === 0 &&
+  receipt.entries.length > 0;
+
+const manualBookedDate = isManualBookedReceipt ? receipt.date : null;
+
 const getNextUnresolvedDocument = (currentDocumentId: number) =>
   receipt.aiDetectedDocuments
     .filter(
@@ -407,6 +414,25 @@ const getNextUnresolvedDocument = (currentDocumentId: number) =>
         {receipt.company.name}
       </span>
 
+      {isManualBookedReceipt && (
+        <>
+          <span className="text-slate-400">•</span>
+          <span className="font-semibold">
+            Fylgiskjal nr. {receipt.voucherNumber}
+          </span>
+          <span className="text-slate-400">•</span>
+          <span>
+            {manualBookedDate ? formatDate(manualBookedDate) : "Dagsetning vantar"}
+          </span>
+          {receipt.merchantName && (
+            <>
+              <span className="text-slate-400">•</span>
+              <span>{receipt.merchantName}</span>
+            </>
+          )}
+        </>
+      )}
+
       <span className="text-slate-400">•</span>
 
       {originalFileUrl && (
@@ -423,8 +449,14 @@ const getNextUnresolvedDocument = (currentDocumentId: number) =>
       )}
 
       <span className="font-semibold">
-  {formatNumber(headerAmount)} kr.
-</span>
+        {formatNumber(headerAmount)} kr.
+      </span>
+
+      {isManualBookedReceipt && (
+        <span className="rounded-full bg-green-100 px-2.5 py-1 text-sm font-semibold text-green-800">
+          Bókað
+        </span>
+      )}
 
       {originalFileUrl && (
   <>
@@ -464,11 +496,12 @@ const getNextUnresolvedDocument = (currentDocumentId: number) =>
         )}
       </div>
     </TraceDetails>
-{!receipt.aiDetectedDocuments.some(
-  (document) =>
-    document.voucherNumber !== null ||
-    document.disposedAt !== null
-) && (
+{!isManualBookedReceipt &&
+  !receipt.aiDetectedDocuments.some(
+    (document) =>
+      document.voucherNumber !== null ||
+      document.disposedAt !== null
+  ) && (
     <form
       action={async () => {
         "use server";
@@ -487,9 +520,10 @@ const getNextUnresolvedDocument = (currentDocumentId: number) =>
       </button>
     </form>
     )}
-    {!receipt.aiDetectedDocuments.some(
-  (document) => document.reviewedAt !== null || document.disposedAt !== null
-) && (
+    {!isManualBookedReceipt &&
+      !receipt.aiDetectedDocuments.some(
+        (document) => document.reviewedAt !== null || document.disposedAt !== null
+      ) && (
   <form
   action={async () => {
     "use server";
@@ -509,78 +543,104 @@ const getNextUnresolvedDocument = (currentDocumentId: number) =>
   </>
 )}
     </div>
-{receipt.status === "APPROVED" &&
-  receipt.voucherNumber != null &&
-  receipt.aiDetectedDocuments.length === 0 && (
-    <form
-      action={async () => {
-        "use server";
-        await cancelManualReceipt(receipt.id);
-      }}
-      className="mt-4"
-    >
-      <button
-        type="submit"
-        className="rounded bg-amber-600 px-4 py-2 font-semibold text-white hover:bg-amber-700"
-      >
-        Afbóka handvirka bókun
-      </button>
-    </form>
-  )}
-
-
-      
-      <div className="grid grid-cols-1 lg:grid-cols-2 items-start gap-4 mt-6">
+      <div className={`grid grid-cols-1 items-start gap-4 mt-6 ${isManualBookedReceipt ? "" : "lg:grid-cols-2"}`}>
         {/* VINSTRI DÁLKUR - OCR */}
         <div className="space-y-4">
-        <div className="border rounded-lg p-4">
-          <h2 className="text-xl font-semibold mb-3">
-            OCR lestur
-          </h2>
-
-          <p>
-            <strong>Staða:</strong>{" "}
-            {receipt.company.vatRegistered === false && receipt.ocrStatus
-              ? receipt.ocrStatus
-                  .replace(/\s*Athuga VSK-tímabil\.?/gi, "")
-                  .trim()
-              : receipt.ocrStatus ?? "Ekki lesið"}
-          </p>
-
-          <p className="mt-1">
-            <strong>Fjöldi fylgiskjala:</strong>{" "}
-            {receipt.documentCount ?? "Óþekkt"}
-          </p>
-
-          <p className="mt-1">
-            <strong>Öryggi:</strong>{" "}
-            {receipt.ocrConfidence != null
-              ? `${Math.round(
-                  receipt.ocrConfidence * 100
-                )}%`
-              : "Óþekkt"}
-          </p>
-
-          <p className="mt-1">
-            <strong>Söluaðili:</strong>{" "}
-            {receipt.merchantName ?? "Óþekktur"}
-          </p>
-
-          {receipt.ocrText && (
-            <div className="mt-3">
-              <strong>Lesinn texti:</strong>
-
-              <pre className="mt-2 whitespace-pre-wrap rounded bg-gray-50 p-3 text-sm">
-                {receipt.ocrText}
-              </pre>
+        {isManualBookedReceipt ? (
+          <div className="rounded-lg border border-green-200 bg-green-50 p-4">
+            <div className="flex flex-wrap items-start justify-between gap-3">
+              <div>
+                <h2 className="text-xl font-semibold text-green-950">Bókað fylgiskjal</h2>
+                <p className="mt-1 text-sm text-green-800">
+                  Handvirkt bókað. Færslan er bókuð, læst og tekin með í Innsýn samkvæmt bókunarlínum.
+                </p>
+              </div>
+              <span className="rounded-full bg-green-100 px-3 py-1 text-sm font-semibold text-green-800">
+                Bókað
+              </span>
             </div>
-          )}
 
+            <dl className="mt-4 grid gap-x-6 gap-y-3 sm:grid-cols-2">
+              <div>
+                <dt className="text-sm text-slate-600">Fylgiskjalsnúmer</dt>
+                <dd className="font-semibold text-slate-950">{receipt.voucherNumber}</dd>
+              </div>
+              <div>
+                <dt className="text-sm text-slate-600">Dagsetning</dt>
+                <dd className="font-semibold text-slate-950">
+                  {manualBookedDate ? formatDate(manualBookedDate) : "Dagsetning vantar"}
+                </dd>
+              </div>
+              <div>
+                <dt className="text-sm text-slate-600">Söluaðili</dt>
+                <dd className="font-semibold text-slate-950">{receipt.merchantName ?? "Óskráður"}</dd>
+              </div>
+              <div>
+                <dt className="text-sm text-slate-600">Upphæð</dt>
+                <dd className="font-semibold text-slate-950">{formatNumber(receipt.amount)} kr.</dd>
+              </div>
+              {receipt.merchantKennitala && (
+                <div>
+                  <dt className="text-sm text-slate-600">Kennitala</dt>
+                  <dd className="font-semibold text-slate-950">{receipt.merchantKennitala}</dd>
+                </div>
+              )}
+              {receipt.receiptNumber && (
+                <div>
+                  <dt className="text-sm text-slate-600">Kvittunarnúmer</dt>
+                  <dd className="font-semibold text-slate-950">{receipt.receiptNumber}</dd>
+                </div>
+              )}
+            </dl>
+          </div>
+        ) : (
+          <div className="border rounded-lg p-4">
+            <h2 className="text-xl font-semibold mb-3">
+              OCR lestur
+            </h2>
 
-        </div>
+            <p>
+              <strong>Staða:</strong>{" "}
+              {receipt.company.vatRegistered === false && receipt.ocrStatus
+                ? receipt.ocrStatus
+                    .replace(/\s*Athuga VSK-tímabil\.?/gi, "")
+                    .trim()
+                : receipt.ocrStatus ?? "Ekki lesið"}
+            </p>
+
+            <p className="mt-1">
+              <strong>Fjöldi fylgiskjala:</strong>{" "}
+              {receipt.documentCount ?? "Óþekkt"}
+            </p>
+
+            <p className="mt-1">
+              <strong>Öryggi:</strong>{" "}
+              {receipt.ocrConfidence != null
+                ? `${Math.round(
+                    receipt.ocrConfidence * 100
+                  )}%`
+                : "Óþekkt"}
+            </p>
+
+            <p className="mt-1">
+              <strong>Söluaðili:</strong>{" "}
+              {receipt.merchantName ?? "Óþekktur"}
+            </p>
+
+            {receipt.ocrText && (
+              <div className="mt-3">
+                <strong>Lesinn texti:</strong>
+
+                <pre className="mt-2 whitespace-pre-wrap rounded bg-gray-50 p-3 text-sm">
+                  {receipt.ocrText}
+                </pre>
+              </div>
+            )}
+          </div>
+        )}
          <div className="border rounded-lg p-4">
         <h2 className="text-xl font-semibold mb-3">
-          {visibleDocuments.some((document) => document.documentRole === "BOOKABLE") ? "Bókun" : "Afgreiðsla"}
+          {isManualBookedReceipt || visibleDocuments.some((document) => document.documentRole === "BOOKABLE") ? "Bókun" : "Afgreiðsla"}
         </h2>
 
 {visibleDocuments.some((document) => document.documentRole === "BOOKABLE" && !document.reviewedAt && !document.disposedAt) && (
@@ -588,6 +648,12 @@ const getNextUnresolvedDocument = (currentDocumentId: number) =>
     🔒 Ekki hægt að bóka fyrr en fylgiskjalið hefur verið merkt yfirfarið.
   </div>
 )}
+
+        {isManualBookedReceipt && (
+          <div className="mb-4 rounded border border-green-300 bg-green-50 p-3 font-semibold text-green-700">
+            ✓ Fylgiskjal nr. {receipt.voucherNumber} er bókað
+          </div>
+        )}
 
         {visibleDocuments.length > 0 && (
   <div className="mb-4">
@@ -632,28 +698,31 @@ const getNextUnresolvedDocument = (currentDocumentId: number) =>
         </div>
 </div>
                         {/* HÆGRI DÁLKUR */}
+        {(!isManualBookedReceipt || visibleDocuments.length > 0) && (
         <div className="space-y-4 lg:col-start-2 lg:row-start-1">
-          <div className="border rounded-lg p-4">
-            <h2 className="text-xl font-semibold mb-3">
-              Tillaga AI
-            </h2>
+          {!isManualBookedReceipt && (
+            <div className="border rounded-lg p-4">
+              <h2 className="text-xl font-semibold mb-3">
+                Tillaga AI
+              </h2>
 
-            <p>
-              <strong>Dagsetning:</strong>{" "}
-              {receipt.aiDate
-  ? formatDate(receipt.aiDate)
-  : "Engin tillaga"}
-            </p>
+              <p>
+                <strong>Dagsetning:</strong>{" "}
+                {receipt.aiDate
+                  ? formatDate(receipt.aiDate)
+                  : "Engin tillaga"}
+              </p>
 
-            <p className="mt-1">
-              <strong>Upphæð:</strong>{" "}
-{selectedDocumentId && visibleDocuments[0]?.totalAmount != null
-  ? `${formatNumber(visibleDocuments[0].totalAmount)} kr.`
-  : receipt.aiAmount != null
-    ? `${formatNumber(receipt.aiAmount)} kr.`
-    : "Engin tillaga"}
-            </p>
-          </div>
+              <p className="mt-1">
+                <strong>Upphæð:</strong>{" "}
+                {selectedDocumentId && visibleDocuments[0]?.totalAmount != null
+                  ? `${formatNumber(visibleDocuments[0].totalAmount)} kr.`
+                  : receipt.aiAmount != null
+                    ? `${formatNumber(receipt.aiAmount)} kr.`
+                    : "Engin tillaga"}
+              </p>
+            </div>
+          )}
 
           {visibleDocuments.length > 0 && (
             <div className="border rounded-lg p-4">
@@ -2086,6 +2155,7 @@ const getNextUnresolvedDocument = (currentDocumentId: number) =>
             </div>
           )}
         </div>
+        )}
       </div>
 
      

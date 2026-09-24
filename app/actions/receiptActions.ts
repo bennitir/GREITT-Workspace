@@ -6058,76 +6058,7 @@ await requireCompanyDeleteAccess(companyId);
   revalidatePath(`/fylgiskjol/${document.receiptId}`);
   revalidatePath("/fylgiskjol");
 }
-export async function cancelManualReceipt(receiptId: number) {
-  await requireActiveCompanyWriteAccess();
-  await prisma.$transaction(async (tx) => {
-    const receipt = await tx.receipt.findUnique({
-      where: {
-        id: receiptId,
-      },
-      include: {
-        aiDetectedDocuments: true,
-      },
-    });
 
-    if (!receipt) {
-      throw new Error("Fylgiskjal fannst ekki.");
-    }
-
-    if (receipt.voucherNumber == null) {
-      throw new Error("Fylgiskjalið er ekki með fylgiskjalsnúmer.");
-    }
-
-    const hasApprovedAiDocument =
-      receipt.aiDetectedDocuments.some(
-        (document) => document.approvedAt !== null
-      );
-
-    if (hasApprovedAiDocument) {
-      throw new Error(
-        "Ekki er hægt að afbóka AI-bókað fylgiskjal með þessari aðgerð."
-      );
-    }
-
-    const releasedVoucherNumber = receipt.voucherNumber;
-const company = await tx.company.findUnique({
-  where: {
-    id: receipt.companyId,
-  },
-  select: {
-    nextVoucherNumber: true,
-  },
-});
-
-if (!company) {
-  throw new Error("Fyrirtæki fannst ekki.");
-}
-    await tx.receipt.update({
-  where: {
-    id: receiptId,
-  },
-  data: {
-    voucherNumber: null,
-    status: "CANCELLED",
-    ocrStatus: `Afbókuð handvirk bókun. Fylgiskjalsnúmer ${releasedVoucherNumber} losað.`,
-  },
-});
-
-if (company.nextVoucherNumber === releasedVoucherNumber + 1) {
-  await tx.company.update({
-    where: {
-      id: receipt.companyId,
-    },
-    data: {
-      nextVoucherNumber: releasedVoucherNumber,
-    },
-  });
-}
-
-});
-  revalidatePath(`/fylgiskjol/${receiptId}`);
-  revalidatePath("/fylgiskjol");
-}
 export async function deleteReceipt(receiptId: number) {
   await requireActiveCompanyWriteAccess();
   const receipt = await prisma.receipt.findUnique({
