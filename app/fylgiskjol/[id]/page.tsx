@@ -114,6 +114,7 @@ const canEdit = companyAccess.canWrite ?? false;
     company: true,
     entries: true,
     aiDetectedDocuments: {
+      orderBy: [{ pageNumber: "asc" }, { id: "asc" }],
       include: {
         bookingEntries: true,
         inventoryLines: {
@@ -378,15 +379,38 @@ if (activeUser && activeUser.role !== "ADMIN") {
     notFound();
   }
 }
-  const selectedDocument = selectedDocumentId
-  ? receipt.aiDetectedDocuments.find(
-      (document) => document.id === selectedDocumentId
-    )
-  : null;
+  const selectedDocumentFromParam = selectedDocumentId
+    ? receipt.aiDetectedDocuments.find(
+        (document) => document.id === selectedDocumentId,
+      ) ?? null
+    : null;
+
+  // Stór safnskjöl eiga ekki að teikna tugi eða hundruð korta í einu.
+  // Fyrsta undirskjalið opnast sjálfkrafa og notandi flettir síðan áfram.
+  const selectedDocument =
+    selectedDocumentFromParam ??
+    (receipt.aiDetectedDocuments.length > 10
+      ? receipt.aiDetectedDocuments[0] ?? null
+      : null);
 
 const visibleDocuments = selectedDocument
   ? [selectedDocument]
   : receipt.aiDetectedDocuments;
+
+const selectedDocumentIndex = selectedDocument
+  ? receipt.aiDetectedDocuments.findIndex(
+      (document) => document.id === selectedDocument.id,
+    )
+  : -1;
+const previousSelectedDocument =
+  selectedDocumentIndex > 0
+    ? receipt.aiDetectedDocuments[selectedDocumentIndex - 1]
+    : null;
+const nextSelectedDocument =
+  selectedDocumentIndex >= 0 &&
+  selectedDocumentIndex < receipt.aiDetectedDocuments.length - 1
+    ? receipt.aiDetectedDocuments[selectedDocumentIndex + 1]
+    : null;
 
 const headerAmount =
   selectedDocument?.totalAmount ??
@@ -466,10 +490,14 @@ const getNextUnresolvedDocument = (currentDocumentId: number) =>
       {originalFileUrl && (
   <>
     <Link
-      href={`/fylgiskjol/${receipt.id}/frumskjal`}
+      href={`/fylgiskjol/${receipt.id}/frumskjal${
+        selectedDocument?.pageNumber
+          ? `?page=${selectedDocument.pageNumber}&document=${selectedDocument.id}`
+          : ""
+      }`}
       className="ml-2 rounded border px-3 py-2 font-medium text-blue-600 hover:bg-blue-50"
     >
-      Opna frumskjal
+      {selectedDocument?.pageNumber ? t.openSourcePage : "Opna frumskjal"}
     </Link>
 
     <TraceDetails summary={`Rekjanleiki (${receiptTraceItems.length})`}>
@@ -521,8 +549,8 @@ const getNextUnresolvedDocument = (currentDocumentId: number) =>
         className="rounded bg-blue-600 px-4 py-2 text-white"
       >
         {receipt.aiDetectedDocuments.length > 0
-          ? "Lesa fylgiskjal aftur með AI"
-          : "Lesa fylgiskjal með AI"}
+          ? t.rereadDocument
+          : t.readDocument}
       </button>
     </form>
     )}
@@ -549,6 +577,44 @@ const getNextUnresolvedDocument = (currentDocumentId: number) =>
   </>
 )}
     </div>
+
+      {selectedDocument && receipt.aiDetectedDocuments.length > 1 && (
+        <div className="mt-4 flex flex-wrap items-center justify-between gap-3 rounded-lg border border-slate-200 bg-slate-50 px-4 py-3">
+          <div className="text-sm font-semibold text-slate-800">
+            {t.document} {selectedDocumentIndex + 1} {t.of} {receipt.aiDetectedDocuments.length}
+            {selectedDocument.pageNumber != null
+              ? ` · ${t.sourcePage}: ${selectedDocument.pageNumber}`
+              : ""}
+          </div>
+          <div className="flex flex-wrap items-center gap-2">
+            {previousSelectedDocument && (
+              <Link
+                href={`/fylgiskjol/${receipt.id}?document=${previousSelectedDocument.id}`}
+                className="rounded-md border border-slate-300 bg-white px-3 py-1.5 text-sm font-semibold text-slate-800 hover:bg-slate-100"
+              >
+                ← {t.previousDocument}
+              </Link>
+            )}
+            {selectedDocument.pageNumber != null && (
+              <Link
+                href={`/fylgiskjol/${receipt.id}/frumskjal?page=${selectedDocument.pageNumber}&document=${selectedDocument.id}`}
+                className="rounded-md border border-blue-300 bg-white px-3 py-1.5 text-sm font-semibold text-blue-700 hover:bg-blue-50"
+              >
+                {t.openSourcePage}
+              </Link>
+            )}
+            {nextSelectedDocument && (
+              <Link
+                href={`/fylgiskjol/${receipt.id}?document=${nextSelectedDocument.id}`}
+                className="rounded-md border border-slate-300 bg-white px-3 py-1.5 text-sm font-semibold text-slate-800 hover:bg-slate-100"
+              >
+                {t.nextDocument} →
+              </Link>
+            )}
+          </div>
+        </div>
+      )}
+
       <div className={`grid grid-cols-1 items-start gap-4 mt-6 ${isManualBookedReceipt ? "" : "lg:grid-cols-2"}`}>
         {/* VINSTRI DÁLKUR - OCR */}
         <div className="space-y-4">
@@ -709,19 +775,21 @@ const getNextUnresolvedDocument = (currentDocumentId: number) =>
           {!isManualBookedReceipt && (
             <div className="border rounded-lg p-4">
               <h2 className="text-xl font-semibold mb-3">
-                Tillaga AI
+                {t.gloggtSuggestion}
               </h2>
 
               <p>
                 <strong>Dagsetning:</strong>{" "}
-                {receipt.aiDate
-                  ? formatDate(receipt.aiDate)
-                  : "Engin tillaga"}
+                {selectedDocument?.date
+                  ? formatDate(selectedDocument.date)
+                  : receipt.aiDate
+                    ? formatDate(receipt.aiDate)
+                    : "Engin tillaga"}
               </p>
 
               <p className="mt-1">
                 <strong>Upphæð:</strong>{" "}
-                {selectedDocumentId && visibleDocuments[0]?.totalAmount != null
+                {selectedDocument && visibleDocuments[0]?.totalAmount != null
                   ? `${formatNumber(visibleDocuments[0].totalAmount)} kr.`
                   : receipt.aiAmount != null
                     ? `${formatNumber(receipt.aiAmount)} kr.`
@@ -744,7 +812,7 @@ const getNextUnresolvedDocument = (currentDocumentId: number) =>
                       className="rounded border p-3"
                     >
                       <h3 className="font-semibold">
-                        Fylgiskjal {index + 1}
+                        Fylgiskjal {selectedDocument ? selectedDocumentIndex + 1 : index + 1}
                         {document.merchantName
                           ? ` – ${document.merchantName}`
                           : ""}

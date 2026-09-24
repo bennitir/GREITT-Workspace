@@ -17,6 +17,7 @@ import {
   shouldRunDeepInsight,
   tryParseDeterministicKontoSalesInvoice,
   tryParseDeterministicLabeledPurchaseInvoice,
+  tryParseDeterministicPageReceiptBundle,
 } from "@/lib/receipts/ingestion";
 import {
   requireActiveCompanyWriteAccess,
@@ -42,6 +43,7 @@ import { isCompanyModuleEnabled } from "@/lib/core/company-modules";
 import { supabaseAdmin } from "@/lib/supabase";
 import { revalidatePath } from "next/cache";
 import { receiptInventoryText } from "@/lib/i18n/receipt-inventory";
+import { extractTextPagesFromPdfBuffer } from "@/lib/core/pdf-text";
 import {
   getCanonicalIdentifierAliases,
   resolveCanonicalInsightEntity,
@@ -1298,23 +1300,47 @@ async function analyzeReceiptWithAIInternal(
     });
   }
 
-  // AI-gátt: þekkt, fullstaðfest Konto-sölureikningssnið má fara alla leið
-  // án OpenAI-kalls. Fallið er fail-closed: ef eitt skilyrði vantar tekur
-  // núverandi AI-leið einfaldlega við óbreytt.
-  const deterministicAnalysis = sourceTextForAnalysis
-    ? tryParseDeterministicKontoSalesInvoice({
-        sourceText: sourceTextForAnalysis,
-        companyName: receipt.company.name,
-        companyKennitala: receipt.company.kennitala,
-        companyVatRegistered: receipt.company.vatRegistered,
-        accounts: receipt.company.accounts,
-      }) ??
-      tryParseDeterministicLabeledPurchaseInvoice({
-        sourceText: sourceTextForAnalysis,
-        companyName: receipt.company.name,
-        companyKennitala: receipt.company.kennitala,
-      })
-    : null;
+  // AI-gátt: GLÖGGT reynir fyrst deterministic snið og page-split safnskjöl.
+  // PDF-safnskjal er lesið síðu fyrir síðu staðbundið og hvert undirskjal fær
+  // pageNumber-vísun á óbreytt frumskjal. Ef ekkert öruggt snið passar tekur
+  // núverandi AI-leið við óbreytt.
+  let deterministicBundleAnalysis: ReturnType<typeof tryParseDeterministicPageReceiptBundle> = null;
+
+  if (
+    extension === ".pdf" &&
+    sourceTextForAnalysis &&
+    sourceTextForAnalysis.length > 20_000 &&
+    /\bKvittun\s*nr\.?\s*:/i.test(sourceTextForAnalysis) &&
+    /\bHeildar\s+greiðsla\b/i.test(sourceTextForAnalysis)
+  ) {
+    try {
+      const sourcePages = await extractTextPagesFromPdfBuffer(sourceBuffer);
+      deterministicBundleAnalysis = tryParseDeterministicPageReceiptBundle({
+        pages: sourcePages,
+      });
+    } catch (error) {
+      console.error(
+        `Deterministic page-split mistókst fyrir fylgiskjal ${receiptId}:`,
+        error,
+      );
+    }
+  }
+
+  const deterministicAnalysis = deterministicBundleAnalysis ??
+    (sourceTextForAnalysis
+      ? tryParseDeterministicKontoSalesInvoice({
+          sourceText: sourceTextForAnalysis,
+          companyName: receipt.company.name,
+          companyKennitala: receipt.company.kennitala,
+          companyVatRegistered: receipt.company.vatRegistered,
+          accounts: receipt.company.accounts,
+        }) ??
+        tryParseDeterministicLabeledPurchaseInvoice({
+          sourceText: sourceTextForAnalysis,
+          companyName: receipt.company.name,
+          companyKennitala: receipt.company.kennitala,
+        })
+      : null);
   const analysisSource = deterministicAnalysis?.analysisSource ?? "AI";
   const deterministicTemplateId = deterministicAnalysis?.templateId ?? null;
 
@@ -3303,13 +3329,24 @@ if (hasInvalidDate) {
       }
 
 if (dateWarnings.length > 0) {
+  const visibleDateWarnings = dateWarnings.slice(0, 3);
+  const hiddenWarningCount = dateWarnings.length - visibleDateWarnings.length;
+  const compactDateWarning = [
+    ...visibleDateWarnings,
+    hiddenWarningCount > 0
+      ? `${hiddenWarningCount} aðrar dagsetningarviðvaranir.`
+      : null,
+  ]
+    .filter((value): value is string => Boolean(value))
+    .join(" ");
+
   await tx.receipt.update({
     where: {
       id: receiptId,
     },
     data: {
       status: "NEEDS_ATTENTION",
-      ocrStatus: dateWarnings.join(" "),
+      ocrStatus: compactDateWarning,
     },
   });
 }
@@ -3331,7 +3368,7 @@ if (dateWarnings.length > 0) {
     // 5 sekúndur; þá getur AI-kallið tekist en vistun niðurstöðunnar fallið á
     // transaction-timeout. Gefum úrvinnslunni raunhæft svigrúm.
     maxWait: 10_000,
-    timeout: 30_000,
+    timeout: 60_000,
   });
 
   

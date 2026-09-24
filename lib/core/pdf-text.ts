@@ -16,9 +16,30 @@ export async function extractTextFromPdfBuffer(
 ): Promise<string> {
   const data = new Uint8Array(buffer);
 
-    const { text } = await extractText(data, {
+  const { text } = await extractText(data, {
     mergePages: true,
   });
 
   return text;
+}
+
+/**
+ * Sama deterministic PDF-textalestur, en síðum haldið aðskildum.
+ *
+ * Þetta er mikilvægt fyrir safnskjöl þar sem eitt PDF inniheldur mörg
+ * sjálfstæð rekstrarskjöl. Síður eru varðveittar í réttri röð og ekkert
+ * er sent út fyrir GLÖGGT.
+ */
+export async function extractTextPagesFromPdfBuffer(
+  buffer: Buffer | Uint8Array,
+): Promise<string[]> {
+  const data = new Uint8Array(buffer);
+
+  const { text } = await extractText(data, {
+    mergePages: false,
+  });
+
+  return Array.isArray(text)
+    ? text.map((page) => String(page ?? ""))
+    : [String(text ?? "")];
 }

@@ -3,7 +3,7 @@ import crypto from "crypto";
 import { extractTextFromPdfBuffer } from "@/lib/core/pdf-text";
 import { inspectCanonicalReceiptKnowledge } from "@/lib/insight/reconciliation";
 
-export const RECEIPT_PROCESSING_VERSION = "receipt-v4-data-first-labeled";
+export const RECEIPT_PROCESSING_VERSION = "receipt-v5-data-first-page-split";
 
 export type ReceiptSourceSnapshot = {
   sourceText: string | null;
@@ -614,6 +614,288 @@ export function tryParseDeterministicLabeledPurchaseInvoice(input: {
       suggestedDebitAccount: null,
       suggestedCreditAccount: null,
       suggestedBookingText: `${seller.merchantName} – ${receiptNumber}`,
+      bookingEntries: [],
+    },
+  };
+}
+
+
+type DeterministicPageReceipt = {
+  merchantName: string | null;
+  merchantKennitala: string | null;
+  date: string | null;
+  receiptNumber: string | null;
+  totalAmount: number | null;
+  summary: string;
+  documentType: "ACCOUNTING_DOCUMENT" | "UNKNOWN";
+  documentRole: "BOOKABLE" | "REVIEW";
+  classificationConfidence: number;
+  environmentReviewRequired: boolean;
+  environmentReviewReason: string | null;
+  loanInfo: null;
+  insuranceInfo: null;
+  insurancePolicies: never[];
+  paymentSchedule: null;
+  paymentInfo: {
+    method: "CARD";
+    rawLabel: string;
+    network: string | null;
+    lastFour: string | null;
+    source: "DOCUMENT_TEXT";
+  } | null;
+  purchaseLines: never[];
+  bookingEntries: never[];
+  pageNumber: number;
+};
+
+function findReceiptBundleMerchant(pageText: string) {
+  const kennitalaMatch = pageText.match(/\bKt\.?\s*:\s*(\d{6}[- ]?\d{4})\b/i);
+  const merchantKennitala = kennitalaMatch
+    ? normalizeKennitala(kennitalaMatch[1])
+    : null;
+
+  const merchantNameMatch = pageText.match(
+    /(?:^|\n)\s*([^\n]{2,80}?)\s+Bls\.?\s*(?:\n|$)/im,
+  );
+  const merchantName = merchantNameMatch
+    ? normalizeWhitespace(merchantNameMatch[1])
+    : null;
+
+  return {
+    merchantName,
+    merchantKennitala:
+      merchantKennitala && /^\d{10}$/.test(merchantKennitala)
+        ? merchantKennitala
+        : null,
+  };
+}
+
+function findReceiptBundlePaymentInfo(pageText: string) {
+  const match = pageText.match(
+    /Greiðslukort\s+(VISA|MASTERCARD|MAESTRO|AMEX|AMERICAN\s+EXPRESS)\s+([0-9X* -]*?\d{4})(?=\s+[0-9][0-9.\s]*,[0-9]{2}\b)/i,
+  );
+  if (!match) return null;
+
+  const rawCardReference = normalizeWhitespace(match[2]);
+  const compactCardReference = rawCardReference.replace(/[^0-9X*]/gi, "");
+  const lastFourMatch = compactCardReference.match(/(\d{4})$/);
+  const network = normalizeWhitespace(match[1].toUpperCase());
+
+  return {
+    method: "CARD" as const,
+    rawLabel: `Greiðslukort ${network} ${rawCardReference}`,
+    network: network || null,
+    lastFour: lastFourMatch?.[1] ?? null,
+    source: "DOCUMENT_TEXT" as const,
+  };
+}
+
+function parseDeterministicReceiptBundlePage(
+  rawPageText: string,
+  pageNumber: number,
+): DeterministicPageReceipt | null {
+  const text = rawPageText.replace(/\r\n?/g, "\n").trim();
+  if (!text) return null;
+
+  const looksLikeReceiptPage =
+    /\bKvittun\s*nr\.?\s*:/i.test(text) &&
+    /\bDags\.?\b/i.test(text) &&
+    /\bHeildar\s+greiðsla\b/i.test(text);
+  if (!looksLikeReceiptPage) return null;
+
+  const seller = findReceiptBundleMerchant(text);
+  const receiptNumberMatch = text.match(
+    /\bKvittun\s*nr\.?\s*:\s*([A-Z0-9][A-Z0-9./_-]{3,})/i,
+  );
+  const dateMatch = text.match(
+    /\bDags\.?\s*(\d{1,2}[./-]\d{1,2}[./-](?:20)?\d{2})\b/i,
+  );
+  const totalMatch = text.match(
+    /\bHeildar\s+greiðsla\s*([0-9][0-9.\s]*(?:,[0-9]{1,2})?)/i,
+  );
+
+  const receiptNumber = receiptNumberMatch?.[1]?.trim() ?? null;
+  const date = dateMatch ? parseIcelandicDateToIso(dateMatch[1]) : null;
+  const totalAmount = totalMatch ? parseIcelandicAmount(totalMatch[1]) : null;
+  const paymentInfo = findReceiptBundlePaymentInfo(text);
+
+  const hasMerchantIdentity = Boolean(
+    seller.merchantName || seller.merchantKennitala,
+  );
+  const hasCardPaymentLabel = /\bGreiðslukort\b/i.test(text);
+
+  const isComplete =
+    Boolean(receiptNumber) &&
+    Boolean(date) &&
+    totalAmount !== null &&
+    totalAmount > 0 &&
+    hasMerchantIdentity &&
+    (!hasCardPaymentLabel || Boolean(paymentInfo));
+
+  if (!isComplete) {
+    return {
+      merchantName: seller.merchantName,
+      merchantKennitala: seller.merchantKennitala,
+      date,
+      receiptNumber,
+      totalAmount,
+      summary: `Síða ${pageNumber} í safnskjali fannst sem kvittun en eitt eða fleiri lykilgildi vantar. Hún þarf handvirka yfirferð og var ekki send í AI.`,
+      documentType: "UNKNOWN",
+      documentRole: "REVIEW",
+      classificationConfidence: 0.7,
+      environmentReviewRequired: false,
+      environmentReviewReason: null,
+      loanInfo: null,
+      insuranceInfo: null,
+      insurancePolicies: [],
+      paymentSchedule: null,
+      paymentInfo,
+      purchaseLines: [],
+      bookingEntries: [],
+      pageNumber,
+    };
+  }
+
+  const summaryParts = [
+    `Kvittun ${receiptNumber}${seller.merchantName ? ` frá ${seller.merchantName}` : ""}.`,
+    `Dagsetning ${date}.`,
+    `Heild ${totalAmount} kr.`,
+    paymentInfo?.rawLabel ? `Greiðslumáti: ${paymentInfo.rawLabel}.` : null,
+    `Frumskjal: síða ${pageNumber}.`,
+    "Bókunarlyklar hafa ekki verið ágiskaðir.",
+  ].filter((value): value is string => Boolean(value));
+
+  return {
+    merchantName: seller.merchantName,
+    merchantKennitala: seller.merchantKennitala,
+    date,
+    receiptNumber,
+    totalAmount,
+    summary: summaryParts.join(" "),
+    documentType: "ACCOUNTING_DOCUMENT",
+    documentRole: "BOOKABLE",
+    classificationConfidence: 0.99,
+    environmentReviewRequired: false,
+    environmentReviewReason: null,
+    loanInfo: null,
+    insuranceInfo: null,
+    insurancePolicies: [],
+    paymentSchedule: null,
+    paymentInfo,
+    purchaseLines: [],
+    bookingEntries: [],
+    pageNumber,
+  };
+}
+
+/**
+ * 0-AI splitter fyrir PDF-safnskjöl þar sem hver síða er sjálfstæð kvittun.
+ *
+ * Parserinn er snið- en ekki birgjasértækur: hann krefst endurtekinna merkja
+ * eins og „Kvittun nr.“, „Dags.“ og „Heildar greiðsla“. Upprunalega PDF-ið
+ * helst eitt og óbreytt; hvert greint skjal fær aðeins pageNumber-vísun á
+ * rétta síðu. Ófullkomin kvittunarsíða verður REVIEW í stað þess að kveikja
+ * á dýru AI-kalli eða týnast hljóðlega.
+ */
+export function tryParseDeterministicPageReceiptBundle(input: {
+  pages: string[];
+}) {
+  const pages = input.pages.map((page) => String(page ?? ""));
+  if (pages.length < 2) return null;
+
+  const nonEmptyPages = pages
+    .map((text, index) => ({ text: text.trim(), pageNumber: index + 1 }))
+    .filter((page) => page.text.length > 0);
+  if (nonEmptyPages.length < 2) return null;
+
+  const receiptLikePages = nonEmptyPages.filter(
+    (page) =>
+      /\bKvittun\s*nr\.?\s*:/i.test(page.text) &&
+      /\bDags\.?\b/i.test(page.text) &&
+      /\bHeildar\s+greiðsla\b/i.test(page.text),
+  );
+
+  // Fail-closed fyrir venjuleg fjölblaða skjöl. Safnskjal þarf að vera mjög
+  // greinilega byggt upp sem „ein kvittun á síðu“ áður en splitterinn tekur við.
+  const minimumReceiptLikePages = Math.max(2, Math.ceil(nonEmptyPages.length * 0.8));
+  if (receiptLikePages.length < minimumReceiptLikePages) return null;
+
+  const documents: DeterministicPageReceipt[] = nonEmptyPages.map((page) => {
+    const parsed = parseDeterministicReceiptBundlePage(
+      page.text,
+      page.pageNumber,
+    );
+    if (parsed) return parsed;
+
+    return {
+      merchantName: null,
+      merchantKennitala: null,
+      date: null,
+      receiptNumber: null,
+      totalAmount: null,
+      summary: `Síða ${page.pageNumber} tilheyrir safnskjali en passaði ekki öruggt kvittunarsnið. Hún er varðveitt sem sérstakt yfirferðarskjal og var ekki send í AI.`,
+      documentType: "UNKNOWN",
+      documentRole: "REVIEW",
+      classificationConfidence: 0.5,
+      environmentReviewRequired: false,
+      environmentReviewReason: null,
+      loanInfo: null,
+      insuranceInfo: null,
+      insurancePolicies: [],
+      paymentSchedule: null,
+      paymentInfo: null,
+      purchaseLines: [],
+      bookingEntries: [],
+      pageNumber: page.pageNumber,
+    };
+  });
+
+  const merchantKennitolur = [
+    ...new Set(
+      documents
+        .map((document) => document.merchantKennitala)
+        .filter((value): value is string => Boolean(value)),
+    ),
+  ];
+  if (merchantKennitolur.length > 1) return null;
+
+  const merchantNames = [
+    ...new Set(
+      documents
+        .map((document) => document.merchantName)
+        .filter((value): value is string => Boolean(value)),
+    ),
+  ];
+  const merchantName = merchantNames.length === 1 ? merchantNames[0] : null;
+  const merchantKennitala = merchantKennitolur[0] ?? null;
+
+  for (const document of documents) {
+    if (!document.merchantName && merchantName) document.merchantName = merchantName;
+    if (!document.merchantKennitala && merchantKennitala) {
+      document.merchantKennitala = merchantKennitala;
+    }
+  }
+
+  const reviewCount = documents.filter(
+    (document) => document.documentRole === "REVIEW",
+  ).length;
+  const summary = `${documents.length} sjálfstæðar kvittanir fundust í einu PDF-safnskjali. Hver kvittun vísar á sína upprunalegu síðu og frumskjalið er varðveitt óbreytt.${reviewCount > 0 ? ` ${reviewCount} síður þurfa handvirka yfirferð.` : ""}`;
+
+  return {
+    analysisSource: "DETERMINISTIC_TEMPLATE" as const,
+    templateId: "LABELED_POS_RECEIPT_BUNDLE_V1" as const,
+    result: {
+      documentCount: documents.length,
+      documents,
+      merchantName,
+      date: null,
+      receiptNumber: null,
+      totalAmount: null,
+      confidence: reviewCount === 0 ? 0.99 : 0.9,
+      summary,
+      suggestedDebitAccount: null,
+      suggestedCreditAccount: null,
+      suggestedBookingText: null,
       bookingEntries: [],
     },
   };
