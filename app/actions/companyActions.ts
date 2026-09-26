@@ -1211,6 +1211,127 @@ export async function uploadRskCertificate(
   );
 }
 
+export async function createCompanyAccount(
+  companyId: number,
+  data: {
+    number: string;
+    name: string;
+    category: "REVENUE" | "ASSET" | "EXPENSE" | "LIABILITY";
+  }
+) {
+  if (!Number.isInteger(companyId)) {
+    throw new Error("Ógilt fyrirtæki.");
+  }
+
+  await requireCompanyWriteAccess(companyId);
+
+  const number = data.number.trim();
+  const name = data.name.trim();
+
+  if (!/^\d{3,6}$/.test(number)) {
+    throw new Error("Reikningsnúmer þarf að vera 3–6 tölustafir.");
+  }
+
+  if (name.length < 2 || name.length > 120) {
+    throw new Error("Skráðu gilt heiti reikningslykils.");
+  }
+
+  const accountShape = {
+    REVENUE: {
+      type: "OTHER_REVENUE",
+      entryRole: "REVENUE",
+      vatTreatment: null,
+      vatCode: null,
+      vatDeductiblePercent: null,
+      vatRequiresConfirmation: true,
+    },
+    ASSET: {
+      type: "ACCOUNTS_RECEIVABLE",
+      entryRole: "GENERAL",
+      vatTreatment: "NONE",
+      vatCode: "NO_VAT",
+      vatDeductiblePercent: 0,
+      vatRequiresConfirmation: false,
+    },
+    EXPENSE: {
+      type: "OTHER_EXPENSE",
+      entryRole: "EXPENSE",
+      vatTreatment: null,
+      vatCode: null,
+      vatDeductiblePercent: null,
+      vatRequiresConfirmation: true,
+    },
+    LIABILITY: {
+      type: "SHORT_TERM_LIABILITY",
+      entryRole: "GENERAL",
+      vatTreatment: "NONE",
+      vatCode: "NO_VAT",
+      vatDeductiblePercent: 0,
+      vatRequiresConfirmation: false,
+    },
+  } as const;
+
+  const shape = accountShape[data.category];
+
+  if (!shape) {
+    throw new Error("Ógild tegund reikningslykils.");
+  }
+
+  const existing = await prisma.account.findUnique({
+    where: {
+      companyId_number: {
+        companyId,
+        number,
+      },
+    },
+  });
+
+  if (existing) {
+    throw new Error(`Reikningslykill ${number} er þegar til.`);
+  }
+
+  const user = await getEffectiveUser();
+
+  const account = await prisma.account.create({
+    data: {
+      companyId,
+      number,
+      name,
+      type: shape.type,
+      entryRole: shape.entryRole,
+      isActive: true,
+      vatTreatment: shape.vatTreatment,
+      vatCode: shape.vatCode,
+      vatDeductiblePercent: shape.vatDeductiblePercent,
+      vatRequiresConfirmation: shape.vatRequiresConfirmation,
+    },
+  });
+
+  await prisma.auditEvent.create({
+    data: {
+      companyId,
+      userId: user?.id ?? null,
+      entityType: "ACCOUNT",
+      entityId: account.id,
+      action: "CREATE_ACCOUNT_MANUALLY",
+      source: "USER",
+      description: `Reikningslykill ${number} – ${name} stofnaður handvirkt.`,
+      afterData: {
+        number,
+        name,
+        type: shape.type,
+        entryRole: shape.entryRole,
+      },
+    },
+  });
+
+  revalidatePath(`/fyrirtaeki/${companyId}/reikningslyklar`);
+  revalidatePath(`/fyrirtaeki/${companyId}`);
+  revalidatePath("/fylgiskjol");
+
+  return account.id;
+}
+
 export async function initializeCompanyAccounts(
   companyId: number
 ) {

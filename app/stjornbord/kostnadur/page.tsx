@@ -93,6 +93,16 @@ export default async function KostnadurPage({
     .sort((a, b) => b.createdAt.getTime() - a.createdAt.getTime())
     .slice(0, 100);
 
+  const usagePromptFootprint = (usage: (typeof recentUsage)[number]) => {
+    const metadata =
+      usage.metadata && typeof usage.metadata === "object" && !Array.isArray(usage.metadata)
+        ? (usage.metadata as Record<string, unknown>)
+        : null;
+    const raw = metadata?.promptFootprint;
+    if (!raw || typeof raw !== "object" || Array.isArray(raw)) return null;
+    return raw as Record<string, unknown>;
+  };
+
   const usageDocumentLabel = (usage: (typeof recentUsage)[number]) => {
     const metadata =
       usage.metadata && typeof usage.metadata === "object" && !Array.isArray(usage.metadata)
@@ -259,7 +269,25 @@ export default async function KostnadurPage({
                     )}
                   </td>
                   <td className="whitespace-nowrap border-b p-3">{usage.model}</td>
-                  <td className="whitespace-nowrap border-b p-3">{formatNumber(usage.totalTokens)}</td>
+                  <td className="whitespace-nowrap border-b p-3">
+                    <div className="font-medium">{formatNumber(usage.totalTokens)}</div>
+                    <div className="mt-1 text-xs text-slate-500">
+                      {t.cost.inputTokens} {formatNumber(usage.inputTokens)} · {t.cost.cachedTokens} {formatNumber(usage.cachedInputTokens ?? 0)} · {t.cost.outputTokens} {formatNumber(usage.outputTokens)}
+                    </div>
+                    {(() => {
+                      const footprint = usagePromptFootprint(usage);
+                      const sourceChars = typeof footprint?.sourceTextChars === "number" ? footprint.sourceTextChars : null;
+                      const knowledgeChars = typeof footprint?.knowledgePromptChars === "number" ? footprint.knowledgePromptChars : null;
+                      if (sourceChars === null && knowledgeChars === null) return null;
+                      return (
+                        <div className="mt-1 text-xs text-slate-500">
+                          {t.cost.promptFootprint}: {sourceChars !== null ? `${formatNumber(sourceChars)} src` : ""}
+                          {sourceChars !== null && knowledgeChars !== null ? " · " : ""}
+                          {knowledgeChars !== null ? `${formatNumber(knowledgeChars)} ctx` : ""}
+                        </div>
+                      );
+                    })()}
+                  </td>
                   <td className="whitespace-nowrap border-b p-3">
                     {formatNumber(usage.costIsk, { maximumFractionDigits: 2 })} kr.
                   </td>

@@ -643,7 +643,7 @@ type DeterministicPageReceipt = {
     lastFour: string | null;
     source: "DOCUMENT_TEXT";
   } | null;
-  purchaseLines: never[];
+  purchaseLines: PurchaseLineLike[];
   bookingEntries: never[];
   pageNumber: number;
 };
@@ -688,6 +688,135 @@ function findReceiptBundlePaymentInfo(pageText: string) {
     lastFour: lastFourMatch?.[1] ?? null,
     source: "DOCUMENT_TEXT" as const,
   };
+}
+
+const RECEIPT_BUNDLE_NON_PRODUCT_LINE = /\b(?:vsk|vat|heild|samtals|greidsla|greiðsla|kort|visa|mastercard|maestro|amex|afslatt|afslátt|skilagjald|tax|fee)\b/i;
+
+/**
+ * 0-AI lestur á almennum POS-vörulínum. Þetta er viljandi ekki bundið við
+ * Olís eða annan birgja: við leitum að textalínu sem endar á fjárhæð og
+ * útilokum hausa, samtölur, VSK og greiðslulínur. Óviss lína er einfaldlega
+ * látin eiga sig.
+ */
+export function extractDeterministicReceiptBundlePurchaseLines(
+  pageText: string,
+): PurchaseLineLike[] {
+  const lines = pageText
+    .replace(/\r\n?/g, "\n")
+    .split("\n")
+    .map((line) => normalizeWhitespace(line))
+    .filter(Boolean);
+
+  const purchaseLines: PurchaseLineLike[] = [];
+
+  for (const line of lines) {
+    if (line.length < 4 || line.length > 220) continue;
+    if (RECEIPT_BUNDLE_NON_PRODUCT_LINE.test(line)) continue;
+    if (/^(?:vara|lysing|lýsing|magn|verd|verð|eining|upphaed|upphæð)\b/i.test(line)) {
+      continue;
+    }
+
+    const trailingAmount = line.match(
+      /(?:^|\s)([0-9][0-9. ]*(?:,[0-9]{1,2})?)\s*(?:kr\.?)?$/i,
+    );
+    if (!trailingAmount || trailingAmount.index == null) continue;
+
+    const lineTotal = parseIcelandicAmount(trailingAmount[1]);
+    if (lineTotal == null || lineTotal <= 0) continue;
+
+    let left = line.slice(0, trailingAmount.index).trim();
+    if (!left || RECEIPT_BUNDLE_NON_PRODUCT_LINE.test(left)) continue;
+
+    let quantity: number | null = null;
+    const leadingQuantity = left.match(/^(\d+(?:[.,]\d+)?)\s+(.{2,})$/);
+    if (leadingQuantity) {
+      quantity = Number(leadingQuantity[1].replace(",", "."));
+      left = leadingQuantity[2].trim();
+    }
+
+    // Sum POS-snið hafa einingarverð aftast fyrir framan línusamtöluna.
+    // Það er ekki hluti af vöruheiti; fjarlægjum það aðeins þegar eftir
+    // stendur raunhæft heiti.
+    const possibleUnitPrice = left.match(
+      /^(.*?)\s+([0-9][0-9. ]*(?:,[0-9]{1,2})?)$/i,
+    );
+    if (possibleUnitPrice && possibleUnitPrice[1].trim().length >= 3) {
+      const candidatePrice = parseIcelandicAmount(possibleUnitPrice[2]);
+      if (candidatePrice != null && candidatePrice > 0) {
+        left = possibleUnitPrice[1].trim();
+      }
+    }
+
+    // Ef magn stendur aftast við heitið (t.d. „Kleina 1 638“) má lesa það,
+    // en við krefjumst ekki magns til að varðveita vörulínuna.
+    if (quantity == null) {
+      const trailingQuantity = left.match(/^(.*?)\s+(\d+(?:[.,]\d+)?)$/);
+      if (trailingQuantity && trailingQuantity[1].trim().length >= 3) {
+        const candidateQuantity = Number(trailingQuantity[2].replace(",", "."));
+        if (Number.isFinite(candidateQuantity) && candidateQuantity > 0 && candidateQuantity <= 1000) {
+          quantity = candidateQuantity;
+          left = trailingQuantity[1].trim();
+        }
+      }
+    }
+
+    const description = left.replace(/\s{2,}/g, " ").trim();
+    if (description.length < 3) continue;
+    if (RECEIPT_BUNDLE_NON_PRODUCT_LINE.test(description)) continue;
+
+    purchaseLines.push({
+      description,
+      quantity,
+      lineTotal,
+      stockCandidate: true,
+      confidence: 0.88,
+    });
+  }
+
+  // Sum PDF-textalög raða dálkum þannig að vöruheitið stendur eitt á línu
+  // en magn/verð á næstu línu. Ef við sjáum skýran vörutöfluhaus tökum við
+  // því einnig textalínur innan sjálfrar vörutöflunnar, án þess að giska á verð.
+  const headerIndex = lines.findIndex((line) => {
+    const normalized = normalizeIdentityText(line);
+    const hasDescriptionHeader = /\b(vara|lysing|lýsing|heiti)\b/.test(normalized);
+    const hasNumericHeader = /\b(magn|verd|verð|samtals|upphaed|upphæð)\b/.test(normalized);
+    return hasDescriptionHeader && hasNumericHeader;
+  });
+
+  if (headerIndex >= 0) {
+    for (let index = headerIndex + 1; index < lines.length; index += 1) {
+      const line = lines[index];
+      if (/\b(?:heildar\s+greidsla|heildar\s+greiðsla|greidslukort|greiðslukort)\b/i.test(line)) {
+        break;
+      }
+      if (RECEIPT_BUNDLE_NON_PRODUCT_LINE.test(line)) continue;
+      if (!/[A-Za-zÁÉÍÓÚÝÞÆÖÐáéíóúýþæöð]/.test(line)) continue;
+      if (/^(?:borda inni|borða inni|taka med|taka með)$/i.test(line)) continue;
+
+      let description = line
+        .replace(/^\d+(?:[.,]\d+)?\s+/, "")
+        .replace(/(?:\s+[0-9][0-9. ]*(?:,[0-9]{1,2})?){1,4}\s*$/, "")
+        .trim();
+
+      if (description.length < 3 || description.length > 180) continue;
+      if (RECEIPT_BUNDLE_NON_PRODUCT_LINE.test(description)) continue;
+
+      purchaseLines.push({
+        description,
+        stockCandidate: true,
+        confidence: 0.76,
+      });
+    }
+  }
+
+  // Forðumst tvítekningu ef PDF textalag endurtekur sömu línu.
+  const seen = new Set<string>();
+  return purchaseLines.filter((line) => {
+    const key = normalizeIdentityText(line.description);
+    if (!key || seen.has(key)) return false;
+    seen.add(key);
+    return true;
+  });
 }
 
 function parseDeterministicReceiptBundlePage(
@@ -750,7 +879,7 @@ function parseDeterministicReceiptBundlePage(
       insurancePolicies: [],
       paymentSchedule: null,
       paymentInfo,
-      purchaseLines: [],
+      purchaseLines: extractDeterministicReceiptBundlePurchaseLines(text),
       bookingEntries: [],
       pageNumber,
     };
@@ -782,7 +911,7 @@ function parseDeterministicReceiptBundlePage(
     insurancePolicies: [],
     paymentSchedule: null,
     paymentInfo,
-    purchaseLines: [],
+    purchaseLines: extractDeterministicReceiptBundlePurchaseLines(text),
     bookingEntries: [],
     pageNumber,
   };

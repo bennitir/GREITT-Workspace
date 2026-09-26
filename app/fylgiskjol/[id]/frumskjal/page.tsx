@@ -156,11 +156,24 @@ export default async function FrumskjalPage({
         {isPdf ? (
           <div className="flex justify-center">
             <div className="w-full max-w-[900px] overflow-hidden rounded-lg border border-slate-200 bg-white shadow-sm">
-              <iframe
-                src={focusedFileUrl}
-                title="Frumskjal"
+              <object
+                data={focusedFileUrl}
+                type="application/pdf"
+                aria-label="Frumskjal"
                 className="block h-[calc(100vh-165px)] min-h-[620px] w-full bg-white"
-              />
+              >
+                <div className="p-6 text-center text-sm text-slate-700">
+                  Ekki tókst að sýna PDF hér.{" "}
+                  <a
+                    href={focusedFileUrl}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="font-semibold text-blue-700 underline"
+                  >
+                    Opna skjalið í nýjum flipa
+                  </a>
+                </div>
+              </object>
             </div>
           </div>
         ) : (

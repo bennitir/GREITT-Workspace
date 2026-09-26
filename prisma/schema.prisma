@@ -130,6 +130,7 @@ model Company {
 
   // Bókaraminni – lærð og staðfest bókunarmynstur
   accountingPatterns AccountingPattern[]
+  globalProductKnowledgeEvidence GlobalProductKnowledgeEvidence[]
 
   // Ábendingar frá notendum/bókurum til þróunar GLÖGGT.
   suggestions Suggestion[]
@@ -315,6 +316,7 @@ model Receipt {
   insightFacts              InsightFact[]
   insightProcessingItems    InsightProcessingItem[]
   accountingPatternEvidence AccountingPatternEvidence[]
+  globalProductKnowledgeEvidence GlobalProductKnowledgeEvidence[]
 
   @@index([companyId])
   @@index([companyId, status])
@@ -358,6 +360,10 @@ model AiDetectedDocument {
   approvedAt             DateTime?
   voucherNumber          Int?
   reviewedAt             DateTime?
+  // Skjal sem þarf nánari skoðun má setja tímabundið til hliðar án þess
+  // að merkja það yfirfarið eða afgreitt. Það hverfur úr venjulegri forgangsröð
+  // en helst sýnilegt í sérstakri "Þarf skoðun" biðröð.
+  needsAttentionAt       DateTime?
   pageNumber             Int?
   duplicateMarkedAt      DateTime?
   duplicateOfDocumentId  Int?
@@ -407,6 +413,7 @@ model AiDetectedDocument {
   insightFacts              InsightFact[]
   insightProcessingItems    InsightProcessingItem[]
   accountingPatternEvidence AccountingPatternEvidence[]
+  globalProductKnowledgeEvidence GlobalProductKnowledgeEvidence[]
   inventoryLines            DocumentInventoryLine[]
 
   @@unique([receiptId, documentFingerprint])
@@ -513,6 +520,7 @@ model User {
   auditEvents                    AuditEvent[]
   accountingPatternConfirmations AccountingPattern[]         @relation("AccountingPatternLastConfirmedBy")
   accountingPatternEvidence      AccountingPatternEvidence[]
+  globalProductKnowledgeEvidence GlobalProductKnowledgeEvidence[]
   insightProcessingJobs          InsightProcessingJob[]      @relation("InsightProcessingRequestedBy")
 
   submittedSuggestions Suggestion[] @relation("SuggestionSubmittedBy")
@@ -3469,6 +3477,75 @@ model AccountingPatternEvidence {
   user     User?               @relation(fields: [userId], references: [id], onDelete: SetNull)
 
   @@index([patternId, createdAt])
+  @@index([receiptId])
+  @@index([documentId])
+  @@index([userId])
+}
+
+// Sameiginleg vöruþekking GLÖGGT. Þetta líkan geymir hvað vara ER,
+// ekki hvaða reikningslykill á að nota hjá tilteknu fyrirtæki.
+// CANDIDATE má endurnýta innan sama fyrirtækis; ACTIVE má nýtast cross-company.
+model GlobalProductKnowledge {
+  id Int @id @default(autoincrement())
+
+  canonicalKey  String @unique
+  canonicalName String
+
+  // Dæmi: CONSUMABLE, FUEL, MATERIAL, EQUIPMENT, SERVICE, OTHER.
+  productKind String
+  // Fínni en productKind en áfram bókhaldsóháð merking.
+  categoryCode String?
+
+  // CANDIDATE | ACTIVE | DISPUTED
+  status String @default("CANDIDATE")
+  confidence Float @default(0)
+
+  confirmationCount      Int @default(0)
+  correctionCount        Int @default(0)
+  independentCompanyCount Int @default(0)
+
+  metadata Json?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  evidence GlobalProductKnowledgeEvidence[]
+
+  @@index([status, productKind])
+  @@index([categoryCode])
+}
+
+// Rekjanleg sönnun fyrir sameiginlegri vöruþekkingu. Fyrirtækjasértæk
+// bókun, fjárhæðir og reikningslyklar eru EKKI færð inn í GlobalProductKnowledge.
+model GlobalProductKnowledgeEvidence {
+  id          Int @id @default(autoincrement())
+  knowledgeId Int
+  companyId   Int
+  receiptId   Int?
+  documentId  Int?
+  userId      Int?
+
+  // Idempotency fyrir eina vörulínu í einu yfirförnu skjali.
+  evidenceKey String @unique
+
+  observedText              String
+  normalizedObservedText    String
+  proposedProductKind       String
+  proposedCategoryCode      String?
+  transactionContext        String?
+  // CONFIRMED | CONFLICT
+  action String
+
+  createdAt DateTime @default(now())
+
+  knowledge GlobalProductKnowledge @relation(fields: [knowledgeId], references: [id], onDelete: Cascade)
+  company   Company                @relation(fields: [companyId], references: [id], onDelete: Cascade)
+  receipt   Receipt?               @relation(fields: [receiptId], references: [id], onDelete: SetNull)
+  document  AiDetectedDocument?    @relation(fields: [documentId], references: [id], onDelete: SetNull)
+  user      User?                  @relation(fields: [userId], references: [id], onDelete: SetNull)
+
+  @@index([knowledgeId, createdAt])
+  @@index([companyId, createdAt])
   @@index([receiptId])
   @@index([documentId])
   @@index([userId])

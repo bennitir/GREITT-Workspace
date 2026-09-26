@@ -1,4 +1,4 @@
-import { approveDefaultAccountVatSuggestion } from "@/app/actions/companyActions";
+import { approveDefaultAccountVatSuggestion, createCompanyAccount } from "@/app/actions/companyActions";
 import { defaultAccounts } from "@/app/data/accounts";
 import Link from "next/link";
 import { redirect } from "next/navigation";
@@ -149,6 +149,74 @@ export default async function ReikningslyklarPage({
           sjálfkrafa.
         </div>
       )}
+
+      <div className="mb-6 rounded-lg border bg-white p-4 shadow-sm">
+        <h2 className="text-lg font-semibold">Nýr reikningslykill</h2>
+        <p className="mt-1 text-sm text-slate-600">
+          Stofnar einn lykil hjá fyrirtækinu án þess að breyta öðrum lyklum.
+        </p>
+
+        <form
+          action={async (formData) => {
+            "use server";
+
+            await createCompanyAccount(company.id, {
+              number: String(formData.get("accountNumber") ?? ""),
+              name: String(formData.get("accountName") ?? ""),
+              category: String(formData.get("accountCategory") ?? "") as
+                | "REVENUE"
+                | "ASSET"
+                | "EXPENSE"
+                | "LIABILITY",
+            });
+          }}
+          className="mt-4 grid gap-3 md:grid-cols-[160px_1fr_220px_auto] md:items-end"
+        >
+          <div>
+            <label className="block text-sm font-semibold">Númer</label>
+            <input
+              name="accountNumber"
+              required
+              inputMode="numeric"
+              placeholder="t.d. 2230"
+              className="mt-1 w-full rounded border px-3 py-2"
+            />
+          </div>
+
+          <div>
+            <label className="block text-sm font-semibold">Heiti</label>
+            <input
+              name="accountName"
+              required
+              placeholder="Heiti reikningslykils"
+              className="mt-1 w-full rounded border px-3 py-2"
+            />
+          </div>
+
+          <div>
+            <label className="block text-sm font-semibold">Tegund</label>
+            <select
+              name="accountCategory"
+              required
+              defaultValue=""
+              className="mt-1 w-full rounded border bg-white px-3 py-2"
+            >
+              <option value="" disabled>Veldu tegund…</option>
+              <option value="REVENUE">Tekjur</option>
+              <option value="ASSET">Eign / krafa</option>
+              <option value="EXPENSE">Kostnaður</option>
+              <option value="LIABILITY">Skuld</option>
+            </select>
+          </div>
+
+          <button
+            type="submit"
+            className="rounded bg-blue-600 px-4 py-2 font-medium text-white hover:bg-blue-700"
+          >
+            + Stofna lykil
+          </button>
+        </form>
+      </div>
 
       <div className="overflow-x-auto rounded-lg border bg-white shadow-sm">
         <table className="w-full border-collapse text-left">

@@ -82,6 +82,7 @@ export default async function FylgiskjolPage() {
           date: true,
           totalAmount: true,
           reviewedAt: true,
+          needsAttentionAt: true,
           duplicateMarkedAt: true,
           duplicateVoucherNumber: true,
         },
@@ -139,11 +140,13 @@ export default async function FylgiskjolPage() {
           companyName: receipt.company.name,
           date: document.date,
           amount: document.totalAmount ?? 0,
-          statusText: document.duplicateMarkedAt
-            ? "DUPLICATE_CANDIDATE"
-            : document.reviewedAt
-              ? "Yfirfarið"
-              : "Til yfirferðar",
+          statusText: document.reviewedAt
+            ? "Yfirfarið"
+            : document.needsAttentionAt
+              ? "NEEDS_ATTENTION"
+              : document.duplicateMarkedAt
+                ? "DUPLICATE_CANDIDATE"
+                : "Til yfirferðar",
           duplicateVoucherNumber: document.duplicateVoucherNumber,
         });
       }
@@ -174,11 +177,17 @@ export default async function FylgiskjolPage() {
   });
 
   const needsReviewItems = displayItems.filter(
-    (item) => item.statusText !== "Yfirfarið",
+    (item) =>
+      item.statusText !== "Yfirfarið" &&
+      item.statusText !== "NEEDS_ATTENTION",
   );
 
   const reviewedItems = displayItems.filter(
     (item) => item.statusText === "Yfirfarið",
+  );
+
+  const attentionItems = displayItems.filter(
+    (item) => item.statusText === "NEEDS_ATTENTION",
   );
 
   function renderItems(items: DisplayItem[]) {
@@ -301,6 +310,23 @@ export default async function FylgiskjolPage() {
 
             <div className="overflow-hidden rounded-lg border">
               {renderItems(reviewedItems)}
+            </div>
+          </section>
+        )}
+
+        {attentionItems.length > 0 && (
+          <section>
+            <div className="mb-3">
+              <h2 className="text-2xl font-bold">
+                {t.needsAttentionDeferred}
+              </h2>
+              <p className="mt-1 text-sm text-slate-600">
+                {t.needsAttentionDeferredHelp}
+              </p>
+            </div>
+
+            <div className="overflow-hidden rounded-lg border border-amber-200 bg-amber-50/30">
+              {renderItems(attentionItems)}
             </div>
           </section>
         )}

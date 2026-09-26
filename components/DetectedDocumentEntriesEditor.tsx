@@ -5,9 +5,11 @@ import { useRouter } from "next/navigation";
 
 import {
   updateDetectedDocumentEntries,
+  applyConfirmedBookingSuggestions,
   addDetectedDocumentEntry,
   deleteDetectedDocumentEntry,
   markDetectedDocumentDuplicate,
+  setDetectedDocumentVatDeduction,
 } from "@/app/actions/receiptActions";
 
 type Entry = {
@@ -17,6 +19,14 @@ type Entry = {
   debit: number;
   credit: number;
 };
+
+type VatDeduction = {
+  percent: number;
+  fullVatAmount: number;
+  deductibleVatAmount: number;
+  nonDeductibleVatAmount: number;
+  reason: string | null;
+} | null;
 
 type Props = {
   documentId: number;
@@ -31,6 +41,7 @@ type Props = {
   }[];
 
   vatRegistered: boolean | null;
+  vatDeduction: VatDeduction;
 
   date: Date | string | null;
   totalAmount: number | null;
@@ -49,6 +60,7 @@ export default function DetectedDocumentEntriesEditor({
   entries,
   accounts,
   vatRegistered,
+  vatDeduction,
   date,
   totalAmount,
   reviewedAt,
@@ -74,6 +86,38 @@ export default function DetectedDocumentEntriesEditor({
       account.entryRole === "VAT_INPUT" ||
       account.entryRole === "VAT_OUTPUT"
     );
+  }
+
+  function isVatInputPostingAccount(account: {
+    type: string;
+    entryRole: string;
+  }) {
+    return account.type === "VAT_INPUT" || account.entryRole === "VAT_INPUT";
+  }
+
+  function roundVatAmount(value: number) {
+    return Math.round((value + Number.EPSILON) * 100) / 100;
+  }
+
+  // Ekki nota Intl/toLocaleString í SSR-renderuðum Client Component texta.
+  // Node og vafri geta annars skilað mismunandi þúsunda-/tugabrotaskilum
+  // og valdið hydration mismatch. Þetta formatter er viljandi deterministic.
+  function formatIsNumber(value: number) {
+    if (!Number.isFinite(value)) return "0";
+
+    const rounded = roundVatAmount(value);
+    const negative = rounded < 0;
+    const absolute = Math.abs(rounded);
+    const compact = absolute
+      .toFixed(2)
+      .replace(/\.00$/, "")
+      .replace(/(\.\d)0$/, "$1");
+    const [whole, decimals] = compact.split(".");
+    const groupedWhole = whole.replace(/\B(?=(\d{3})+(?!\d))/g, ".");
+
+    return `${negative ? "-" : ""}${groupedWhole}${
+      decimals ? `,${decimals}` : ""
+    }`;
   }
 
   const availableAccounts =
@@ -108,10 +152,94 @@ export default function DetectedDocumentEntriesEditor({
   }
 
   const [rows, setRows] = useState(() => normalizeEntries(entries));
+  const dirtyRef = useRef(false);
+  const activeDocumentIdRef = useRef(documentId);
+
+  // Server Components geta endursent ný prop-object við bakgrunnsuppfærslu
+  // (t.d. router.refresh). Ekki má láta slíka uppfærslu skrifa yfir
+  // bókunarlínur sem notandinn er byrjaður að breyta.
+  const normalizedServerRows = normalizeEntries(entries);
+  const serverRowsSignature = JSON.stringify(normalizedServerRows);
+  const latestServerRowsRef = useRef(normalizedServerRows);
+  latestServerRowsRef.current = normalizedServerRows;
+  const suggestionAttemptedDocumentRef = useRef<number | null>(null);
 
   useEffect(() => {
-    setRows(normalizeEntries(entries));
-  }, [entries, accounts]);
+    if (activeDocumentIdRef.current !== documentId) {
+      activeDocumentIdRef.current = documentId;
+      dirtyRef.current = false;
+      setHasUnsavedChanges(false);
+      setRows(latestServerRowsRef.current);
+      return;
+    }
+
+    if (dirtyRef.current) {
+      // Varðveita óvistaðar breytingar, en taka samt inn nýjar línur sem
+      // voru stofnaðar viljandi á server (t.d. „Bæta við bókunarlínu“).
+      // Áður var allri server-uppfærslu hafnað meðan formið var dirty,
+      // þannig að ný stofnuð lína birtist aldrei fyrr en formið var endurhlaðið.
+      setRows((currentRows) => {
+        const currentIds = new Set(currentRows.map((row) => row.id));
+        const addedServerRows = latestServerRowsRef.current.filter(
+          (row) => !currentIds.has(row.id)
+        );
+
+        if (addedServerRows.length === 0) {
+          return currentRows;
+        }
+
+        return [...currentRows, ...addedServerRows];
+      });
+      return;
+    }
+
+    setRows(latestServerRowsRef.current);
+  }, [documentId, serverRowsSignature]);
+
+  // Ef deterministic greining skilaði engum bókunarlínum reynir GLÖGGT
+  // sjálfkrafa að endurnýta áður staðfest bókaraval. Aðgerðin er fail-closed
+  // og kallar ekki AI; ef ekkert öruggt mynstur finnst breytist ekkert.
+  useEffect(() => {
+    if (
+      entries.length > 0 ||
+      reviewedAt ||
+      approvedAt ||
+      voucherNumber != null ||
+      !canEdit ||
+      suggestionAttemptedDocumentRef.current === documentId
+    ) {
+      return;
+    }
+
+    suggestionAttemptedDocumentRef.current = documentId;
+    let cancelled = false;
+
+    void applyConfirmedBookingSuggestions(documentId)
+      .then((result) => {
+        if (!cancelled && result.changed) {
+          router.refresh();
+        }
+      })
+      .catch((err) => {
+        if (cancelled) return;
+        console.error(
+          `Mistókst að endurnýta staðfesta bókunartillögu fyrir skjal ${documentId}:`,
+          err,
+        );
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [
+    documentId,
+    entries.length,
+    reviewedAt,
+    approvedAt,
+    voucherNumber,
+    canEdit,
+    router,
+  ]);
 
   const [documentDate, setDocumentDate] = useState(
   date
@@ -132,6 +260,22 @@ const [documentAmount, setDocumentAmount] = useState(
   const [error, setError] = useState("");
   const [saving, setSaving] = useState(false);
   const [hasUnsavedChanges, setHasUnsavedChanges] = useState(false);
+  const [vatPercentInput, setVatPercentInput] = useState(
+    String(vatDeduction?.percent ?? 100)
+  );
+  const [vatReason, setVatReason] = useState(vatDeduction?.reason ?? "");
+  const [applyingVatDeduction, setApplyingVatDeduction] = useState(false);
+
+  const vatDeductionSignature = JSON.stringify(vatDeduction);
+  useEffect(() => {
+    setVatPercentInput(String(vatDeduction?.percent ?? 100));
+    setVatReason(vatDeduction?.reason ?? "");
+  }, [documentId, vatDeductionSignature]);
+
+  function markDirty() {
+    dirtyRef.current = true;
+    setHasUnsavedChanges(true);
+  }
 
   function updateRow(
     id: number,
@@ -154,7 +298,7 @@ const [documentAmount, setDocumentAmount] = useState(
       }
     }
 
-    setHasUnsavedChanges(true);
+    markDirty();
     setRows((current) =>
       current.map((row) =>
         row.id === id
@@ -189,6 +333,64 @@ const [documentAmount, setDocumentAmount] = useState(
   totalDebit > 0 &&
   totalCredit > 0 &&
   Math.abs(totalDebit - totalCredit) <= 0.01;
+
+  const vatInputAccountNumbers = new Set(
+    accounts.filter(isVatInputPostingAccount).map((account) => account.number)
+  );
+  const currentVatInputAmount = roundVatAmount(
+    rows
+      .filter((row) => vatInputAccountNumbers.has(row.account))
+      .reduce((sum, row) => sum + row.debit - row.credit, 0)
+  );
+  const fullVatAmount = roundVatAmount(
+    vatDeduction?.fullVatAmount ?? Math.max(0, currentVatInputAmount)
+  );
+  const parsedVatPercent = Number(String(vatPercentInput).replace(",", "."));
+  const previewVatPercent = Number.isFinite(parsedVatPercent)
+    ? Math.min(100, Math.max(0, parsedVatPercent))
+    : 0;
+  const previewDeductibleVat = roundVatAmount(
+    fullVatAmount * (previewVatPercent / 100)
+  );
+  const previewNonDeductibleVat = roundVatAmount(
+    fullVatAmount - previewDeductibleVat
+  );
+  const showVatDeductionPanel = vatRegistered === true && fullVatAmount > 0;
+
+  async function handleApplyVatDeduction() {
+    try {
+      setApplyingVatDeduction(true);
+      setMessage("");
+      setError("");
+
+      if (!Number.isFinite(parsedVatPercent) || parsedVatPercent < 0 || parsedVatPercent > 100) {
+        throw new Error("Innskattsfrádráttur verður að vera á bilinu 0–100%.");
+      }
+      if (hasUnsavedChanges) {
+        throw new Error("Vistaðu bókunarlínurnar áður en hlutfallsfrádráttur er notaður.");
+      }
+
+      const result = await setDetectedDocumentVatDeduction(
+        documentId,
+        parsedVatPercent,
+        vatReason
+      );
+      setVatPercentInput(String(result.percent));
+      setMessage(
+        `Innskattsfrádráttur ${result.percent}% vistaður · ${formatIsNumber(result.deductibleVatAmount)} kr. af ${formatIsNumber(result.fullVatAmount)} kr.`
+      );
+      router.refresh();
+    } catch (err) {
+      setError(
+        err instanceof Error
+          ? err.message
+          : "Ekki tókst að vista hlutfallsfrádrátt innskatts."
+      );
+    } finally {
+      setApplyingVatDeduction(false);
+    }
+  }
+
   async function handleSave() {
     try {
       setSaving(true);
@@ -211,6 +413,7 @@ const [documentAmount, setDocumentAmount] = useState(
       );
 
       setMessage("Breytingar vistaðar.");
+      dirtyRef.current = false;
       setHasUnsavedChanges(false);
       router.refresh();
     } catch (err) {
@@ -268,7 +471,7 @@ async function handleMarkDuplicate() {
           const value = e.target.value;
 
           setDateInputValue(value);
-          setHasUnsavedChanges(true);
+          markDirty();
 
           const match = value.match(
             /^(\d{1,2})\.(\d{1,2})\.(\d{4})$/
@@ -317,7 +520,7 @@ async function handleMarkDuplicate() {
             setDateInputValue("");
           }
 
-          setHasUnsavedChanges(true);
+          markDirty();
           setMessage("");
           setError("");
         }}
@@ -334,7 +537,7 @@ async function handleMarkDuplicate() {
       disabled={!canEdit}
       onChange={(e) => {
   setDocumentAmount(e.target.value);
-  setHasUnsavedChanges(true);
+  markDirty();
 }}
       className="w-full rounded border px-2 py-1"
       placeholder="Upphæð"
@@ -348,6 +551,105 @@ async function handleMarkDuplicate() {
       : "VSK-skráningarstaða fyrirtækisins er ekki staðfest. VSK-bókun er óvirk þar til staðan hefur verið staðfest."}
   </div>
 )}
+
+{showVatDeductionPanel && (
+  <div className="rounded-lg border border-sky-200 bg-sky-50 p-4 text-sm">
+    <div className="flex flex-wrap items-start justify-between gap-3">
+      <div>
+        <div className="font-semibold text-sky-950">Innskattsfrádráttur</div>
+        <p className="mt-1 text-xs text-sky-800">
+          Hlutfallið er varðveitt með fylgiskjalinu og sést í rekjanleika bókunarinnar.
+        </p>
+      </div>
+      <div className="rounded-full border border-sky-300 bg-white px-3 py-1 font-semibold text-sky-900">
+        {vatDeduction ? `${vatDeduction.percent}% staðfest` : "100% núna"}
+      </div>
+    </div>
+
+    <div className="mt-3 grid gap-3 sm:grid-cols-3">
+      <div className="rounded border border-sky-100 bg-white p-3">
+        <div className="text-xs text-slate-500">VSK á reikningi</div>
+        <div className="mt-1 text-lg font-semibold">
+          {formatIsNumber(fullVatAmount)} kr.
+        </div>
+      </div>
+      <div className="rounded border border-emerald-200 bg-white p-3">
+        <div className="text-xs text-slate-500">Frádráttarbær innskattur</div>
+        <div className="mt-1 text-lg font-semibold text-emerald-700">
+          {formatIsNumber(previewDeductibleVat)} kr.
+        </div>
+      </div>
+      <div className="rounded border border-amber-200 bg-white p-3">
+        <div className="text-xs text-slate-500">Ófrádráttarbær VSK</div>
+        <div className="mt-1 text-lg font-semibold text-amber-700">
+          {formatIsNumber(previewNonDeductibleVat)} kr.
+        </div>
+      </div>
+    </div>
+
+    {canEdit && !approvedAt && voucherNumber == null && (
+      <div className="mt-4 grid gap-3 md:grid-cols-[170px_1fr_auto] md:items-end">
+        <label>
+          <span className="mb-1 block text-xs font-semibold text-slate-700">
+            Frádráttarhlutfall
+          </span>
+          <div className="flex items-center gap-1">
+            <input
+              type="number"
+              min="0"
+              max="100"
+              step="1"
+              value={vatPercentInput}
+              onChange={(e) => setVatPercentInput(e.target.value)}
+              className="w-24 rounded border border-sky-300 bg-white px-2 py-2"
+            />
+            <span className="font-semibold text-slate-700">%</span>
+          </div>
+          <div className="mt-2 flex flex-wrap gap-1">
+            {[100, 75, 50, 0].map((value) => (
+              <button
+                key={value}
+                type="button"
+                onClick={() => setVatPercentInput(String(value))}
+                className="rounded border border-sky-300 bg-white px-2 py-1 text-xs font-medium text-sky-800 hover:bg-sky-100"
+              >
+                {value}%
+              </button>
+            ))}
+          </div>
+        </label>
+
+        <label>
+          <span className="mb-1 block text-xs font-semibold text-slate-700">
+            Ástæða / skýring
+          </span>
+          <input
+            value={vatReason}
+            onChange={(e) => setVatReason(e.target.value)}
+            placeholder="t.d. blönduð notkun síma"
+            className="w-full rounded border border-sky-300 bg-white px-3 py-2"
+          />
+        </label>
+
+        <button
+          type="button"
+          onClick={handleApplyVatDeduction}
+          disabled={applyingVatDeduction || hasUnsavedChanges}
+          className="rounded bg-sky-700 px-4 py-2 font-semibold text-white hover:bg-sky-800 disabled:cursor-not-allowed disabled:opacity-50"
+        >
+          {applyingVatDeduction ? "Vista..." : "Nota hlutfall"}
+        </button>
+      </div>
+    )}
+
+    {hasUnsavedChanges && (
+      <p className="mt-2 text-xs font-medium text-amber-800">
+        Vistaðu bókunarlínurnar áður en þú breytir innskattsfrádrætti.
+      </p>
+    )}
+  </div>
+)}
+
 <div className="grid grid-cols-4 gap-2 text-xs font-semibold text-slate-500">
         <span>Reikningslykill</span>
         <span>Texti</span>
@@ -446,6 +748,11 @@ async function handleMarkDuplicate() {
     type="button"
     onClick={async () => {
       await deleteDetectedDocumentEntry(entry.id);
+      // Eyðingin er þegar vistuð á server. Fjarlægjum línuna líka strax
+      // úr local state svo dirty-vörnin haldi henni ekki sýnilegri.
+      setRows((currentRows) =>
+        currentRows.filter((row) => row.id !== entry.id)
+      );
       router.refresh();
     }}
     className="rounded border border-red-300 px-2 py-1 text-red-700"
@@ -474,7 +781,7 @@ async function handleMarkDuplicate() {
           </span>
 
           <strong>
-            {totalDebit.toLocaleString("en-US")} kr.
+            {formatIsNumber(totalDebit)} kr.
           </strong>
         </div>
 
@@ -484,7 +791,7 @@ async function handleMarkDuplicate() {
           </span>
 
           <strong>
-            {totalCredit.toLocaleString("en-US")} kr.
+            {formatIsNumber(totalCredit)} kr.
           </strong>
         </div>
 

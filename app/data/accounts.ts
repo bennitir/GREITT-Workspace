@@ -154,6 +154,13 @@ export const defaultAccounts: DefaultAccount[] = [
     "GENERAL"
   ),
 
+  noVatAccount(
+    "2230",
+    "Kreditkort – óafstemmt",
+    "SHORT_TERM_LIABILITY",
+    "GENERAL"
+  ),
+
   /*
    * VSK-kerfisreikningar
    */

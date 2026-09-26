@@ -22,10 +22,12 @@ import {
   deleteDetectedDocument,
   deleteReceipt,
   markReceiptNeedsAttention,
+  restoreReceiptFromNeedsAttention,
   repairDeleteLegacyReceipt,
 } from "@/app/actions/receiptActions";
 import DetectedDocumentEntriesEditor from "@/components/DetectedDocumentEntriesEditor";
 import DocumentInventoryReview from "@/components/DocumentInventoryReview";
+import ReceiptReviewSourceViewer from "@/components/ReceiptReviewSourceViewer";
 import { submitSuggestion } from "@/app/actions/suggestionActions";
 import TraceDetails from "./TraceDetails";
 
@@ -43,6 +45,38 @@ import { getCompanyModuleSettings } from "@/lib/core/company-module-repository";
 import { getEnabledCompanyModules } from "@/lib/core/company-modules";
 import { getCurrentInterfaceLanguage } from "@/lib/i18n/current-language";
 import { uiText } from "@/lib/i18n/ui";
+import { receiptPrintText } from "@/lib/i18n/receipt-print";
+
+function readVatDeductionForUi(value: unknown) {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return null;
+  const metadata = value as Record<string, unknown>;
+  const raw = metadata.vatDeduction;
+  if (!raw || typeof raw !== "object" || Array.isArray(raw)) return null;
+  const deduction = raw as Record<string, unknown>;
+
+  const percent = Number(deduction.percent);
+  const fullVatAmount = Number(deduction.fullVatAmount);
+  const deductibleVatAmount = Number(deduction.deductibleVatAmount);
+  const nonDeductibleVatAmount = Number(deduction.nonDeductibleVatAmount);
+  const reason = typeof deduction.reason === "string" ? deduction.reason : null;
+
+  if (
+    !Number.isFinite(percent) ||
+    !Number.isFinite(fullVatAmount) ||
+    !Number.isFinite(deductibleVatAmount) ||
+    !Number.isFinite(nonDeductibleVatAmount)
+  ) {
+    return null;
+  }
+
+  return {
+    percent,
+    fullVatAmount,
+    deductibleVatAmount,
+    nonDeductibleVatAmount,
+    reason,
+  };
+}
 
 export default async function ReceiptPage({
     params,
@@ -54,6 +88,7 @@ export default async function ReceiptPage({
     const cookieStore = await cookies();
   const interfaceLanguage = await getCurrentInterfaceLanguage();
   const t = uiText(interfaceLanguage);
+  const printT = receiptPrintText(interfaceLanguage);
   const activeUserId = cookieStore.get("activeUserId")?.value;
 
   const activeCompanyId = cookieStore.get("activeCompanyId")?.value;
@@ -700,13 +735,14 @@ const getNextUnresolvedDocument = (currentDocumentId: number) =>
             </p>
 
             {receipt.ocrText && (
-              <div className="mt-3">
-                <strong>Lesinn texti:</strong>
-
-                <pre className="mt-2 whitespace-pre-wrap rounded bg-gray-50 p-3 text-sm">
+              <details className="mt-3 rounded-md border border-slate-200 bg-slate-50">
+                <summary className="cursor-pointer px-3 py-2 text-sm font-semibold text-slate-700">
+                  Lesinn texti
+                </summary>
+                <pre className="max-h-[360px] overflow-auto whitespace-pre-wrap border-t border-slate-200 bg-white p-3 text-sm">
                   {receipt.ocrText}
                 </pre>
-              </div>
+              </details>
             )}
           </div>
         )}
@@ -744,7 +780,10 @@ const getNextUnresolvedDocument = (currentDocumentId: number) =>
           </div>
         )}
         <div className="space-y-3">
-  {receipt.entries.map((entry) => (
+  {(isManualBookedReceipt
+    ? receipt.entries
+    : selectedDocument?.bookingEntries ?? []
+  ).map((entry) => (
     <div
       key={entry.id}
       className="grid grid-cols-3 gap-4 border-b py-2 font-semibold"
@@ -768,6 +807,56 @@ const getNextUnresolvedDocument = (currentDocumentId: number) =>
   ))}
 </div>
         </div>
+
+        {originalFileUrl && (
+          <div className="lg:sticky lg:top-4">
+            <ReceiptReviewSourceViewer
+              sourceUrl={originalFileUrl}
+              isPdf={(receipt.fileName ?? receipt.filePath ?? receipt.storagePath ?? "")
+                .toLowerCase()
+                .includes(".pdf")}
+              language={interfaceLanguage}
+              compact
+              info={{
+                merchant:
+                  selectedDocument?.merchantName ??
+                  receipt.merchantName ??
+                  "Óþekktur",
+                dateLabel: selectedDocument?.date
+                  ? formatDate(selectedDocument.date)
+                  : receipt.aiDate
+                    ? formatDate(receipt.aiDate)
+                    : receipt.date
+                      ? formatDate(receipt.date)
+                      : "Óþekkt",
+                amountLabel: `${formatNumber(
+                  selectedDocument?.totalAmount ?? receipt.aiAmount ?? receipt.amount,
+                )} kr.`,
+                receiptNumber:
+                  selectedDocument?.receiptNumber ?? receipt.receiptNumber ?? null,
+                voucherNumber:
+                  selectedDocument?.voucherNumber ?? receipt.voucherNumber ?? null,
+                pageNumber: selectedDocument?.pageNumber ?? null,
+                documentPosition:
+                  selectedDocument && receipt.aiDetectedDocuments.length > 1
+                    ? `${t.document} ${selectedDocumentIndex + 1} ${t.of} ${receipt.aiDetectedDocuments.length}`
+                    : null,
+                bookingLines: (isManualBookedReceipt
+                  ? receipt.entries
+                  : selectedDocument?.bookingEntries ?? []
+                ).map((entry) => ({
+                  id: entry.id,
+                  account: entry.account,
+                  text: entry.text,
+                  debitLabel:
+                    entry.debit > 0 ? `${formatNumber(entry.debit)} kr.` : null,
+                  creditLabel:
+                    entry.credit > 0 ? `${formatNumber(entry.credit)} kr.` : null,
+                })),
+              }}
+            />
+          </div>
+        )}
 </div>
                         {/* HÆGRI DÁLKUR */}
         {(!isManualBookedReceipt || visibleDocuments.length > 0) && (
@@ -1791,22 +1880,36 @@ const getNextUnresolvedDocument = (currentDocumentId: number) =>
     ) : null}
   </div>
 ) : document.documentRole === "BOOKABLE" ? (
-  <DetectedDocumentEntriesEditor
-    documentId={document.id}
-    entries={document.bookingEntries}
-    accounts={accounts}
-    vatRegistered={receipt.company.vatRegistered}
-    date={document.date}
-    totalAmount={document.totalAmount}
-    reviewedAt={document.reviewedAt}
-    approvedAt={document.approvedAt}
-    voucherNumber={document.voucherNumber}
-    duplicateOfDocumentId={document.duplicateOfDocumentId}
-    duplicateVoucherNumber={document.duplicateVoucherNumber}
-    duplicateMarkedAt={document.duplicateMarkedAt}
-    canBook={canBook}
-    canEdit={canEdit && !document.duplicateMarkedAt}
-  />
+  <>
+    <DetectedDocumentEntriesEditor
+      key={document.id}
+      documentId={document.id}
+      entries={document.bookingEntries}
+      accounts={accounts}
+      vatRegistered={receipt.company.vatRegistered}
+      vatDeduction={readVatDeductionForUi(document.extractionMetadata)}
+      date={document.date}
+      totalAmount={document.totalAmount}
+      reviewedAt={document.reviewedAt}
+      approvedAt={document.approvedAt}
+      voucherNumber={document.voucherNumber}
+      duplicateOfDocumentId={document.duplicateOfDocumentId}
+      duplicateVoucherNumber={document.duplicateVoucherNumber}
+      duplicateMarkedAt={document.duplicateMarkedAt}
+      canBook={canBook}
+      canEdit={canEdit && !document.duplicateMarkedAt}
+    />
+    {document.voucherNumber !== null && originalFileUrl ? (
+      <Link
+        href={`/fylgiskjol/${receipt.id}/prenta?document=${document.id}&autoprint=1`}
+        target="_blank"
+        rel="noopener noreferrer"
+        className="mt-3 inline-flex items-center rounded-md border-2 border-slate-900 bg-white px-4 py-2 font-semibold text-slate-950 hover:bg-slate-50"
+      >
+        {printT.printThisDocument}
+      </Link>
+    ) : null}
+  </>
 ) : null}
                               
 
@@ -2303,20 +2406,50 @@ const getNextUnresolvedDocument = (currentDocumentId: number) =>
 
                         {document.documentRole !== "INSIGHT_SOURCE" &&
                           document.documentRole !== "SUPPORTING" && (
-                        <form
-  action={async () => {
-    "use server";
-    await markReceiptNeedsAttention(receipt.id);
-  }}
-  className="mt-2"
->
-  <button
-    type="submit"
-    className="rounded bg-amber-500 px-4 py-2 text-white hover:bg-amber-600"
-  >
-    Þarf skoðun
-  </button>
-</form>
+                          document.needsAttentionAt ? (
+                          <form
+                            action={async () => {
+                              "use server";
+                              await restoreReceiptFromNeedsAttention(
+                                receipt.id,
+                                document.id,
+                              );
+                            }}
+                            className="mt-2 rounded border border-amber-200 bg-amber-50 p-3"
+                          >
+                            <p className="text-sm text-amber-900">
+                              {t.deferredForAttentionHelp}
+                            </p>
+                            <button
+                              type="submit"
+                              className="mt-2 rounded border border-amber-500 bg-white px-4 py-2 font-semibold text-amber-800 hover:bg-amber-100"
+                            >
+                              {t.restoreToReview}
+                            </button>
+                          </form>
+                        ) : (
+                          <form
+                            action={async () => {
+                              "use server";
+                              await markReceiptNeedsAttention(
+                                receipt.id,
+                                document.id,
+                              );
+                              redirect("/fylgiskjol");
+                            }}
+                            className="mt-2"
+                          >
+                            <button
+                              type="submit"
+                              className="rounded bg-amber-500 px-4 py-2 font-semibold text-white hover:bg-amber-600"
+                            >
+                              {t.deferForAttention}
+                            </button>
+                            <p className="mt-1 text-xs text-slate-600">
+                              {t.deferForAttentionHelp}
+                            </p>
+                          </form>
+                        )
                         )}
 </>
                       )}
