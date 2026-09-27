@@ -1,0 +1,25 @@
+GLÖGGT – Frumskjal viewer stöðugleiki – 26.09.2026
+
+Markmið
+- Hætta að kasta PDF aftur í Passa/miðju þegar signed storage-slóð endurnýjast meðan sama fylgiskjal er opið.
+- Halda zoomi og pan fyrir sama frumskjal + sömu síðu.
+- Bæta render-gæði á venjulegum desktop skjám án þess að breyta frumritinu.
+
+Breyting
+- Viewer notar stöðugt auðkenni úr slóð án query/hash fyrir vinnusýn.
+- Endurnýjaður signed URL fyrir sama skjal endurstillir ekki zoom/pan.
+- Zoom/pan er varðveitt í minni componentsins/module meðan sama GLÖGGT-lota er opin, líka ef viewer remountast.
+- Nýtt skjal eða ný síða fær sína eigin stöðu.
+- PDF canvas er renderað að lágmarki 1.5x CSS pixel density (hámark 2x) til að bæta læsileika.
+
+Engin Prisma breyting.
+Engin breyting á bókunarvél.
+Frumskjal er óbreytt.
+
+Próf
+1. npx tsc --noEmit
+2. Opna Olís skjal 42/103.
+3. Zooma í 300–350% og draga að greiðslu-/vörulínum.
+4. Bíða eftir venjulegri bakgrunnsuppfærslu/polling og staðfesta að sýnin hoppi EKKI í Passa/miðju.
+5. Prófa − / Passa / + og drag aftur.
+6. Fara á annað fylgiskjal og staðfesta að það byrji eðlilega.

@@ -46,7 +46,7 @@ GLÖGGT á ekki að giska á hvaða kort var notað þegar frumskjalið segir þ
 
 Ef aðeins hluti VSK er frádráttarbær skal nota sérstaka reitinn **Innskattsfrádráttur** í yfirferð fylgiskjalsins. GLÖGGT sýnir þá heildar-VSK, frádráttarbæran hluta og ófrádráttarbæran hluta sérstaklega.
 
-Sjá nánar: [Hlutfallsfrádráttur innskatts](VSK-HLUTFALLSFRADRATTUR.md).
+Sjá nánar: [Hlutfallsfrádráttur innskatts](VSK-HLUTFALLSFRÁDRATTUR.md).
 
 ## 4. Merkja yfirfarið
 
@@ -78,7 +78,9 @@ Dæmi: nafn bensínstöðvar eitt og sér segir ekki hvort keypt var eldsneyti, 
 Í yfirferð má stækka og færa frumskjalið án þess að yfirgefa bókunarskjáinn.
 
 - **− / Passa / +** stjórnar stækkun.
+- **↺ / ↻** snýr vinnusýn frumskjalsins í 90° skrefum. Snúningurinn breytir ekki frumritinu.
 - Dragðu PDF eða mynd með músinni til að færa það.
+- Ef söluaðili hefur verið lesinn rangt má velja **Breyta** við söluaðila í yfirferðargögnum og vista rétt nafn samkvæmt frumskjali. Fyrra AI/OCR-gildið er varðveitt í rekjanleika, staðfest kennitala seljanda er hreinsuð ef hún fylgdi röngu auðkenni og skjalið þarf að merkja yfirfarið aftur eftir slíka leiðréttingu.
 - GLÖGGT heldur zoomi og staðsetningu fyrir sama frumskjal og sömu síðu meðan unnið er við yfirferðina. Endurnýjuð tæknileg geymsluslóð á ekki að kasta skjalinu aftur í frumstöðu.
 - Þegar farið er á annað frumskjal eða aðra síðu byrjar sú sýn sjálfstætt.
 - Frumritið sjálft er ekki breytt við zoom, pan eða hreinsaða vinnusýn.
@@ -97,3 +99,35 @@ Ef fylgiskjal þarf meiri skýringu eða rannsókn en þú vilt ekki láta það
 - Með **„Setja aftur í yfirferð“** má færa skjalið aftur í venjulega biðröð.
 
 Þetta er ætlað fyrir skjöl sem þarfnast nánari skýringar án þess að þau taki stöðugt næsta sæti í vinnuflæðinu.
+## Endurbyggja ranga bókunartillögu
+
+Ef óstaðfest tillaga inniheldur augljós OCR-/hausgögn sem bókunarlínur, t.d.
+`Nr. viðskipta`, `Kenni starfsmanns` eða önnur metadata, má velja
+**Endurbyggja tillögu úr staðfestum gögnum**.
+
+GLÖGGT eyðir þá aðeins núverandi **óstaðfestri tillögu**, varðveitir frumskjal,
+dagsetningu og heildarupphæð og les vörulínur valda undirskjalsins aftur úr frumskjalinu
+þegar um deterministic PDF-kvittun er að ræða. Síðan reynir kerfið að byggja bókunina
+aftur úr staðfestum vörum, fyrirtækjasértækri bókunarsögu og staðfestum greiðslumynstrum.
+Aðgerðin kallar ekki á AI. Ef örugg staðfest tenging finnst ekki er betra að
+tillagan verði ófullgerð en að GLÖGGT giski. Aðgerðin er rekjanleg í audit-sögu.
+
+## Starfsmannastyrkir og endurgreiðslur
+
+GLÖGGT notar grunnlykilinn **4520 – Starfsmannastyrkir og endurgreiðslur** fyrir starfsmannatengdar greiðslur sem eiga ekki heima í almennum rekstrarkostnaði, t.d. heilsueflingarstyrki og aksturs-/bílastyrki.
+
+Nákvæm tegund greiðslunnar á að varðveitast í fylgiskjalasamhengi (t.d. heilsuefling, akstur, nám eða annað) ásamt starfsmanni þegar hann er þekktur. Ef GLÖGGT sér ekki um launamiða eða framtal er atriðið varðveitt fyrir árs-/uppgjörsyfirlit svo sá sem annast uppgjörið geti gengið frá réttri meðferð.
+
+Lykillinn er án sjálfvirkrar VSK-meðferðar; frumskjal og eðli greiðslunnar ráða áfram meðferðinni.
+
+## Eldri greining án nýs AI-lesturs
+
+Ef eldri greining hafði stöðvað bókun vegna umhverfisstaðfestingar en bókari hefur nú staðfest að skjalið tilheyri réttu umhverfi, má halda áfram án nýs AI-kalls.
+
+- Veldu **Nota núverandi gögn og halda áfram**.
+- Veldu fyrsta reikningslykil, fjárhæð, debet/kredit og skýran bókunartexta.
+- GLÖGGT býr aðeins til þá línu sem bókarinn valdi og breytir skjalinu í bókanleg drög.
+- GLÖGGT **giskar ekki á mótreikning**; hann er bættur við þegar greiðsluleið er staðfest.
+- Aðgerðin er skráð í rekjanleika og `aiCalled = false`.
+
+Þetta er almennt legacy-flæði og er ekki bundið við ákveðið fyrirtæki, seljanda eða kostnaðartegund.

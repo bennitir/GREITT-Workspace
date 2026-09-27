@@ -99,6 +99,23 @@ export default function DetectedDocumentEntriesEditor({
     return Math.round((value + Number.EPSILON) * 100) / 100;
   }
 
+  function isExplicitNonDeductibleVatEntry(entry: Entry) {
+    const normalizedText = String(entry.text ?? "")
+      .trim()
+      .toLowerCase()
+      .normalize("NFD")
+      .replace(/[\u0300-\u036f]/g, "")
+      .replace(/[^a-z0-9]+/g, " ")
+      .trim();
+
+    return (
+      normalizedText.includes("ofradrattarb") &&
+      normalizedText.includes("vsk") &&
+      entry.debit > 0 &&
+      entry.credit === 0
+    );
+  }
+
   // Ekki nota Intl/toLocaleString í SSR-renderuðum Client Component texta.
   // Node og vafri geta annars skilað mismunandi þúsunda-/tugabrotaskilum
   // og valdið hydration mismatch. Þetta formatter er viljandi deterministic.
@@ -124,6 +141,40 @@ export default function DetectedDocumentEntriesEditor({
     vatRegistered === true
       ? accounts
       : accounts.filter((account) => !isVatPostingAccount(account));
+
+  const vatInputAccountNumbers = new Set(
+    accounts.filter(isVatInputPostingAccount).map((account) => account.number)
+  );
+
+  function readVatBasis(sourceRows: Entry[]) {
+    const currentVatInputAmount = roundVatAmount(
+      sourceRows
+        .filter((row) => vatInputAccountNumbers.has(row.account))
+        .reduce((sum, row) => sum + row.debit - row.credit, 0)
+    );
+    const explicitNonDeductibleVatAmount = roundVatAmount(
+      sourceRows
+        .filter(isExplicitNonDeductibleVatEntry)
+        .reduce((sum, row) => sum + row.debit - row.credit, 0)
+    );
+    const inferredFullVatAmount = roundVatAmount(
+      Math.max(0, currentVatInputAmount) +
+        Math.max(0, explicitNonDeductibleVatAmount)
+    );
+    const inferredPercent =
+      inferredFullVatAmount > 0 && explicitNonDeductibleVatAmount > 0
+        ? roundVatAmount(
+            (Math.max(0, currentVatInputAmount) / inferredFullVatAmount) * 100
+          )
+        : 100;
+
+    return {
+      currentVatInputAmount,
+      explicitNonDeductibleVatAmount,
+      inferredFullVatAmount,
+      inferredPercent,
+    };
+  }
 
   function normalizeAccountValue(value: string) {
     const trimmed = value.trim();
@@ -163,6 +214,11 @@ export default function DetectedDocumentEntriesEditor({
   const latestServerRowsRef = useRef(normalizedServerRows);
   latestServerRowsRef.current = normalizedServerRows;
   const suggestionAttemptedDocumentRef = useRef<number | null>(null);
+  const serverVatBasis = readVatBasis(normalizedServerRows);
+  const fallbackVatPercent =
+    serverVatBasis.explicitNonDeductibleVatAmount > 0
+      ? serverVatBasis.inferredPercent
+      : 100;
 
   useEffect(() => {
     if (activeDocumentIdRef.current !== documentId) {
@@ -261,16 +317,16 @@ const [documentAmount, setDocumentAmount] = useState(
   const [saving, setSaving] = useState(false);
   const [hasUnsavedChanges, setHasUnsavedChanges] = useState(false);
   const [vatPercentInput, setVatPercentInput] = useState(
-    String(vatDeduction?.percent ?? 100)
+    String(vatDeduction?.percent ?? fallbackVatPercent)
   );
   const [vatReason, setVatReason] = useState(vatDeduction?.reason ?? "");
   const [applyingVatDeduction, setApplyingVatDeduction] = useState(false);
 
   const vatDeductionSignature = JSON.stringify(vatDeduction);
   useEffect(() => {
-    setVatPercentInput(String(vatDeduction?.percent ?? 100));
+    setVatPercentInput(String(vatDeduction?.percent ?? fallbackVatPercent));
     setVatReason(vatDeduction?.reason ?? "");
-  }, [documentId, vatDeductionSignature]);
+  }, [documentId, vatDeductionSignature, fallbackVatPercent]);
 
   function markDirty() {
     dirtyRef.current = true;
@@ -334,17 +390,21 @@ const [documentAmount, setDocumentAmount] = useState(
   totalCredit > 0 &&
   Math.abs(totalDebit - totalCredit) <= 0.01;
 
-  const vatInputAccountNumbers = new Set(
-    accounts.filter(isVatInputPostingAccount).map((account) => account.number)
-  );
-  const currentVatInputAmount = roundVatAmount(
-    rows
-      .filter((row) => vatInputAccountNumbers.has(row.account))
-      .reduce((sum, row) => sum + row.debit - row.credit, 0)
-  );
+  const currentVatBasis = readVatBasis(rows);
+  const currentVatInputAmount = currentVatBasis.currentVatInputAmount;
+  const explicitNonDeductibleVatAmount =
+    currentVatBasis.explicitNonDeductibleVatAmount;
+  const inferredFullVatAmount = currentVatBasis.inferredFullVatAmount;
   const fullVatAmount = roundVatAmount(
-    vatDeduction?.fullVatAmount ?? Math.max(0, currentVatInputAmount)
+    vatDeduction
+      ? Math.max(vatDeduction.fullVatAmount, inferredFullVatAmount)
+      : inferredFullVatAmount
   );
+  const displayedVatPercent =
+    vatDeduction?.percent ??
+    (explicitNonDeductibleVatAmount > 0
+      ? currentVatBasis.inferredPercent
+      : 100);
   const parsedVatPercent = Number(String(vatPercentInput).replace(",", "."));
   const previewVatPercent = Number.isFinite(parsedVatPercent)
     ? Math.min(100, Math.max(0, parsedVatPercent))
@@ -562,7 +622,11 @@ async function handleMarkDuplicate() {
         </p>
       </div>
       <div className="rounded-full border border-sky-300 bg-white px-3 py-1 font-semibold text-sky-900">
-        {vatDeduction ? `${vatDeduction.percent}% staðfest` : "100% núna"}
+        {vatDeduction
+          ? `${vatDeduction.percent}% staðfest`
+          : explicitNonDeductibleVatAmount > 0
+            ? `${formatIsNumber(displayedVatPercent)}% í bókun`
+            : "100% núna"}
       </div>
     </div>
 

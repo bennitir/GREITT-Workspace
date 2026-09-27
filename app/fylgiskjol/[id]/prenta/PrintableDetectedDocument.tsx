@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import {
   detectConfidentReceiptCrop,
   drawCropToCanvas,
@@ -27,6 +27,7 @@ type Labels = {
   credit: string;
   renderError: string;
   sourcePage: string;
+  nextDocument: string;
 };
 
 type Props = {
@@ -40,6 +41,7 @@ type Props = {
   bookingLines: BookingLine[];
   autoPrint: boolean;
   backHref: string;
+  nextHref: string | null;
   labels: Labels;
 };
 
@@ -202,7 +204,7 @@ function buildPdfBlob(pages: PdfImagePage[]) {
 }
 
 async function printRenderedPages(pageImages: string[], title: string) {
-  if (pageImages.length === 0) return;
+  if (pageImages.length === 0) return false;
 
   const pdfPages = await Promise.all(pageImages.map((pageImage) => pageImageToJpeg(pageImage)));
   const pdfBlob = buildPdfBlob(pdfPages);
@@ -235,27 +237,36 @@ async function printRenderedPages(pageImages: string[], title: string) {
     }, 1000);
   };
 
-  iframe.addEventListener(
-    "load",
-    () => {
-      // Give the built-in PDF viewer a moment to finish laying out the blob.
-      window.setTimeout(() => {
-        try {
-          iframe.contentWindow?.focus();
-          iframe.contentWindow?.print();
-        } catch (error) {
-          console.warn("Direct PDF printing was blocked; opening the PDF instead.", error);
-          window.open(pdfUrl, "_blank", "noopener,noreferrer");
-          cleanup();
-        }
-      }, 350);
-    },
-    { once: true },
-  );
+  const printDialogClosed = await new Promise<boolean>((resolve) => {
+    iframe.addEventListener(
+      "load",
+      () => {
+        // Give the built-in PDF viewer a moment to finish laying out the blob.
+        window.setTimeout(() => {
+          try {
+            iframe.contentWindow?.focus();
+            // Chrome blocks here while the native print dialog is open. Once
+            // print() returns, the user has closed the dialog (printed or
+            // cancelled), so the review flow may safely continue.
+            iframe.contentWindow?.print();
+            resolve(true);
+            cleanup();
+          } catch (error) {
+            console.warn("Direct PDF printing was blocked; opening the PDF instead.", error);
+            window.open(pdfUrl, "_blank", "noopener,noreferrer");
+            resolve(false);
+            cleanup();
+          }
+        }, 350);
+      },
+      { once: true },
+    );
+  });
 
   // Keep the object URL alive long enough for native print dialogs. Some PDF
   // viewers do not fire afterprint on the embedding window.
   window.setTimeout(cleanup, 120_000);
+  return printDialogClosed;
 }
 
 type MarkPlacement = {
@@ -625,12 +636,14 @@ export default function PrintableDetectedDocument({
   bookingLines,
   autoPrint,
   backHref,
+  nextHref,
   labels,
 }: Props) {
   const [renderedPages, setRenderedPages] = useState<string[]>([]);
   const [renderError, setRenderError] = useState<string | null>(null);
   const [isPreparing, setIsPreparing] = useState(true);
-  const didAutoPrintRef = useRef(false);
+  const [isPrinting, setIsPrinting] = useState(false);
+  const [printAttempted, setPrintAttempted] = useState(false);
 
   const sourcePageKey = useMemo(
     () => (sourcePageNumbers ? sourcePageNumbers.join(",") : "all"),
@@ -644,6 +657,7 @@ export default function PrintableDetectedDocument({
       setIsPreparing(true);
       setRenderError(null);
       setRenderedPages([]);
+      setPrintAttempted(false);
 
       try {
         if (!isPdf) {
@@ -786,28 +800,38 @@ export default function PrintableDetectedDocument({
     voucherNumber,
   ]);
 
-  useEffect(() => {
-    if (
-      !autoPrint ||
-      isPreparing ||
-      renderError ||
-      renderedPages.length === 0 ||
-      didAutoPrintRef.current
-    ) {
-      return;
-    }
+  const printCurrentDocument = async () => {
+    if (isPreparing || isPrinting || renderError || renderedPages.length === 0) return;
 
-    didAutoPrintRef.current = true;
-    const title = `${labels.title} ${voucherNumber}`;
-    void printRenderedPages(renderedPages, title);
-  }, [
-    autoPrint,
-    isPreparing,
-    labels.title,
-    renderError,
-    renderedPages,
-    voucherNumber,
-  ]);
+    // Print the generated PDF rather than the surrounding HTML preview. Each
+    // rendered source page becomes exactly one A4 PDF page, so browser HTML
+    // pagination cannot create blank sheets or push the booking mark onto a
+    // separate page.
+    //
+    // Important: browsers do not reliably tell us whether the native dialog
+    // ended with Print or Cancel. Therefore GLÖGGT must never navigate away
+    // automatically when print() returns. We only unlock the explicit
+    // "Næsta fylgiskjal" action after the print dialog has been shown.
+    setIsPrinting(true);
+    try {
+      const printDialogClosed = await printRenderedPages(
+        renderedPages,
+        `${labels.title} ${voucherNumber}`,
+      );
+
+      if (printDialogClosed) {
+        setPrintAttempted(true);
+      }
+    } finally {
+      setIsPrinting(false);
+    }
+  };
+
+  // `autoPrint` is intentionally no longer used to open the native print
+  // dialog automatically. The route may still receive the old query
+  // parameter, but browsers require a fresh user gesture for reliable print
+  // behavior.
+  void autoPrint;
 
   return (
     <div className="gloggt-print-root fixed inset-0 z-[1000] overflow-y-auto bg-slate-100 text-slate-950">
@@ -910,17 +934,20 @@ export default function PrintableDetectedDocument({
             </a>
             <button
               type="button"
-              onClick={() =>
-                void printRenderedPages(
-                  renderedPages,
-                  `${labels.title} ${voucherNumber}`,
-                )
-              }
-              disabled={isPreparing || Boolean(renderError) || renderedPages.length === 0}
+              onClick={() => void printCurrentDocument()}
+              disabled={isPreparing || isPrinting || Boolean(renderError) || renderedPages.length === 0}
               className="rounded-md bg-slate-900 px-4 py-2 text-sm font-semibold text-white disabled:cursor-not-allowed disabled:opacity-50"
             >
-              {isPreparing ? labels.preparing : labels.printNow}
+              {isPreparing || isPrinting ? labels.preparing : labels.printNow}
             </button>
+            {nextHref && printAttempted ? (
+              <a
+                href={nextHref}
+                className="rounded-md bg-blue-700 px-4 py-2 text-sm font-semibold text-white hover:bg-blue-800"
+              >
+                {labels.nextDocument} →
+              </a>
+            ) : null}
           </div>
         </div>
       </div>

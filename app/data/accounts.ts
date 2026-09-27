@@ -374,6 +374,16 @@ export const defaultAccounts: DefaultAccount[] = [
     "EXPENSE"
   ),
 
+  // Sameiginlegur lykill fyrir starfsmannatengda styrki og endurgreiðslur.
+  // Nákvæm tegund (t.d. heilsuefling, akstur/bílastyrkur, nám) á að
+  // varðveitast í gögnum/fylgiskjalasamhengi fremur en að fjölga bókhaldslyklum.
+  noVatAccount(
+    "4520",
+    "Starfsmannastyrkir og endurgreiðslur",
+    "PAYROLL_EXPENSE",
+    "EXPENSE"
+  ),
+
   noVatAccount(
     "4530",
     "Tryggingagjald",

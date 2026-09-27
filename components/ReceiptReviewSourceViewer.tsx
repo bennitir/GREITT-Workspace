@@ -1,6 +1,8 @@
 "use client";
 
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState, useTransition } from "react";
+import { useRouter } from "next/navigation";
+import { updateDetectedDocumentMerchant } from "@/app/actions/receiptActions";
 import {
   detectConfidentReceiptCrop,
   drawCropToCanvas,
@@ -19,6 +21,8 @@ type BookingLine = {
 
 type ReviewInfo = {
   merchant: string;
+  documentId: number | null;
+  canEditMerchant: boolean;
   dateLabel: string;
   amountLabel: string;
   receiptNumber: string | null;
@@ -48,6 +52,12 @@ const copy = {
     showOriginal: "Sýna frumrit",
     cleanedHint: "Bakgrunnur utan reiknings er falinn í vinnusýn þegar mörk skjals finnast örugglega. Frumritið er óbreytt.",
     merchant: "Söluaðili",
+    editMerchant: "Breyta",
+    saveMerchant: "Vista",
+    cancelMerchant: "Hætta við",
+    merchantCorrectionHint: "Leiðrétting varðveitist í rekjanleika",
+    rotateLeft: "Snúa til vinstri",
+    rotateRight: "Snúa til hægri",
     date: "Dagsetning",
     amount: "Upphæð",
     receiptNumber: "Reiknings-/kvittunarnr.",
@@ -77,6 +87,12 @@ const copy = {
     showOriginal: "Show original",
     cleanedHint: "Background outside the document is hidden when its boundary can be detected confidently. The original is unchanged.",
     merchant: "Merchant",
+    editMerchant: "Edit",
+    saveMerchant: "Save",
+    cancelMerchant: "Cancel",
+    merchantCorrectionHint: "The correction is preserved in the audit trail",
+    rotateLeft: "Rotate left",
+    rotateRight: "Rotate right",
     date: "Date",
     amount: "Amount",
     receiptNumber: "Invoice/receipt no.",
@@ -106,6 +122,12 @@ const copy = {
     showOriginal: "Pokaż oryginał",
     cleanedHint: "Tło poza dokumentem jest ukrywane, gdy granice dokumentu można wykryć z dużą pewnością. Oryginał pozostaje bez zmian.",
     merchant: "Sprzedawca",
+    editMerchant: "Edytuj",
+    saveMerchant: "Zapisz",
+    cancelMerchant: "Anuluj",
+    merchantCorrectionHint: "Korekta zostaje zachowana w historii zmian",
+    rotateLeft: "Obróć w lewo",
+    rotateRight: "Obróć w prawo",
     date: "Data",
     amount: "Kwota",
     receiptNumber: "Nr faktury/paragonu",
@@ -135,6 +157,12 @@ const copy = {
     showOriginal: "Прикажи оригинал",
     cleanedHint: "Позадина ван документа се сакрива када се границе документа могу поуздано препознати. Оригинал остаје непромењен.",
     merchant: "Продавац",
+    editMerchant: "Измени",
+    saveMerchant: "Сачувај",
+    cancelMerchant: "Откажи",
+    merchantCorrectionHint: "Исправка се чува у трагу измена",
+    rotateLeft: "Ротирај улево",
+    rotateRight: "Ротирај удесно",
     date: "Датум",
     amount: "Износ",
     receiptNumber: "Бр. рачуна/признанице",
@@ -158,6 +186,7 @@ function clampZoom(value: number) {
 type ViewerMemory = {
   zoom: number;
   pan: { x: number; y: number };
+  rotation: number;
 };
 
 const viewerMemory = new Map<string, ViewerMemory>();
@@ -193,6 +222,7 @@ export default function ReceiptReviewSourceViewer({
   const initialView = viewerMemory.get(viewKey);
   const [zoom, setZoom] = useState(() => initialView?.zoom ?? 100);
   const [pan, setPan] = useState(() => initialView?.pan ?? { x: 0, y: 0 });
+  const [rotation, setRotation] = useState(() => initialView?.rotation ?? 0);
   const [effectiveSourceUrl, setEffectiveSourceUrl] = useState(sourceUrl);
   const currentViewKeyRef = useRef(viewKey);
   currentViewKeyRef.current = viewKey;
@@ -211,11 +241,17 @@ export default function ReceiptReviewSourceViewer({
   const [pdfReadyVersion, setPdfReadyVersion] = useState(0);
   const [pdfError, setPdfError] = useState<string | null>(null);
   const [pdfStageSize, setPdfStageSize] = useState({ width: 0, height: 0 });
+  const [editingMerchant, setEditingMerchant] = useState(false);
+  const [merchantDraft, setMerchantDraft] = useState(info.merchant);
+  const [merchantError, setMerchantError] = useState<string | null>(null);
+  const [merchantPending, startMerchantTransition] = useTransition();
+  const router = useRouter();
 
   useEffect(() => {
     const remembered = viewerMemory.get(viewKey);
     setZoom(remembered?.zoom ?? 100);
     setPan(remembered?.pan ?? { x: 0, y: 0 });
+    setRotation(remembered?.rotation ?? 0);
     setPanelOffset({ x: 0, y: 0 });
     // Signed storage URLs may refresh while the user is reviewing the same page.
     // Only adopt a new URL when the underlying document/page identity changes,
@@ -224,8 +260,15 @@ export default function ReceiptReviewSourceViewer({
   }, [viewKey]);
 
   useEffect(() => {
-    viewerMemory.set(currentViewKeyRef.current, { zoom, pan });
-  }, [pan, zoom]);
+    viewerMemory.set(currentViewKeyRef.current, { zoom, pan, rotation });
+  }, [pan, rotation, zoom]);
+
+  useEffect(() => {
+    if (!editingMerchant) {
+      setMerchantDraft(info.merchant);
+      setMerchantError(null);
+    }
+  }, [editingMerchant, info.merchant]);
 
   useEffect(() => {
     if (isPdf) {
@@ -295,6 +338,42 @@ export default function ReceiptReviewSourceViewer({
   function resetImage() {
     setZoom(100);
     setPan({ x: 0, y: 0 });
+  }
+
+  function rotateDocument(direction: -1 | 1) {
+    setRotation((current) => (current + direction * 90 + 360) % 360);
+    setPan({ x: 0, y: 0 });
+  }
+
+  function saveMerchantCorrection() {
+    const documentId = info.documentId;
+    const nextMerchant = merchantDraft.trim();
+    if (!documentId || !info.canEditMerchant) return;
+    if (!nextMerchant) {
+      setMerchantError(language === "is" ? "Skrá þarf söluaðila." : "Merchant is required.");
+      return;
+    }
+    if (nextMerchant === info.merchant.trim()) {
+      setEditingMerchant(false);
+      return;
+    }
+
+    setMerchantError(null);
+    startMerchantTransition(async () => {
+      try {
+        await updateDetectedDocumentMerchant(documentId, nextMerchant);
+        setEditingMerchant(false);
+        router.refresh();
+      } catch (error) {
+        setMerchantError(
+          error instanceof Error
+            ? error.message
+            : language === "is"
+              ? "Ekki tókst að vista söluaðila."
+              : "Could not save merchant.",
+        );
+      }
+    });
   }
 
   useEffect(() => {
@@ -368,7 +447,7 @@ export default function ReceiptReviewSourceViewer({
     if (!page || !canvas || pdfStageSize.width <= 0 || pdfStageSize.height <= 0) return;
 
     let cancelled = false;
-    const baseViewport = page.getViewport({ scale: 1 });
+    const baseViewport = page.getViewport({ scale: 1, rotation });
     const availableWidth = Math.max(120, pdfStageSize.width - 20);
     const availableHeight = Math.max(120, pdfStageSize.height - 20);
     const fitScale = Math.min(
@@ -376,7 +455,7 @@ export default function ReceiptReviewSourceViewer({
       availableHeight / baseViewport.height,
     );
     const renderScale = fitScale * (zoom / 100);
-    const viewport = page.getViewport({ scale: renderScale });
+    const viewport = page.getViewport({ scale: renderScale, rotation });
     // Render slightly above CSS pixel density on ordinary desktop screens.
     // This keeps raster/scanned PDFs as clear as their source allows when zoomed,
     // without turning the canvas into an unbounded memory consumer.
@@ -412,7 +491,7 @@ export default function ReceiptReviewSourceViewer({
       cancelled = true;
       renderTask.cancel();
     };
-  }, [isPdf, pdfReadyVersion, pdfStageSize.height, pdfStageSize.width, zoom]);
+  }, [isPdf, pdfReadyVersion, pdfStageSize.height, pdfStageSize.width, rotation, zoom]);
 
   const stageHeight = expanded
     ? "h-[calc(100vh-135px)] min-h-[620px]"
@@ -436,6 +515,24 @@ export default function ReceiptReviewSourceViewer({
         </div>
 
         <div className="flex flex-wrap items-center gap-1.5">
+          <button
+            type="button"
+            onClick={() => rotateDocument(-1)}
+            title={labels.rotateLeft}
+            aria-label={labels.rotateLeft}
+            className="min-w-9 rounded-md border border-slate-300 bg-white px-2 py-1 text-sm font-semibold hover:bg-slate-50"
+          >
+            ↺
+          </button>
+          <button
+            type="button"
+            onClick={() => rotateDocument(1)}
+            title={labels.rotateRight}
+            aria-label={labels.rotateRight}
+            className="min-w-9 rounded-md border border-slate-300 bg-white px-2 py-1 text-sm font-semibold hover:bg-slate-50"
+          >
+            ↻
+          </button>
           {!isPdf ? (
             <>
               {cleanedImageUrl && (
@@ -613,7 +710,7 @@ export default function ReceiptReviewSourceViewer({
                 draggable={false}
                 className="absolute left-1/2 top-1/2 block max-h-[calc(100%-16px)] max-w-[calc(100%-16px)] bg-white object-contain shadow-md"
                 style={{
-                  transform: `translate(-50%, -50%) translate(${pan.x}px, ${pan.y}px) scale(${zoom / 100})`,
+                  transform: `translate(-50%, -50%) translate(${pan.x}px, ${pan.y}px) rotate(${rotation}deg) scale(${zoom / 100})`,
                   transformOrigin: "center center",
                 }}
               />
@@ -672,7 +769,73 @@ export default function ReceiptReviewSourceViewer({
             <div className="max-h-[370px] overflow-y-auto p-3 text-sm text-slate-800">
               <dl className="grid grid-cols-[auto,1fr] gap-x-3 gap-y-1.5">
                 <dt className="text-slate-500">{labels.merchant}</dt>
-                <dd className="min-w-0 truncate font-semibold text-slate-950">{info.merchant}</dd>
+                <dd className="min-w-0 font-semibold text-slate-950">
+                  {editingMerchant ? (
+                    <div className="space-y-1.5">
+                      <input
+                        value={merchantDraft}
+                        onChange={(event) => setMerchantDraft(event.target.value)}
+                        onKeyDown={(event) => {
+                          if (event.key === "Enter") {
+                            event.preventDefault();
+                            saveMerchantCorrection();
+                          }
+                          if (event.key === "Escape") {
+                            setEditingMerchant(false);
+                            setMerchantDraft(info.merchant);
+                            setMerchantError(null);
+                          }
+                        }}
+                        disabled={merchantPending}
+                        autoFocus
+                        className="w-full rounded-md border border-slate-300 bg-white px-2 py-1 text-sm font-medium text-slate-950 outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-100 disabled:opacity-60"
+                      />
+                      <div className="flex flex-wrap gap-1.5">
+                        <button
+                          type="button"
+                          onClick={saveMerchantCorrection}
+                          disabled={merchantPending}
+                          className="rounded-md bg-blue-600 px-2 py-1 text-xs font-semibold text-white hover:bg-blue-700 disabled:opacity-50"
+                        >
+                          {labels.saveMerchant}
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setEditingMerchant(false);
+                            setMerchantDraft(info.merchant);
+                            setMerchantError(null);
+                          }}
+                          disabled={merchantPending}
+                          className="rounded-md border border-slate-300 bg-white px-2 py-1 text-xs font-semibold text-slate-700 hover:bg-slate-50 disabled:opacity-50"
+                        >
+                          {labels.cancelMerchant}
+                        </button>
+                      </div>
+                      {merchantError && (
+                        <p className="text-xs font-medium text-red-700">{merchantError}</p>
+                      )}
+                      <p className="text-[11px] font-normal text-slate-500">{labels.merchantCorrectionHint}</p>
+                    </div>
+                  ) : (
+                    <div className="flex min-w-0 items-center gap-2">
+                      <span className="min-w-0 flex-1 truncate">{info.merchant}</span>
+                      {info.canEditMerchant && info.documentId != null && (
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setMerchantDraft(info.merchant);
+                            setMerchantError(null);
+                            setEditingMerchant(true);
+                          }}
+                          className="shrink-0 rounded-md border border-slate-300 bg-white px-2 py-0.5 text-[11px] font-semibold text-slate-700 hover:bg-slate-50"
+                        >
+                          {labels.editMerchant}
+                        </button>
+                      )}
+                    </div>
+                  )}
+                </dd>
                 <dt className="text-slate-500">{labels.date}</dt>
                 <dd className="font-semibold text-slate-950">{info.dateLabel}</dd>
                 <dt className="text-slate-500">{labels.amount}</dt>

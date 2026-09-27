@@ -5,6 +5,7 @@ import { persistReceiptDerivedInsight } from "@/lib/insight/receipt-derived";
 import { recordAiUsage } from "@/lib/ai/usage";
 import {
   RECEIPT_PROCESSING_VERSION,
+  DETERMINISTIC_RECEIPT_PURCHASE_LINE_VERSION,
   buildDetectedDocumentFingerprint,
   buildReceiptIngestKey,
   buildReceiptSourceSnapshot,
@@ -55,6 +56,7 @@ import {
 } from "@/lib/receipts/reconciliation";
 import {
   buildGlobalProductCanonicalKey,
+  globalProductCanonicalKeysEquivalent,
   inferReceiptContextFromAccount,
   inferReceiptContextFromGlobalProductKnowledge,
   learnGlobalProductKnowledgeFromReview,
@@ -4660,6 +4662,17 @@ function receiptSuggestionJsonRecord(value: unknown): Record<string, unknown> | 
   return value as Record<string, unknown>;
 }
 
+/**
+ * Prisma Json-reitir mega aðeins fá JSON-samhæf gildi. Deterministic
+ * purchase-line parserinn notar vísvitandi `unknown` í inntakstýpum sínum,
+ * þannig að TypeScript getur ekki sjálft sannað að niðurstaðan sé JsonValue.
+ * Serialiseringin hér bæði sannreynir mörkin og fjarlægir `undefined` áður en
+ * metadata er vistað.
+ */
+function toPrismaInputJsonValue(value: unknown): Prisma.InputJsonValue {
+  return JSON.parse(JSON.stringify(value)) as Prisma.InputJsonValue;
+}
+
 type DeterministicReceiptContext = "FOOD_SERVICE" | "FUEL" | "UNKNOWN";
 
 function classifyDeterministicReceiptContext(pageText: string): DeterministicReceiptContext {
@@ -4744,7 +4757,10 @@ function accountSemanticallyMatchesReceiptContext(
  * kemur aðeins inn þegar nákvæm kortategund + síðustu fjórir stafir passa við
  * áður staðfesta greiðslulínu hjá sama fyrirtæki. Ekkert AI-kall fer fram hér.
  */
-export async function applyConfirmedBookingSuggestions(documentId: number) {
+export async function applyConfirmedBookingSuggestions(
+  documentId: number,
+  options?: { refreshCurrentPurchaseLines?: boolean },
+) {
   const document = await prisma.aiDetectedDocument.findUnique({
     where: { id: documentId },
     include: {
@@ -4791,7 +4807,7 @@ export async function applyConfirmedBookingSuggestions(documentId: number) {
     ]),
   );
 
-  let workingExtractionMetadata = document.extractionMetadata;
+  let workingExtractionMetadata: unknown = document.extractionMetadata;
   let currentContext = readCachedDeterministicReceiptContext(
     workingExtractionMetadata,
   );
@@ -4799,7 +4815,20 @@ export async function applyConfirmedBookingSuggestions(documentId: number) {
     currentContext && currentContext !== "UNKNOWN" ? "DOCUMENT_SIGNALS" : "NONE";
   let learnedProductMatchCount = 0;
 
+  const refreshCurrentPurchaseLines =
+    options?.refreshCurrentPurchaseLines === true && document.pageNumber != null;
+  const currentMetadataRecord =
+    receiptSuggestionJsonRecord(workingExtractionMetadata) ?? {};
+  const currentCanonicalExtraction =
+    receiptSuggestionJsonRecord(currentMetadataRecord.canonicalExtraction) ?? {};
+  const currentPurchaseLineParserVersion =
+    typeof currentCanonicalExtraction.purchaseLineParserVersion === "string"
+      ? currentCanonicalExtraction.purchaseLineParserVersion
+      : null;
   const needsPurchaseLineHydration =
+    refreshCurrentPurchaseLines ||
+    currentPurchaseLineParserVersion !==
+      DETERMINISTIC_RECEIPT_PURCHASE_LINE_VERSION ||
     readCanonicalPurchaseLines(workingExtractionMetadata).length === 0;
 
   // Eldri deterministic safnskjöl geymdu hvorki purchaseLines né alltaf
@@ -4834,19 +4863,28 @@ export async function applyConfirmedBookingSuggestions(documentId: number) {
           )
             ? canonicalExtraction.purchaseLines
             : [];
-          const purchaseLines =
-            existingPurchaseLines.length > 0
-              ? existingPurchaseLines
-              : extractDeterministicReceiptBundlePurchaseLines(pageText);
+          const storedParserVersion =
+            typeof canonicalExtraction.purchaseLineParserVersion === "string"
+              ? canonicalExtraction.purchaseLineParserVersion
+              : null;
+          const shouldRefreshThisDocument =
+            (refreshCurrentPurchaseLines && sibling.id === document.id) ||
+            storedParserVersion !== DETERMINISTIC_RECEIPT_PURCHASE_LINE_VERSION ||
+            existingPurchaseLines.length === 0;
+          const purchaseLines = shouldRefreshThisDocument
+            ? extractDeterministicReceiptBundlePurchaseLines(pageText)
+            : existingPurchaseLines;
 
-          const nextMetadata = {
+          const nextMetadata = toPrismaInputJsonValue({
             ...existing,
             deterministicReceiptContext: context,
             canonicalExtraction: {
               ...canonicalExtraction,
               purchaseLines,
+              purchaseLineParserVersion:
+                DETERMINISTIC_RECEIPT_PURCHASE_LINE_VERSION,
             },
-          };
+          });
           metadataByDocumentId.set(sibling.id, nextMetadata);
 
           await tx.aiDetectedDocument.update({
@@ -4887,26 +4925,55 @@ export async function applyConfirmedBookingSuggestions(documentId: number) {
   const currentMerchant = normalizeAccountingPatternPart(document.merchantName);
   const currentDocumentType = normalizeAccountingPatternPart(document.documentType);
 
-  const priorDocuments = await prisma.aiDetectedDocument.findMany({
-    where: {
-      id: { not: document.id },
-      receipt: { companyId: document.receipt.companyId },
-      reviewedAt: { not: null },
-      disposedAt: null,
-      bookingEntries: { some: {} },
+  const priorDocumentSelect = {
+    id: true,
+    receiptId: true,
+    pageNumber: true,
+    merchantName: true,
+    documentType: true,
+    extractionMetadata: true,
+    bookingEntries: {
+      select: { account: true, text: true, debit: true, credit: true },
     },
-    orderBy: { reviewedAt: "desc" },
-    take: 120,
-    select: {
-      id: true,
-      merchantName: true,
-      documentType: true,
-      extractionMetadata: true,
-      bookingEntries: {
-        select: { account: true, text: true, debit: true, credit: true },
+  } as const;
+
+  // Nýleg yfirfarin skjöl gefa almenna fyrirtækjasögu, en í safnskjali þarf
+  // einnig að tryggja að eldri yfirfarnar systursíður detti ekki út bara vegna
+  // almenns `take`-marks. Þetta er enn fyrirtækjasértæk saga, ekki sérkóði.
+  const [recentPriorDocuments, siblingPriorDocuments] = await Promise.all([
+    prisma.aiDetectedDocument.findMany({
+      where: {
+        id: { not: document.id },
+        receipt: { companyId: document.receipt.companyId },
+        reviewedAt: { not: null },
+        disposedAt: null,
+        bookingEntries: { some: {} },
       },
-    },
-  });
+      orderBy: { reviewedAt: "desc" },
+      take: 120,
+      select: priorDocumentSelect,
+    }),
+    prisma.aiDetectedDocument.findMany({
+      where: {
+        id: { not: document.id },
+        receiptId: document.receiptId,
+        reviewedAt: { not: null },
+        disposedAt: null,
+        bookingEntries: { some: {} },
+      },
+      orderBy: { reviewedAt: "desc" },
+      select: priorDocumentSelect,
+    }),
+  ]);
+
+  const priorDocuments = [
+    ...new Map(
+      [...siblingPriorDocuments, ...recentPriorDocuments].map((prior) => [
+        prior.id,
+        prior,
+      ]),
+    ).values(),
+  ];
 
   const currentProductLines = readCanonicalPurchaseLines(
     workingExtractionMetadata,
@@ -4955,27 +5022,171 @@ export async function applyConfirmedBookingSuggestions(documentId: number) {
       ]),
   );
 
-  // Backfill án migration: eldri YFIRFARIN handvirk bókun má strax verða
-  // vísbending ef bókarinn hefur notað sjálft vöruheitið sem línutexta.
-  // Þetta gerir eldri leiðréttingar gagnlegar þó product-pattern hafi ekki
-  // verið til þegar þær voru gerðar. Ef fleiri en einn reikningur hefur verið
-  // staðfestur fyrir sama vöruheiti fail-closum við.
+  // Backfill án migration: eldri YFIRFARIN bókun má strax verða vísbending
+  // þó product-pattern hafi ekki verið til þegar hún var staðfest.
+  //
+  // Tvær öruggar leiðir eru leyfðar:
+  // 1) bókarinn notaði sjálft vöruheitið sem bókunartexta;
+  // 2) eldra skjal fór allt á EINN kostnaðarreikning og canonical vörulínur
+  //    skjalsins innihalda sömu vöru. Þá má nota staðfesta bókun skjalsins sem
+  //    fyrirtækjasértæka vöru→reikningsvísbendingu.
+  //
+  // Ef sögulegar staðfestingar benda á fleiri en einn kostnaðarreikning fyrir
+  // sömu vöru fail-closum við og gefum enga línusértæka tillögu.
   const historicalProductAccounts = new Map<string, Set<string>>();
-  const currentProductKeySet = new Set(currentProductKeys);
+  // readCanonicalPurchaseLines tekur `unknown`, en Prisma skilar JsonValue á
+  // lestri og InputJsonValue á skrifum. Geymum því cache-ið sem `unknown` svo
+  // við þvingum ekki output- og input-JSON týpurnar saman.
+  const historicalExtractionMetadataByDocumentId = new Map<number, unknown>();
   for (const prior of priorDocuments) {
+    historicalExtractionMetadataByDocumentId.set(
+      prior.id,
+      prior.extractionMetadata,
+    );
+  }
+
+  // Eldri síður í sama safnskjali geta verið yfirfarnar áður en purchaseLines
+  // voru cache-aðar í extractionMetadata. Þegar notandi biður um deterministic
+  // endurbyggingu lesum við aðeins sama frum-PDF og fyllum vörulínur á þeim
+  // yfirförnu systurskjölum sem vantar þær. Þetta er 0-AI og varðveitir frumrit.
+  //
+  // Mikilvægt: þetta er aðeins gert þegar núverandi skjal hefur raunverulegar
+  // vörulínur sem geta nýtt söguna. Þannig sækjum við ekki stór PDF að óþörfu.
+  const priorSiblingDocumentsMissingPurchaseLines =
+    currentProductKeys.length > 0
+      ? priorDocuments.filter(
+          (prior) =>
+            prior.receiptId === document.receiptId &&
+            prior.pageNumber != null &&
+            (() => {
+              const priorMetadata =
+                receiptSuggestionJsonRecord(prior.extractionMetadata) ?? {};
+              const priorCanonical =
+                receiptSuggestionJsonRecord(priorMetadata.canonicalExtraction) ?? {};
+              const priorParserVersion =
+                typeof priorCanonical.purchaseLineParserVersion === "string"
+                  ? priorCanonical.purchaseLineParserVersion
+                  : null;
+              return (
+                priorParserVersion !==
+                  DETERMINISTIC_RECEIPT_PURCHASE_LINE_VERSION ||
+                readCanonicalPurchaseLines(prior.extractionMetadata).length === 0
+              );
+            })(),
+        )
+      : [];
+
+  if (priorSiblingDocumentsMissingPurchaseLines.length > 0) {
+    try {
+      const buffer = await downloadReceiptBuffer(document.receipt);
+      const pages = await extractTextPagesFromPdfBuffer(buffer);
+
+      await prisma.$transaction(async (tx) => {
+        for (const prior of priorSiblingDocumentsMissingPurchaseLines) {
+          if (prior.pageNumber == null) continue;
+          const pageText = pages[prior.pageNumber - 1] ?? "";
+          if (!pageText.trim()) continue;
+
+          const purchaseLines =
+            extractDeterministicReceiptBundlePurchaseLines(pageText);
+          if (purchaseLines.length === 0) continue;
+
+          const existing =
+            receiptSuggestionJsonRecord(prior.extractionMetadata) ?? {};
+          const canonicalExtraction =
+            receiptSuggestionJsonRecord(existing.canonicalExtraction) ?? {};
+          const nextMetadata = toPrismaInputJsonValue({
+            ...existing,
+            canonicalExtraction: {
+              ...canonicalExtraction,
+              purchaseLines,
+              purchaseLineParserVersion:
+                DETERMINISTIC_RECEIPT_PURCHASE_LINE_VERSION,
+            },
+          });
+
+          historicalExtractionMetadataByDocumentId.set(
+            prior.id,
+            nextMetadata,
+          );
+
+          await tx.aiDetectedDocument.update({
+            where: { id: prior.id },
+            data: { extractionMetadata: nextMetadata },
+          });
+        }
+      });
+    } catch (error) {
+      console.error(
+        `Mistókst að fylla eldri vörulínur úr safnskjali fyrir skjal ${documentId}:`,
+        error,
+      );
+    }
+  }
+
+  const rememberHistoricalProductAccount = (
+    historicalCanonicalKey: string,
+    accountNumber: string,
+  ) => {
+    const matchingCurrentKeys = currentProductKeys.filter((currentKey) =>
+      globalProductCanonicalKeysEquivalent(
+        currentKey,
+        historicalCanonicalKey,
+      ),
+    );
+    if (matchingCurrentKeys.length === 0) return;
+
+    for (const currentKey of matchingCurrentKeys) {
+      const accountNumbers =
+        historicalProductAccounts.get(currentKey) ?? new Set<string>();
+      accountNumbers.add(accountNumber);
+      historicalProductAccounts.set(currentKey, accountNumbers);
+    }
+  };
+
+  for (const prior of priorDocuments) {
+    const priorExpenseAccountNumbers = [
+      ...new Set(
+        prior.bookingEntries.flatMap((entry) => {
+          if (!(Number(entry.debit) > 0) || Number(entry.credit) !== 0) {
+            return [];
+          }
+          const accountNumber = String(entry.account).trim();
+          const account = accountByNumber.get(accountNumber);
+          return account?.entryRole === "EXPENSE" ? [accountNumber] : [];
+        }),
+      ),
+    ];
+
+    // Eldri einsleitt bókað skjal getur kennt allar raunverulegar vörulínur
+    // sínar án þess að þurfa sérstakan product-pattern frá þeim tíma.
+    if (priorExpenseAccountNumbers.length === 1) {
+      const [singleExpenseAccountNumber] = priorExpenseAccountNumbers;
+      for (const priorLine of readCanonicalPurchaseLines(
+        historicalExtractionMetadataByDocumentId.get(prior.id),
+      )) {
+        const priorKey = buildGlobalProductCanonicalKey(
+          priorLine.description,
+        );
+        if (!priorKey) continue;
+        rememberHistoricalProductAccount(
+          priorKey,
+          singleExpenseAccountNumber,
+        );
+      }
+    }
+
+    // Strangari eldri leiðin helst einnig: sjálft vöruheitið í bókunartexta.
     for (const entry of prior.bookingEntries) {
       if (!(Number(entry.debit) > 0) || Number(entry.credit) !== 0) continue;
       const key = buildGlobalProductCanonicalKey(entry.text ?? "");
-      if (!key || !currentProductKeySet.has(key)) continue;
+      if (!key) continue;
 
       const accountNumber = String(entry.account).trim();
       const account = accountByNumber.get(accountNumber);
       if (!account || account.entryRole !== "EXPENSE") continue;
 
-      const accountNumbers =
-        historicalProductAccounts.get(key) ?? new Set<string>();
-      accountNumbers.add(accountNumber);
-      historicalProductAccounts.set(key, accountNumbers);
+      rememberHistoricalProductAccount(key, accountNumber);
     }
   }
 
@@ -5104,6 +5315,74 @@ export async function applyConfirmedBookingSuggestions(documentId: number) {
       ) ?? null
     : null;
 
+  // Tímabundin, almenn greining fyrir deterministic endurbyggingu. Markmiðið
+  // er að sjá hvort lína dettur út í parser, product-matching eða síðar í
+  // bókunarflæðinu án þess að sérkóða seljanda, fyrirtæki eða vörumerki.
+  const rebuildLineDiagnostics = currentProductLines.slice(0, 30).map(
+    ({ line, canonicalKey }) => {
+      const patternAccount = productPatternByKey.get(canonicalKey) ?? null;
+      const historicalAccounts = historicalProductAccounts.get(canonicalKey);
+      const historicalAccountNumbers = historicalAccounts
+        ? [...historicalAccounts].sort()
+        : [];
+      const uniqueHistoricalAccountNumber =
+        historicalAccountNumbers.length === 1
+          ? historicalAccountNumbers[0]
+          : null;
+      const chosenAccountNumber =
+        patternAccount?.number ?? uniqueHistoricalAccountNumber;
+
+      let decision:
+        | "PRODUCT_PATTERN"
+        | "REVIEWED_HISTORY"
+        | "AMBIGUOUS_HISTORY"
+        | "NO_HISTORY"
+        | "NO_LINE_TOTAL" = "NO_HISTORY";
+      if (line.lineTotal == null || !(line.lineTotal > 0)) {
+        decision = "NO_LINE_TOTAL";
+      } else if (patternAccount) {
+        decision = "PRODUCT_PATTERN";
+      } else if (historicalAccountNumbers.length === 1) {
+        decision = "REVIEWED_HISTORY";
+      } else if (historicalAccountNumbers.length > 1) {
+        decision = "AMBIGUOUS_HISTORY";
+      }
+
+      return {
+        description: line.description,
+        canonicalKey,
+        quantity: line.quantity,
+        lineTotal: line.lineTotal,
+        decision,
+        chosenAccountNumber,
+        historicalAccountNumbers,
+      };
+    },
+  );
+
+  const diagnosticExistingMetadata =
+    receiptSuggestionJsonRecord(workingExtractionMetadata) ?? {};
+  const diagnosticMetadata = toPrismaInputJsonValue({
+    ...diagnosticExistingMetadata,
+    bookingSuggestionDiagnostic: {
+      version: "v1",
+      generatedAt: new Date().toISOString(),
+      purchaseLineCount: currentProductLines.length,
+      productSuggestionCount: productDebitSuggestions.length,
+      currentContext,
+      contextSource,
+      card: currentCard
+        ? { network: currentCard.network, lastFour: currentCard.lastFour }
+        : null,
+      lines: rebuildLineDiagnostics,
+    },
+  });
+  await prisma.aiDetectedDocument.update({
+    where: { id: document.id },
+    data: { extractionMetadata: diagnosticMetadata },
+  });
+  workingExtractionMetadata = diagnosticMetadata;
+
   const amount = Number(document.totalAmount ?? 0);
   if (!(amount > 0)) {
     return { changed: false, reason: "NO_AMOUNT" };
@@ -5165,6 +5444,19 @@ export async function applyConfirmedBookingSuggestions(documentId: number) {
     return { changed: false, reason: "NO_CONFIRMED_PATTERN" };
   }
 
+  const matchedProductCanonicalKeys = new Set(
+    productDebitSuggestions.map((item) => item.canonicalKey),
+  );
+  const unmatchedProductLines = currentProductLines
+    .filter((item) => !matchedProductCanonicalKeys.has(item.canonicalKey))
+    .slice(0, 20)
+    .map((item) => ({
+      description: item.line.description,
+      canonicalKey: item.canonicalKey,
+      quantity: item.line.quantity,
+      lineTotal: item.line.lineTotal,
+    }));
+
   const user = await getEffectiveUser();
   await prisma.$transaction(async (tx) => {
     const stillEmpty = await tx.aiDetectedDocumentEntry.count({
@@ -5217,10 +5509,18 @@ export async function applyConfirmedBookingSuggestions(documentId: number) {
           deterministicReceiptContext: currentContext,
           deterministicReceiptContextSource: contextSource,
           learnedProductMatchCount,
+          purchaseLineCount: currentProductLines.length,
+          purchaseLines: currentProductLines.slice(0, 20).map((item) => ({
+            description: item.line.description,
+            canonicalKey: item.canonicalKey,
+            quantity: item.line.quantity,
+            lineTotal: item.line.lineTotal,
+          })),
           productLineSuggestionCount: productDebitSuggestions.length,
           productLineSuggestionSources: productDebitSuggestions.map(
             (item) => item.source,
           ),
+          unmatchedProductLines,
           debitAccountNumber,
           creditAccountNumber,
           cardNetwork: currentCard?.network ?? null,
@@ -5369,9 +5669,9 @@ export async function applyConfirmedBookingSuggestions(documentId: number) {
     });
 
     // Sama yfirferð kennir einnig almenna vöruþekkingu, en ALDREI
-    // fyrirtækjasértækan reikningslykil. Monster getur þannig orðið
-    // CONSUMABLE/FOOD_OR_BEVERAGE í sameiginlegri þekkingu, á meðan 4910
-    // helst fyrirtækjasértæk mapping í AccountingPattern.
+    // fyrirtækjasértækan reikningslykil. Vörueðli má þannig verða sameiginleg
+    // þekking, á meðan reikningslykill helst fyrirtækjasértæk mapping í
+    // AccountingPattern.
     const productLearning = await learnGlobalProductKnowledgeFromReview(tx, {
       companyId: document.receipt.companyId,
       userId: user.id,
@@ -5410,6 +5710,260 @@ export async function applyConfirmedBookingSuggestions(documentId: number) {
   revalidatePath("/");
 }
 
+
+
+export async function continueLegacyDetectedDocumentWithManualDraft(
+  documentId: number,
+  input: {
+    account: string;
+    text: string;
+    amount: number;
+    side: "DEBIT" | "CREDIT";
+  },
+) {
+  const document = await prisma.aiDetectedDocument.findUnique({
+    where: { id: documentId },
+    include: {
+      receipt: true,
+      bookingEntries: true,
+    },
+  });
+
+  if (!document) {
+    throw new Error("Greint fylgiskjal fannst ekki.");
+  }
+
+  await requireCompanyBookAccess(document.receipt.companyId);
+
+  const user = await getEffectiveUser();
+  if (!user) {
+    throw new Error("Innskráning er nauðsynleg.");
+  }
+
+  const isLegacyEnvironmentReview =
+    document.documentRole === "REVIEW" &&
+    document.documentType === "ACCOUNTING_DOCUMENT";
+
+  if (!isLegacyEnvironmentReview) {
+    throw new Error("Þetta skjal er ekki eldri umhverfisgreining sem þarf handvirkt framhald.");
+  }
+
+  const environmentConfirmedAt = document.environmentConfirmedAt;
+  if (!environmentConfirmedAt) {
+    throw new Error("Staðfesta þarf fyrst að skjalið tilheyri þessu bókhaldsumhverfi.");
+  }
+
+  if (
+    document.reviewedAt ||
+    document.approvedAt ||
+    document.voucherNumber != null ||
+    document.disposedAt ||
+    document.disposition ||
+    document.duplicateMarkedAt
+  ) {
+    throw new Error("Ekki er hægt að breyta þessu fylgiskjali í handvirk bókunardrög.");
+  }
+
+  if (document.bookingEntries.length > 0) {
+    throw new Error("Bókunarlínur eru þegar til á skjalinu.");
+  }
+
+  const accountNumber = input.account.trim();
+  const bookingText = input.text.trim();
+  const amount = Number(input.amount);
+  const side = input.side === "CREDIT" ? "CREDIT" : "DEBIT";
+
+  if (!accountNumber) {
+    throw new Error("Velja þarf reikningslykil.");
+  }
+  if (!bookingText) {
+    throw new Error("Skrá þarf skýran bókunartexta.");
+  }
+  if (!Number.isFinite(amount) || amount <= 0) {
+    throw new Error("Fjárhæð þarf að vera stærri en 0.");
+  }
+
+  const account = await prisma.account.findFirst({
+    where: {
+      companyId: document.receipt.companyId,
+      number: accountNumber,
+      isActive: true,
+    },
+    select: {
+      id: true,
+      number: true,
+      name: true,
+    },
+  });
+
+  if (!account) {
+    throw new Error("Valinn reikningslykill fannst ekki hjá þessu fyrirtæki.");
+  }
+
+  await prisma.$transaction(async (tx) => {
+    await tx.aiDetectedDocument.update({
+      where: { id: document.id },
+      data: {
+        documentRole: "BOOKABLE",
+      },
+    });
+
+    await tx.aiDetectedDocumentEntry.create({
+      data: {
+        documentId: document.id,
+        account: account.number,
+        text: bookingText,
+        debit: side === "DEBIT" ? amount : 0,
+        credit: side === "CREDIT" ? amount : 0,
+      },
+    });
+
+    await tx.auditEvent.create({
+      data: {
+        companyId: document.receipt.companyId,
+        userId: user.id,
+        entityType: "AiDetectedDocument",
+        entityId: document.id,
+        action: "CONTINUE_LEGACY_DOCUMENT_WITH_MANUAL_DRAFT",
+        source: "USER",
+        description:
+          "Eldri umhverfisgreining færð áfram í handvirk bókunardrög án nýs AI-lesturs.",
+        beforeData: {
+          documentRole: document.documentRole,
+          bookingEntryCount: document.bookingEntries.length,
+        },
+        afterData: {
+          documentRole: "BOOKABLE",
+          bookingEntry: {
+            account: account.number,
+            accountName: account.name,
+            text: bookingText,
+            debit: side === "DEBIT" ? amount : 0,
+            credit: side === "CREDIT" ? amount : 0,
+          },
+        },
+        metadata: {
+          aiCalled: false,
+          environmentConfirmedAt: environmentConfirmedAt.toISOString(),
+          environmentConfirmationReason: document.environmentConfirmationReason,
+          legacyEnvironmentReview: true,
+          settlementAccountGuessed: false,
+        },
+      },
+    });
+  });
+
+  revalidatePath(`/fylgiskjol/${document.receiptId}`);
+  revalidatePath("/fylgiskjol");
+}
+
+export async function updateDetectedDocumentMerchant(
+  documentId: number,
+  merchantName: string,
+) {
+  const document = await prisma.aiDetectedDocument.findUnique({
+    where: { id: documentId },
+    include: {
+      receipt: {
+        include: {
+          aiDetectedDocuments: {
+            select: { id: true },
+          },
+        },
+      },
+    },
+  });
+
+  if (!document) {
+    throw new Error("Greint fylgiskjal fannst ekki.");
+  }
+
+  await requireCompanyBookAccess(document.receipt.companyId);
+
+  const user = await getEffectiveUser();
+  if (!user) {
+    throw new Error("Innskráning er nauðsynleg.");
+  }
+
+  if (document.approvedAt || document.voucherNumber != null || document.disposedAt) {
+    throw new Error("Ekki er hægt að leiðrétta söluaðila eftir endanlega afgreiðslu fylgiskjals.");
+  }
+
+  const nextMerchantName = merchantName.replace(/\s+/g, " ").trim();
+  if (!nextMerchantName) {
+    throw new Error("Skrá þarf söluaðila.");
+  }
+  if (nextMerchantName.length > 160) {
+    throw new Error("Nafn söluaðila er of langt.");
+  }
+
+  const previousMerchantName = document.merchantName?.trim() || null;
+  if (previousMerchantName === nextMerchantName) {
+    return;
+  }
+
+  const updateReceiptIdentity = document.receipt.aiDetectedDocuments.length === 1;
+  const previousMerchantKennitala = document.merchantKennitala;
+  const reviewWasInvalidated = document.reviewedAt !== null;
+
+  await prisma.$transaction(async (tx) => {
+    await tx.aiDetectedDocument.update({
+      where: { id: document.id },
+      data: {
+        merchantName: nextMerchantName,
+        // Þegar nafn útgefanda er leiðrétt handvirkt má ekki halda kennitölu
+        // sem kom úr eldri AI/OCR-auðkenningu nema hún sé staðfest sérstaklega.
+        merchantKennitala: null,
+        // Merkingin "yfirfarið" á ekki að lifa sjálfkrafa eftir breytingu á
+        // auðkenni seljanda. Notandi staðfestir skjalið aftur eftir leiðréttingu.
+        reviewedAt: null,
+      },
+    });
+
+    if (updateReceiptIdentity) {
+      await tx.receipt.update({
+        where: { id: document.receiptId },
+        data: {
+          merchantName: nextMerchantName,
+          merchantKennitala: null,
+        },
+      });
+    }
+
+    await tx.auditEvent.create({
+      data: {
+        companyId: document.receipt.companyId,
+        userId: user.id,
+        entityType: "AiDetectedDocument",
+        entityId: document.id,
+        parentEntityType: "Receipt",
+        parentEntityId: document.receiptId,
+        action: "CORRECT_DETECTED_DOCUMENT_MERCHANT",
+        source: "USER",
+        description: "Söluaðili leiðréttur handvirkt út frá frumskjali.",
+        beforeData: {
+          merchantName: previousMerchantName,
+          merchantKennitala: previousMerchantKennitala,
+          reviewedAt: document.reviewedAt?.toISOString() ?? null,
+        },
+        afterData: {
+          merchantName: nextMerchantName,
+          merchantKennitala: null,
+          reviewedAt: null,
+        },
+        metadata: {
+          aiCalled: false,
+          receiptIdentityUpdated: updateReceiptIdentity,
+          reviewInvalidated: reviewWasInvalidated,
+          learningEffect: "MERCHANT_IDENTITY_CORRECTION",
+        },
+      },
+    });
+  });
+
+  revalidatePath(`/fylgiskjol/${document.receiptId}`);
+  revalidatePath("/fylgiskjol");
+}
 
 export async function confirmDetectedDocumentEnvironment(
   documentId: number,
@@ -6072,8 +6626,8 @@ async function learnConfirmedAccountSelectionPatterns(
       // Ef bókari hefur staðfest ALLAN kostnað skjalsins á einn og sama
       // kostnaðarreikning má hver raunveruleg vörulína á skjalinu læra þann
       // fyrirtækjasértæka reikning. Þetta er sérstaklega gagnlegt fyrir
-      // endurteknar vörur hjá sama söluaðila, t.d. Barebells eða Monster hjá
-      // Olís. Við gerum þetta aðeins einu sinni fyrir skjalið og aðeins þegar
+      // endurteknar vörur hjá sama söluaðila. Við gerum þetta aðeins einu
+      // sinni fyrir skjalið og aðeins þegar
       // nákvæmlega einn EXPENSE-reikningur hefur verið staðfestur.
       //
       // Ef bókunin er blönduð yfir fleiri kostnaðarreikninga fellur kerfið
@@ -6882,6 +7436,11 @@ function scaleVatSnapshots(
   });
 }
 
+function isExplicitNonDeductibleVatText(value: string | null | undefined) {
+  const normalized = normalizeAccountingPatternPart(value).replace(/_/g, " ");
+  return normalized.includes("ofradrattarb") && normalized.includes("vsk");
+}
+
 /**
  * Skráir sýnilegan hlutfallsfrádrátt innskatts á einu fylgiskjali.
  *
@@ -6960,31 +7519,73 @@ export async function setDetectedDocumentVatDeduction(
   let originalOffsetEntries = readStoredVatEntrySnapshots(
     storedDeduction?.originalOffsetEntries,
   );
+  let originalNonDeductibleEntries = readStoredVatEntrySnapshots(
+    storedDeduction?.originalNonDeductibleEntries,
+  );
+  let deductionMode =
+    storedDeduction?.mode === "SPLIT_NON_DEDUCTIBLE"
+      ? "SPLIT_NON_DEDUCTIBLE"
+      : "OFFSET";
 
   const existingIds = new Set(document.bookingEntries.map((entry) => entry.id));
   if (
     originalVatEntries.some((row) => !existingIds.has(row.id)) ||
-    originalOffsetEntries.some((row) => !existingIds.has(row.id))
+    originalOffsetEntries.some((row) => !existingIds.has(row.id)) ||
+    originalNonDeductibleEntries.some((row) => !existingIds.has(row.id))
   ) {
     originalVatEntries = [];
     originalOffsetEntries = [];
+    originalNonDeductibleEntries = [];
   }
 
-  // Fyrsta staðfesting tekur núverandi fulla innskattsbókun sem 100% grunn.
-  if (originalVatEntries.length === 0 || originalOffsetEntries.length === 0) {
-    originalVatEntries = document.bookingEntries
-      .filter(
-        (entry) =>
-          inputVatAccounts.has(String(entry.account).trim()) &&
-          Number(entry.debit) > 0 &&
-          Number(entry.credit) === 0,
-      )
-      .map((entry) => ({
-        id: entry.id,
-        debit: Number(entry.debit),
-        credit: Number(entry.credit),
-      }));
+  const currentVatEntries = document.bookingEntries
+    .filter(
+      (entry) =>
+        inputVatAccounts.has(String(entry.account).trim()) &&
+        Number(entry.debit) > 0 &&
+        Number(entry.credit) === 0,
+    )
+    .map((entry) => ({
+      id: entry.id,
+      debit: Number(entry.debit),
+      credit: Number(entry.credit),
+    }));
+  const currentNonDeductibleEntries = document.bookingEntries
+    .filter(
+      (entry) =>
+        expenseAccounts.has(String(entry.account).trim()) &&
+        Number(entry.debit) > 0 &&
+        Number(entry.credit) === 0 &&
+        isExplicitNonDeductibleVatText(entry.text),
+    )
+    .map((entry) => ({
+      id: entry.id,
+      debit: Number(entry.debit),
+      credit: Number(entry.credit),
+    }));
 
+  // Eldri/manual bókanir geta þegar verið klofnar í frádráttarbæran innskatt
+  // og sérstaka debetlínu „Ófrádráttarbær VSK“. Þá má alls ekki taka núverandi
+  // 2520-línu sem 100% grunn og leggja hlutfallið aftur á hana. Í staðinn er
+  // 100% VSK-grunnurinn summa beggja hlutanna og báðir hlutar skalaðir saman.
+  if (
+    originalNonDeductibleEntries.length > 0 ||
+    (originalVatEntries.length === 0 && currentNonDeductibleEntries.length > 0)
+  ) {
+    deductionMode = "SPLIT_NON_DEDUCTIBLE";
+    if (originalVatEntries.length === 0) {
+      originalVatEntries = currentVatEntries;
+    }
+    if (originalNonDeductibleEntries.length === 0) {
+      originalNonDeductibleEntries = currentNonDeductibleEntries;
+    }
+    originalOffsetEntries = [];
+  } else if (originalVatEntries.length === 0 || originalOffsetEntries.length === 0) {
+    // Nútímaleiðin: fyrsta staðfesting tekur núverandi fulla innskattsbókun
+    // og samsvarandi VSK-mótfærslu sem 100% grunn.
+    deductionMode = "OFFSET";
+    originalVatEntries = currentVatEntries;
+    originalNonDeductibleEntries = [];
     originalOffsetEntries = document.bookingEntries
       .filter((entry) => {
         if (!expenseAccounts.has(String(entry.account).trim())) return false;
@@ -7000,7 +7601,10 @@ export async function setDetectedDocumentVatDeduction(
   }
 
   const fullVatAmount = roundVatDeductionAmount(
-    originalVatEntries.reduce((sum, row) => sum + row.debit, 0),
+    originalVatEntries.reduce((sum, row) => sum + row.debit, 0) +
+      (deductionMode === "SPLIT_NON_DEDUCTIBLE"
+        ? originalNonDeductibleEntries.reduce((sum, row) => sum + row.debit, 0)
+        : 0),
   );
   const fullOffsetAmount = roundVatDeductionAmount(
     originalOffsetEntries.reduce((sum, row) => sum + row.credit, 0),
@@ -7009,12 +7613,20 @@ export async function setDetectedDocumentVatDeduction(
   if (fullVatAmount <= 0) {
     throw new Error("Engin innskattslína fannst til að beita hlutfallsfrádrætti á.");
   }
-  if (
+  if (deductionMode === "OFFSET" && (
     originalOffsetEntries.length === 0 ||
     Math.abs(fullVatAmount - fullOffsetAmount) > 0.02
-  ) {
+  )) {
     throw new Error(
       "GLÖGGT fann ekki örugga VSK-mótfærslu. Farðu yfir bókunarlínurnar áður en hlutfallsfrádráttur er notaður.",
+    );
+  }
+  if (
+    deductionMode === "SPLIT_NON_DEDUCTIBLE" &&
+    originalNonDeductibleEntries.length === 0
+  ) {
+    throw new Error(
+      "GLÖGGT fann ekki örugga línu fyrir ófrádráttarbæran VSK. Farðu yfir bókunarlínurnar áður en hlutfallsfrádráttur er notaður.",
     );
   }
 
@@ -7033,6 +7645,11 @@ export async function setDetectedDocumentVatDeduction(
     originalOffsetEntries,
     "credit",
     deductibleVatAmount,
+  );
+  const nonDeductibleUpdates = scaleVatSnapshots(
+    originalNonDeductibleEntries,
+    "debit",
+    nonDeductibleVatAmount,
   );
   const reasonText = String(reason ?? "").trim().slice(0, 240) || null;
   const confirmedAt = new Date();
@@ -7096,13 +7713,30 @@ export async function setDetectedDocumentVatDeduction(
       });
     }
 
+    for (const update of nonDeductibleUpdates) {
+      const original = originalNonDeductibleEntries.find((row) => row.id === update.id)!;
+      const current = document.bookingEntries.find((row) => row.id === update.id)!;
+      const baseText = String(current.text ?? "")
+        .replace(/\s+\d+(?:[.,]\d+)?%\s*$/i, "")
+        .trim();
+      await tx.aiDetectedDocumentEntry.update({
+        where: { id: update.id },
+        data: {
+          debit: update.amount,
+          credit: original.credit,
+          text: `${baseText || "Ófrádráttarbær VSK"} ${roundVatDeductionAmount(100 - normalizedPercent)}%`,
+        },
+      });
+    }
+
     await tx.aiDetectedDocument.update({
       where: { id: documentId },
       data: {
         extractionMetadata: {
           ...metadata,
           vatDeduction: {
-            version: 1,
+            version: 2,
+            mode: deductionMode,
             percent: normalizedPercent,
             fullVatAmount,
             deductibleVatAmount,
@@ -7113,6 +7747,7 @@ export async function setDetectedDocumentVatDeduction(
             confirmedByUserId: user?.id ?? null,
             originalVatEntries,
             originalOffsetEntries,
+            originalNonDeductibleEntries,
           },
         },
       },
@@ -7131,6 +7766,7 @@ export async function setDetectedDocumentVatDeduction(
         description: `Innskattsfrádráttur staðfestur ${normalizedPercent}%.`,
         beforeData,
         afterData: {
+          mode: deductionMode,
           percent: normalizedPercent,
           fullVatAmount,
           deductibleVatAmount,
@@ -7385,6 +8021,90 @@ await prisma.$transaction(async (tx) => {
 
   revalidatePath(`/fylgiskjol/${document.receiptId}`);
 }
+export async function rebuildDetectedDocumentBookingSuggestion(documentId: number) {
+  const companyId = await requireActiveCompanyWriteAccess();
+  const document = await prisma.aiDetectedDocument.findFirst({
+    where: {
+      id: documentId,
+      receipt: { companyId },
+    },
+    include: {
+      bookingEntries: {
+        select: {
+          id: true,
+          account: true,
+          text: true,
+          debit: true,
+          credit: true,
+        },
+      },
+      receipt: {
+        select: { companyId: true },
+      },
+    },
+  });
+
+  if (!document) {
+    throw new Error("Greint fylgiskjal fannst ekki.");
+  }
+
+  await requireCompanyBookAccess(document.receipt.companyId);
+
+  if (
+    document.documentRole !== "BOOKABLE" ||
+    document.reviewedAt ||
+    document.approvedAt ||
+    document.voucherNumber != null ||
+    document.disposedAt ||
+    document.disposition ||
+    document.duplicateMarkedAt
+  ) {
+    throw new Error(
+      "Aðeins er hægt að endurbyggja óafgreidda bókunartillögu.",
+    );
+  }
+
+  const user = await getEffectiveUser();
+
+  await prisma.$transaction(async (tx) => {
+    await tx.aiDetectedDocumentEntry.deleteMany({
+      where: { documentId },
+    });
+
+    await tx.auditEvent.create({
+      data: {
+        companyId: document.receipt.companyId,
+        userId: user?.id ?? null,
+        entityType: "AiDetectedDocument",
+        entityId: document.id,
+        action: "REBUILD_BOOKING_SUGGESTION_REQUESTED",
+        source: "USER",
+        description:
+          "Óstaðfest bókunartillaga hreinsuð og endurbyggð úr staðfestum gögnum án AI.",
+        metadata: {
+          removedEntryCount: document.bookingEntries.length,
+          removedEntries: document.bookingEntries.map((entry) => ({
+            account: entry.account,
+            text: entry.text,
+            debit: Number(entry.debit),
+            credit: Number(entry.credit),
+          })),
+          aiCalled: false,
+        },
+      },
+    });
+  });
+
+  const result = await applyConfirmedBookingSuggestions(documentId, {
+    refreshCurrentPurchaseLines: true,
+  });
+
+  revalidatePath(`/fylgiskjol/${document.receiptId}`);
+  revalidatePath("/fylgiskjol");
+
+  return result;
+}
+
 export async function deleteDetectedDocumentEntry(entryId: number) {
   await requireActiveCompanyWriteAccess();
   const entry = await prisma.aiDetectedDocumentEntry.findUnique({

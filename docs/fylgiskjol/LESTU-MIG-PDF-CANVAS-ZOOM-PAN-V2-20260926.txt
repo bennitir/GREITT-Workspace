@@ -1,0 +1,12 @@
+GLÖGGT – PDF canvas zoom/pan v2 – 26.09.2026
+
+Lagfæring á TypeScript-villu í fyrri pakka:
+- changePdfZoom notar sameiginlega zoom state-ið (setZoom).
+- resetPdfZoom setur zoom aftur í 100% og pan í 0/0.
+- Engin Prisma- eða gagnagrunnsbreyting.
+
+Próf eftir afritun:
+  cd C:\GLÖGGT
+  npx tsc --noEmit
+
+Ef hreint: prófa Olís skjal 42/103 með +, draga og Passa.

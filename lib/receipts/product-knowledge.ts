@@ -83,10 +83,12 @@ const NON_SHAREABLE_PATTERNS = [
 ];
 
 const NON_PRODUCT_LINE_PATTERNS = [
-  /\b(?:vsk|vat|samtals|heild|greiðsla|greidsla|afslátt|afslatt)\b/i,
+  /\b(?:vsk|vat|samtals|heild|greiðsla|greiðslur|greidsla|greidslur|greitt|greidd|greiddur|greiddar|afslátt|afslatt)\b/i,
   /\b(?:þjónusta|thjonusta|vinna|gjald|fee|tax|skatt|leiga|rent)\b/i,
   /\b(?:trygging|insurance|vextir|interest|afborgun)\b/i,
 ];
+
+const NON_PRODUCT_METADATA_PREFIX = /^(?:kvittun nr|nr vidskipta|vidskiptamadur|kenni starfsmanns|kassi nr|dags|timi|verslun|deild|afgreidslumadur|stada faerslu|reikningur|kennitala|greidslutegund|korta lykilnumer)\b/;
 
 const NOISE_TOKENS = new Set([
   "stk",
@@ -123,6 +125,9 @@ export function buildGlobalProductCanonicalKey(description: string) {
   if (NON_PRODUCT_LINE_PATTERNS.some((pattern) => pattern.test(rawNormalized))) {
     return null;
   }
+  if (NON_PRODUCT_METADATA_PREFIX.test(rawNormalized)) {
+    return null;
+  }
 
   const tokens = rawNormalized
     .split(/\s+/)
@@ -134,6 +139,99 @@ export function buildGlobalProductCanonicalKey(description: string) {
   if (tokens.length === 0) return null;
   const key = tokens.slice(0, 12).join("_").slice(0, 160);
   return key.length >= 3 ? key : null;
+}
+
+function canonicalProductTokens(canonicalKey: string) {
+  return canonicalKey
+    .split("_")
+    .map((token) => token.trim())
+    .filter(Boolean);
+}
+
+function productTokenLooksEquivalent(left: string, right: string) {
+  if (left === right) return true;
+  if (left.length < 5 || right.length < 5) return false;
+  if (Math.abs(left.length - right.length) > 1) return false;
+
+  // OCR/PDF textalög rugla stundum einum staf í löngu vöruheiti. Við leyfum
+  // eina breytingu á stökum löngum token, en aðeins sem hluta af ströngu
+  // fjöl-token vörumatchi hér fyrir neðan.
+  let row = Array.from({ length: right.length + 1 }, (_, index) => index);
+  for (let leftIndex = 1; leftIndex <= left.length; leftIndex += 1) {
+    const next = [leftIndex];
+    let rowMinimum = next[0];
+
+    for (let rightIndex = 1; rightIndex <= right.length; rightIndex += 1) {
+      const substitutionCost =
+        left[leftIndex - 1] === right[rightIndex - 1] ? 0 : 1;
+      const value = Math.min(
+        row[rightIndex] + 1,
+        next[rightIndex - 1] + 1,
+        row[rightIndex - 1] + substitutionCost,
+      );
+      next.push(value);
+      rowMinimum = Math.min(rowMinimum, value);
+    }
+
+    if (rowMinimum > 1) return false;
+    row = next;
+  }
+
+  return row[right.length] <= 1;
+}
+
+/**
+ * Vöruheiti mega breytast lítillega milli PDF-textalaga án þess að varan sjálf
+ * breytist, t.d. stærðareining getur birst eða fallið út og einn OCR-stafur
+ * getur skekkst. Við fail-closum:
+ * - exact canonical lykill vinnur alltaf;
+ * - fuzzy match krefst a.m.k. þriggja merkingarbærra tokena;
+ * - styttra heitið þarf nánast allt að finnast í hinu.
+ *
+ * Engin verð, magn eða bókunarlykill er hluti af þessu matchi.
+ */
+export function globalProductCanonicalKeysEquivalent(
+  leftCanonicalKey: string,
+  rightCanonicalKey: string,
+) {
+  if (leftCanonicalKey === rightCanonicalKey) return true;
+
+  const leftTokens = canonicalProductTokens(leftCanonicalKey);
+  const rightTokens = canonicalProductTokens(rightCanonicalKey);
+  const shorter = leftTokens.length <= rightTokens.length ? leftTokens : rightTokens;
+  const longer = shorter === leftTokens ? rightTokens : leftTokens;
+
+  if (shorter.length < 3) return false;
+
+  const usedLongerIndexes = new Set<number>();
+  let matched = 0;
+
+  for (const shortToken of shorter) {
+    const exactIndex = longer.findIndex(
+      (longToken, index) =>
+        !usedLongerIndexes.has(index) && shortToken === longToken,
+    );
+    if (exactIndex >= 0) {
+      usedLongerIndexes.add(exactIndex);
+      matched += 1;
+      continue;
+    }
+
+    const fuzzyIndex = longer.findIndex(
+      (longToken, index) =>
+        !usedLongerIndexes.has(index) &&
+        productTokenLooksEquivalent(shortToken, longToken),
+    );
+    if (fuzzyIndex >= 0) {
+      usedLongerIndexes.add(fuzzyIndex);
+      matched += 1;
+    }
+  }
+
+  const shorterCoverage = matched / shorter.length;
+  const longerCoverage = matched / longer.length;
+
+  return matched >= 3 && shorterCoverage >= 0.8 && longerCoverage >= 0.6;
 }
 
 function normalizeAccountName(value: string) {

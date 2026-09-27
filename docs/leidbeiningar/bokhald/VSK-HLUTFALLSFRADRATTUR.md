@@ -23,6 +23,11 @@ Hlutfallið á að vera sýnilegt í yfirferðinni; notandi á ekki að þurfa a
 
 GLÖGGT varðveitir 100% VSK-grunninn þannig að hægt sé að breyta síðar úr t.d. 75% í 50% eða aftur í 100% án þess að reikna frá áður lækkuðum innskatti.
 
+Ef eldra fylgiskjal hefur þegar verið leiðrétt handvirkt með sérstakri línu
+`Ófrádráttarbær VSK ...` notar GLÖGGT summu innskattslínunnar og þeirrar línu
+sem 100% VSK-grunn. Þannig er hlutfallið ekki lagt aftur ofan á innskatt sem
+hefur þegar verið lækkaður.
+
 ## Rekjanleiki
 
 Með fylgiskjalinu eru varðveitt:

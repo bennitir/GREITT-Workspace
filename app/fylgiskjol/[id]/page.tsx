@@ -7,6 +7,7 @@ import {
   reviewDetectedDocument,
   markDetectedDocumentOutsideBusiness,
   confirmDetectedDocumentEnvironment,
+  continueLegacyDetectedDocumentWithManualDraft,
   retainDetectedDocumentForInsight,
   resolveDetectedDocumentAsSupporting,
   confirmDetectedDocumentDuplicate,
@@ -23,6 +24,7 @@ import {
   deleteReceipt,
   markReceiptNeedsAttention,
   restoreReceiptFromNeedsAttention,
+  rebuildDetectedDocumentBookingSuggestion,
   repairDeleteLegacyReceipt,
 } from "@/app/actions/receiptActions";
 import DetectedDocumentEntriesEditor from "@/components/DetectedDocumentEntriesEditor";
@@ -46,6 +48,67 @@ import { getEnabledCompanyModules } from "@/lib/core/company-modules";
 import { getCurrentInterfaceLanguage } from "@/lib/i18n/current-language";
 import { uiText } from "@/lib/i18n/ui";
 import { receiptPrintText } from "@/lib/i18n/receipt-print";
+
+function readBookingSuggestionDiagnosticForUi(value: unknown) {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return null;
+  const metadata = value as Record<string, unknown>;
+  const raw = metadata.bookingSuggestionDiagnostic;
+  if (!raw || typeof raw !== "object" || Array.isArray(raw)) return null;
+  const diagnostic = raw as Record<string, unknown>;
+
+  const purchaseLineCount =
+    typeof diagnostic.purchaseLineCount === "number"
+      ? diagnostic.purchaseLineCount
+      : null;
+  const productSuggestionCount =
+    typeof diagnostic.productSuggestionCount === "number"
+      ? diagnostic.productSuggestionCount
+      : null;
+  const rawLines = Array.isArray(diagnostic.lines) ? diagnostic.lines : [];
+  const lines = rawLines.flatMap((item) => {
+    if (!item || typeof item !== "object" || Array.isArray(item)) return [];
+    const line = item as Record<string, unknown>;
+    const description =
+      typeof line.description === "string" ? line.description.trim() : "";
+    if (!description) return [];
+
+    const quantity =
+      typeof line.quantity === "number" && Number.isFinite(line.quantity)
+        ? line.quantity
+        : null;
+    const lineTotal =
+      typeof line.lineTotal === "number" && Number.isFinite(line.lineTotal)
+        ? line.lineTotal
+        : null;
+    const decision = typeof line.decision === "string" ? line.decision : "NO_HISTORY";
+    const chosenAccountNumber =
+      typeof line.chosenAccountNumber === "string"
+        ? line.chosenAccountNumber
+        : null;
+    const historicalAccountNumbers = Array.isArray(line.historicalAccountNumbers)
+      ? line.historicalAccountNumbers.filter(
+          (value): value is string => typeof value === "string",
+        )
+      : [];
+
+    return [
+      {
+        description,
+        quantity,
+        lineTotal,
+        decision,
+        chosenAccountNumber,
+        historicalAccountNumbers,
+      },
+    ];
+  });
+
+  return {
+    purchaseLineCount: purchaseLineCount ?? lines.length,
+    productSuggestionCount: productSuggestionCount ?? 0,
+    lines,
+  };
+}
 
 function readVatDeductionForUi(value: unknown) {
   if (!value || typeof value !== "object" || Array.isArray(value)) return null;
@@ -267,6 +330,7 @@ const auditActionLabels: Record<string, string> = {
   APPROVE_DETECTED_DOCUMENT: "Samþykkti og bókaði fylgiskjal",
   REVIEW_DETECTED_DOCUMENT: "Merkti fylgiskjal yfirfarið",
   DISPOSE_DETECTED_DOCUMENT: "Afgreiddi skjal án bókunar",
+  CORRECT_DETECTED_DOCUMENT_MERCHANT: "Leiðrétti söluaðila á fylgiskjali",
 };
 
 const receiptTraceItems: Array<{
@@ -425,26 +489,40 @@ if (activeUser && activeUser.role !== "ADMIN") {
   const selectedDocument =
     selectedDocumentFromParam ??
     (receipt.aiDetectedDocuments.length > 10
-      ? receipt.aiDetectedDocuments[0] ?? null
+      ? receipt.aiDetectedDocuments.find(
+          (document) =>
+            !document.needsAttentionAt &&
+            !document.reviewedAt &&
+            !document.approvedAt &&
+            !document.disposedAt &&
+            !document.disposition,
+        ) ?? receipt.aiDetectedDocuments[0] ?? null
       : null);
 
 const visibleDocuments = selectedDocument
   ? [selectedDocument]
   : receipt.aiDetectedDocuments;
 
+// Venjuleg yfirferðarfletting á ekki að draga skjöl sem notandi hefur
+// vísvitandi sett til hliðar aftur inn í rennslið. Þau eru áfram
+// aðgengileg úr sérstaka "Þarf nánari skoðun" listanum og með beinni slóð.
+const reviewNavigationDocuments = receipt.aiDetectedDocuments.filter(
+  (document) => !document.needsAttentionAt,
+);
+
 const selectedDocumentIndex = selectedDocument
-  ? receipt.aiDetectedDocuments.findIndex(
+  ? reviewNavigationDocuments.findIndex(
       (document) => document.id === selectedDocument.id,
     )
   : -1;
 const previousSelectedDocument =
   selectedDocumentIndex > 0
-    ? receipt.aiDetectedDocuments[selectedDocumentIndex - 1]
+    ? reviewNavigationDocuments[selectedDocumentIndex - 1]
     : null;
 const nextSelectedDocument =
   selectedDocumentIndex >= 0 &&
-  selectedDocumentIndex < receipt.aiDetectedDocuments.length - 1
-    ? receipt.aiDetectedDocuments[selectedDocumentIndex + 1]
+  selectedDocumentIndex < reviewNavigationDocuments.length - 1
+    ? reviewNavigationDocuments[selectedDocumentIndex + 1]
     : null;
 
 const headerAmount =
@@ -467,9 +545,32 @@ const getNextUnresolvedDocument = (currentDocumentId: number) =>
         item.id !== currentDocumentId &&
         !item.reviewedAt &&
         !item.approvedAt &&
-        !item.disposedAt
+        !item.disposedAt &&
+        !item.needsAttentionAt
     )
     .sort((a, b) => a.id - b.id)[0] ?? null;
+
+// Næsta-skjal hlekkurinn eftir bókun/prentun þarf að halda áfram í
+// allri yfirferðarröð fyrirtækisins, ekki aðeins innan sama safnskjals.
+// Þetta notar sömu skilyrði og server-actions sem fara sjálfkrafa á næsta skjal.
+const nextCompanyReviewDocument = selectedDocument
+  ? await prisma.aiDetectedDocument.findFirst({
+      where: {
+        id: { not: selectedDocument.id },
+        // Sama virka röð og á Óunnum fylgiskjölum: yfirfarið skjal getur
+        // enn verið óbókað og á því að teljast næst. Aðeins endanlega
+        // bókuð/afgreidd eða til-hliðar skjöl falla úr venjulegu röðinni.
+        approvedAt: null,
+        voucherNumber: null,
+        disposedAt: null,
+        disposition: null,
+        needsAttentionAt: null,
+        receipt: { companyId: receipt.companyId },
+      },
+      orderBy: [{ date: "asc" }, { id: "asc" }],
+      select: { id: true, receiptId: true },
+    })
+  : null;
   
     return (
   <main className="w-full max-w-[1400px] mx-auto p-4">
@@ -822,6 +923,13 @@ const getNextUnresolvedDocument = (currentDocumentId: number) =>
                   selectedDocument?.merchantName ??
                   receipt.merchantName ??
                   "Óþekktur",
+                documentId: selectedDocument?.id ?? null,
+                canEditMerchant: Boolean(
+                  selectedDocument &&
+                    !selectedDocument.approvedAt &&
+                    selectedDocument.voucherNumber == null &&
+                    !selectedDocument.disposedAt
+                ),
                 dateLabel: selectedDocument?.date
                   ? formatDate(selectedDocument.date)
                   : receipt.aiDate
@@ -1881,6 +1989,86 @@ const getNextUnresolvedDocument = (currentDocumentId: number) =>
   </div>
 ) : document.documentRole === "BOOKABLE" ? (
   <>
+    {canEdit &&
+      !document.reviewedAt &&
+      !document.approvedAt &&
+      document.voucherNumber == null &&
+      !document.duplicateMarkedAt &&
+      document.bookingEntries.length > 0 ? (
+        <div className="mb-3 rounded border border-sky-200 bg-sky-50 p-3">
+          <p className="text-sm text-sky-950">
+            Ef tillagan inniheldur rangar OCR-/hauslínur má hreinsa hana og
+            endurbyggja úr staðfestum bókunum og vörusögu án AI.
+          </p>
+          <form
+            action={async () => {
+              "use server";
+              await rebuildDetectedDocumentBookingSuggestion(document.id);
+              redirect(`/fylgiskjol/${receipt.id}?document=${document.id}`);
+            }}
+            className="mt-2"
+          >
+            <button
+              type="submit"
+              className="rounded border border-sky-300 bg-white px-3 py-2 text-sm font-semibold text-sky-900 hover:bg-sky-100"
+            >
+              Endurbyggja tillögu úr staðfestum gögnum
+            </button>
+          </form>
+          {(() => {
+            const diagnostic = readBookingSuggestionDiagnosticForUi(
+              document.extractionMetadata,
+            );
+            if (!diagnostic) return null;
+
+            const decisionLabel: Record<string, string> = {
+              PRODUCT_PATTERN: "staðfest product-pattern",
+              REVIEWED_HISTORY: "fannst í yfirfarinni sögu",
+              AMBIGUOUS_HISTORY: "ósamræmd saga",
+              NO_HISTORY: "engin örugg reikningssaga",
+              NO_LINE_TOTAL: "vantar línusamtölu",
+            };
+
+            return (
+              <details className="mt-3 rounded border border-sky-200 bg-white p-3">
+                <summary className="cursor-pointer text-sm font-semibold text-sky-950">
+                  Greining endurbyggingar · fann {diagnostic.purchaseLineCount} vörulínur · {diagnostic.productSuggestionCount} með örugga reikningstengingu
+                </summary>
+                <div className="mt-2 space-y-2 text-xs text-slate-700">
+                  {diagnostic.lines.length === 0 ? (
+                    <p>Parserinn skilaði engri canonical vörulínu fyrir skjalið.</p>
+                  ) : (
+                    diagnostic.lines.map((line, lineIndex) => (
+                      <div
+                        key={`${line.description}-${lineIndex}`}
+                        className="rounded border border-slate-200 bg-slate-50 p-2"
+                      >
+                        <div className="font-semibold text-slate-900">
+                          {line.description}
+                        </div>
+                        <div>
+                          Magn: {line.quantity ?? "?"} · Línusamtala: {line.lineTotal != null ? `${formatNumber(line.lineTotal)} kr.` : "?"}
+                        </div>
+                        <div>
+                          Niðurstaða: {decisionLabel[line.decision] ?? line.decision}
+                          {line.chosenAccountNumber
+                            ? ` · reikningur ${line.chosenAccountNumber}`
+                            : ""}
+                        </div>
+                        {line.historicalAccountNumbers.length > 1 ? (
+                          <div>
+                            Sögulegir reikningar: {line.historicalAccountNumbers.join(", ")}
+                          </div>
+                        ) : null}
+                      </div>
+                    ))
+                  )}
+                </div>
+              </details>
+            );
+          })()}
+        </div>
+      ) : null}
     <DetectedDocumentEntriesEditor
       key={document.id}
       documentId={document.id}
@@ -1899,16 +2087,35 @@ const getNextUnresolvedDocument = (currentDocumentId: number) =>
       canBook={canBook}
       canEdit={canEdit && !document.duplicateMarkedAt}
     />
-    {document.voucherNumber !== null && originalFileUrl ? (
-      <Link
-        href={`/fylgiskjol/${receipt.id}/prenta?document=${document.id}&autoprint=1`}
-        target="_blank"
-        rel="noopener noreferrer"
-        className="mt-3 inline-flex items-center rounded-md border-2 border-slate-900 bg-white px-4 py-2 font-semibold text-slate-950 hover:bg-slate-50"
-      >
-        {printT.printThisDocument}
-      </Link>
-    ) : null}
+    {document.voucherNumber !== null && originalFileUrl
+      ? (() => {
+          const nextDocument =
+            selectedDocument?.id === document.id
+              ? nextCompanyReviewDocument
+              : null;
+          const printHref =
+            `/fylgiskjol/${receipt.id}/prenta?document=${document.id}&autoprint=0`;
+
+          return (
+            <div className="mt-3 flex flex-wrap items-center gap-2">
+              <Link
+                href={printHref}
+                className="inline-flex items-center rounded-md border-2 border-slate-900 bg-white px-4 py-2 font-semibold text-slate-950 hover:bg-slate-50"
+              >
+                {printT.printThisDocument}
+              </Link>
+              {nextDocument ? (
+                <Link
+                  href={`/fylgiskjol/${nextDocument.receiptId}?document=${nextDocument.id}`}
+                  className="inline-flex items-center rounded-md bg-blue-700 px-4 py-2 font-semibold text-white hover:bg-blue-800"
+                >
+                  {t.nextDocument} →
+                </Link>
+              ) : null}
+            </div>
+          );
+        })()
+      : null}
   </>
 ) : null}
                               
@@ -2026,6 +2233,7 @@ const getNextUnresolvedDocument = (currentDocumentId: number) =>
                                           reviewedAt: null,
                                           approvedAt: null,
                                           disposedAt: null,
+                                          needsAttentionAt: null,
                                           receipt: {
                                             companyId: receipt.companyId,
                                           },
@@ -2095,6 +2303,7 @@ const getNextUnresolvedDocument = (currentDocumentId: number) =>
                                   reviewedAt: null,
                                   approvedAt: null,
                                   disposedAt: null,
+                                  needsAttentionAt: null,
                                   receipt: {
                                     companyId: receipt.companyId,
                                   },
@@ -2150,6 +2359,7 @@ const getNextUnresolvedDocument = (currentDocumentId: number) =>
                                     reviewedAt: null,
                                     approvedAt: null,
                                     disposedAt: null,
+                                    needsAttentionAt: null,
                                     receipt: { companyId: receipt.companyId },
                                   },
                                   orderBy: [{ date: "asc" }, { id: "asc" }],
@@ -2195,6 +2405,7 @@ const getNextUnresolvedDocument = (currentDocumentId: number) =>
                                     reviewedAt: null,
                                     approvedAt: null,
                                     disposedAt: null,
+                                    needsAttentionAt: null,
                                     receipt: { companyId: receipt.companyId },
                                   },
                                   orderBy: [{ date: "asc" }, { id: "asc" }],
@@ -2279,12 +2490,95 @@ const getNextUnresolvedDocument = (currentDocumentId: number) =>
 
                         {document.environmentConfirmedAt &&
                           document.documentRole === "REVIEW" &&
+                          document.documentType === "ACCOUNTING_DOCUMENT" &&
                           document.bookingEntries.length === 0 && (
                             <div className="mt-3 rounded border border-amber-300 bg-amber-50 p-3 text-sm text-amber-950">
-                              <p className="font-semibold">Eldri greining þarf eina endurlesningu</p>
+                              <p className="font-semibold">Eldri greining – endurlesning er valkvæð</p>
                               <p className="mt-1">
-                                Þetta skjal var lesið áður en umhverfisstaðfesting var aðskilin frá bókunargreiningu. Gamla greiningin bjó því ekki til bókunarlínur. Næsti lestur mun geta varðveitt bókunartillöguna og haldið umhverfisstaðfestingu sem sérstakri hindrun.
+                                Skjalið var lesið áður en umhverfisstaðfesting var aðskilin frá bókunargreiningu. Ef núverandi gögn duga þarftu ekki að kalla aftur á AI: veldu fyrsta bókunarlykilinn hér og GLÖGGT stofnar aðeins handvirk drög. Mótreikningur er ekki giskaður.
                               </p>
+                              <form
+                                action={async (formData) => {
+                                  "use server";
+                                  const side =
+                                    String(formData.get("legacyDraftSide") ?? "DEBIT") === "CREDIT"
+                                      ? "CREDIT"
+                                      : "DEBIT";
+                                  await continueLegacyDetectedDocumentWithManualDraft(document.id, {
+                                    account: String(formData.get("legacyDraftAccount") ?? ""),
+                                    text: String(formData.get("legacyDraftText") ?? ""),
+                                    amount: Number(formData.get("legacyDraftAmount") ?? 0),
+                                    side,
+                                  });
+                                  redirect(`/fylgiskjol/${receipt.id}?document=${document.id}`);
+                                }}
+                                className="mt-3 grid gap-3 md:grid-cols-2"
+                              >
+                                <div className="md:col-span-2">
+                                  <label className="block font-semibold">Reikningslykill</label>
+                                  <select
+                                    name="legacyDraftAccount"
+                                    required
+                                    defaultValue=""
+                                    className="mt-1 w-full rounded border border-amber-300 bg-white px-3 py-2"
+                                  >
+                                    <option value="" disabled>Veldu reikningslykil…</option>
+                                    {accounts.map((account) => (
+                                      <option key={account.number} value={account.number}>
+                                        {account.number} – {account.name}
+                                      </option>
+                                    ))}
+                                  </select>
+                                </div>
+                                <div>
+                                  <label className="block font-semibold">Fjárhæð</label>
+                                  <input
+                                    name="legacyDraftAmount"
+                                    type="number"
+                                    min="0.01"
+                                    step="0.01"
+                                    required
+                                    defaultValue={document.totalAmount ?? ""}
+                                    className="mt-1 w-full rounded border border-amber-300 bg-white px-3 py-2"
+                                  />
+                                </div>
+                                <div>
+                                  <label className="block font-semibold">Hlið</label>
+                                  <select
+                                    name="legacyDraftSide"
+                                    defaultValue="DEBIT"
+                                    className="mt-1 w-full rounded border border-amber-300 bg-white px-3 py-2"
+                                  >
+                                    <option value="DEBIT">Debet</option>
+                                    <option value="CREDIT">Kredit</option>
+                                  </select>
+                                </div>
+                                <div className="md:col-span-2">
+                                  <label className="block font-semibold">Bókunartexti</label>
+                                  <input
+                                    name="legacyDraftText"
+                                    required
+                                    defaultValue={
+                                      document.environmentConfirmationReason?.trim() ||
+                                      document.summary?.trim() ||
+                                      document.merchantName?.trim() ||
+                                      "Handvirk bókun úr núverandi gögnum"
+                                    }
+                                    className="mt-1 w-full rounded border border-amber-300 bg-white px-3 py-2"
+                                  />
+                                </div>
+                                <div className="md:col-span-2 flex flex-wrap items-center gap-3">
+                                  <button
+                                    type="submit"
+                                    className="rounded bg-amber-700 px-4 py-2 font-semibold text-white hover:bg-amber-800"
+                                  >
+                                    Nota núverandi gögn og halda áfram
+                                  </button>
+                                  <span className="text-xs text-amber-900">
+                                    Ekkert AI-kall. Þú bætir mótreikningi við í næsta skrefi þegar greiðsluleið er staðfest.
+                                  </span>
+                                </div>
+                              </form>
                             </div>
                           )}
 
@@ -2311,6 +2605,7 @@ const getNextUnresolvedDocument = (currentDocumentId: number) =>
                                     reviewedAt: null,
                                     approvedAt: null,
                                     disposedAt: null,
+                                    needsAttentionAt: null,
                                     receipt: {
                                       companyId: receipt.companyId,
                                     },

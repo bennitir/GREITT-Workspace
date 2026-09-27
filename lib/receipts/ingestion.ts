@@ -4,6 +4,7 @@ import { extractTextFromPdfBuffer } from "@/lib/core/pdf-text";
 import { inspectCanonicalReceiptKnowledge } from "@/lib/insight/reconciliation";
 
 export const RECEIPT_PROCESSING_VERSION = "receipt-v5-data-first-page-split";
+export const DETERMINISTIC_RECEIPT_PURCHASE_LINE_VERSION = "pos-lines-v3";
 
 export type ReceiptSourceSnapshot = {
   sourceText: string | null;
@@ -690,14 +691,172 @@ function findReceiptBundlePaymentInfo(pageText: string) {
   };
 }
 
-const RECEIPT_BUNDLE_NON_PRODUCT_LINE = /\b(?:vsk|vat|heild|samtals|greidsla|greiðsla|kort|visa|mastercard|maestro|amex|afslatt|afslátt|skilagjald|tax|fee)\b/i;
+const RECEIPT_BUNDLE_NON_PRODUCT_LINE = /\b(?:vsk|vat|heild|samtals|greidsla|greidslur|greiðsla|greiðslur|greitt|greidd|greiddur|greiddar|kort|visa|mastercard|maestro|amex|afslatt|afslátt|skilagjald|tax|fee)\b/i;
+
+function isReceiptBundleMetadataLine(value: string) {
+  const normalized = normalizeIdentityText(value);
+  if (!normalized) return false;
+
+  return /^(?:kvittun nr|nr vidskipta|vidskiptamadur|kenni starfsmanns|kassi nr|dags|timi|verslun|deild|afgreidslumadur|stada faerslu|reikningur|kennitala|greidslutegund|korta lykilnumer)\b/.test(
+    normalized,
+  );
+}
 
 /**
  * 0-AI lestur á almennum POS-vörulínum. Þetta er viljandi ekki bundið við
- * Olís eða annan birgja: við leitum að textalínu sem endar á fjárhæð og
+ * ákveðinn birgja: við leitum að textalínu sem endar á fjárhæð og
  * útilokum hausa, samtölur, VSK og greiðslulínur. Óviss lína er einfaldlega
  * látin eiga sig.
  */
+function receiptBundleTableEndsAt(line: string) {
+  return /\b(?:heildar\s+greidsla|heildar\s+greiðsla|greidslur|greiðslur|greidslukort|greiðslukort|upph(?:aed|æð)?\s+greidd|greitt|greidd)\b/i.test(
+    line,
+  );
+}
+
+function receiptBundleSupplierCodeToken(value: string) {
+  return /^(?=.*\d)[A-Z0-9][A-Z0-9._/-]{3,19}$/i.test(value);
+}
+
+function receiptBundleMeasurementToken(value: string) {
+  return /^\d+(?:[.,]\d+)?(?:mg|g|kg|ml|cl|l|mm|cm|m|stk|st|pcs|pc)$/i.test(
+    value,
+  );
+}
+
+function looksLikeReceiptBundleProductFragment(line: string) {
+  if (!line || line.length > 220) return false;
+  if (receiptBundleTableEndsAt(line)) return false;
+  if (RECEIPT_BUNDLE_NON_PRODUCT_LINE.test(line)) return false;
+  if (isReceiptBundleMetadataLine(line)) return false;
+
+  const tokens = line.split(/\s+/).filter(Boolean);
+  if (tokens.length === 0) return false;
+
+  return (
+    receiptBundleSupplierCodeToken(tokens[0]) ||
+    /[A-Za-zÁÉÍÓÚÝÞÆÖÐáéíóúýþæöð]/.test(line)
+  );
+}
+
+function looksLikeIndependentReceiptBundleProductStart(line: string) {
+  const tokens = line.split(/\s+/).filter(Boolean);
+  if (tokens.length < 2) return false;
+
+  const first = tokens[0];
+  if (!receiptBundleSupplierCodeToken(first)) return false;
+  if (receiptBundleMeasurementToken(first)) return false;
+
+  return tokens
+    .slice(1)
+    .some((token) => /[A-Za-zÁÉÍÓÚÝÞÆÖÐáéíóúýþæöð]/.test(token));
+}
+
+function parseReceiptBundleTableProductRowWithContinuation(
+  lines: string[],
+  startIndex: number,
+): { purchaseLine: PurchaseLineLike; consumedLineCount: number } | null {
+  const firstLine = lines[startIndex] ?? "";
+  const direct = parseReceiptBundleTableProductRow(firstLine);
+  if (direct) {
+    return { purchaseLine: direct, consumedLineCount: 1 };
+  }
+
+  if (!looksLikeReceiptBundleProductFragment(firstLine)) return null;
+
+  let merged = firstLine;
+  // PDF textalög geta brotið eina vöruröð í 2–3 textalínur, t.d.
+  // vörunúmer + heiti á einni línu og stærð/töludálka á næstu. Við sameinum
+  // aðeins stutt look-ahead og stöðvum áður en næsta sjálfstæða vöruröð hefst.
+  for (let offset = 1; offset <= 2; offset += 1) {
+    const nextLine = lines[startIndex + offset];
+    if (!nextLine) break;
+    if (receiptBundleTableEndsAt(nextLine)) break;
+    if (isReceiptBundleMetadataLine(nextLine)) break;
+
+    // Ef næsta lína er heil gild vöruröð má aldrei gleypa hana inn í fyrri.
+    if (parseReceiptBundleTableProductRow(nextLine)) break;
+    if (looksLikeIndependentReceiptBundleProductStart(nextLine)) break;
+
+    merged = `${merged} ${nextLine}`.trim();
+    const parsed = parseReceiptBundleTableProductRow(merged);
+    if (parsed) {
+      return {
+        purchaseLine: parsed,
+        consumedLineCount: offset + 1,
+      };
+    }
+  }
+
+  return null;
+}
+
+function parseReceiptBundleTableProductRow(
+  line: string,
+): PurchaseLineLike | null {
+  const tokens = line.split(/\s+/).filter(Boolean);
+  if (tokens.length < 6) return null;
+
+  let descriptionStart = 0;
+  let supplierItemCode: string | null = null;
+
+  // Algengt POS/PDF snið byrjar á vörunúmeri áður en heitið kemur.
+  // Við notum það aðeins sem auðkenni, aldrei sem verð eða magn.
+  if (/^(?=.*\d)[A-Z0-9][A-Z0-9._/-]{3,19}$/i.test(tokens[0])) {
+    supplierItemCode = tokens[0];
+    descriptionStart = 1;
+  }
+
+  const amountTokenPattern = /^-?[0-9][0-9. ]*(?:,[0-9]{1,2})?$/;
+  let numericStart = -1;
+
+  for (let index = descriptionStart + 1; index < tokens.length; index += 1) {
+    const suffix = tokens.slice(index);
+    if (suffix.length < 4) continue;
+    if (!suffix.every((token) => amountTokenPattern.test(token))) continue;
+    numericStart = index;
+    break;
+  }
+
+  if (numericStart < 0) return null;
+
+  const description = tokens.slice(descriptionStart, numericStart).join(" ").trim();
+  if (description.length < 3) return null;
+  if (!/[A-Za-zÁÉÍÓÚÝÞÆÖÐáéíóúýþæöð]/.test(description)) return null;
+  if (RECEIPT_BUNDLE_NON_PRODUCT_LINE.test(description)) return null;
+  if (isReceiptBundleMetadataLine(description)) return null;
+
+  const numericValues = tokens
+    .slice(numericStart)
+    .map((token) => parseIcelandicAmount(token));
+  if (numericValues.some((value) => value == null)) return null;
+
+  const values = numericValues as number[];
+  const lineTotal = values.at(-1) ?? null;
+  if (lineTotal == null || !(lineTotal > 0)) return null;
+
+  const unitPrice = values[0] != null && values[0] > 0 ? values[0] : null;
+  const quantityCandidate = values[1];
+  const quantity =
+    quantityCandidate != null &&
+    Number.isFinite(quantityCandidate) &&
+    quantityCandidate > 0 &&
+    quantityCandidate <= 1000 &&
+    Math.abs(quantityCandidate - Math.round(quantityCandidate)) < 1e-9
+      ? quantityCandidate
+      : null;
+
+  return {
+    description,
+    supplierItemCode,
+    quantity,
+    unitPrice,
+    lineTotal,
+    stockCandidate: true,
+    confidence: 0.97,
+  };
+}
+
 export function extractDeterministicReceiptBundlePurchaseLines(
   pageText: string,
 ): PurchaseLineLike[] {
@@ -707,11 +866,44 @@ export function extractDeterministicReceiptBundlePurchaseLines(
     .map((line) => normalizeWhitespace(line))
     .filter(Boolean);
 
-  const purchaseLines: PurchaseLineLike[] = [];
+  const headerIndex = lines.findIndex((line) => {
+    const normalized = normalizeIdentityText(line);
+    const hasDescriptionHeader = /\b(vara|lysing|lýsing|heiti|vorunr|vörunr)\b/.test(normalized);
+    const hasNumericHeader = /\b(magn|verd|verð|samtals|upphaed|upphæð|nettoupph|nettoupph)\b/.test(normalized);
+    return hasDescriptionHeader && hasNumericHeader;
+  });
 
-  for (const line of lines) {
+  const purchaseLines: PurchaseLineLike[] = [];
+  const consumedTableLineIndexes = new Set<number>();
+
+  for (let lineIndex = 0; lineIndex < lines.length; lineIndex += 1) {
+    const line = lines[lineIndex];
+
+    if (headerIndex >= 0 && lineIndex > headerIndex) {
+      if (receiptBundleTableEndsAt(line)) {
+        break;
+      }
+
+      const parsedTableRow = parseReceiptBundleTableProductRowWithContinuation(
+        lines,
+        lineIndex,
+      );
+      if (parsedTableRow) {
+        purchaseLines.push(parsedTableRow.purchaseLine);
+        for (
+          let consumedOffset = 0;
+          consumedOffset < parsedTableRow.consumedLineCount;
+          consumedOffset += 1
+        ) {
+          consumedTableLineIndexes.add(lineIndex + consumedOffset);
+        }
+        lineIndex += parsedTableRow.consumedLineCount - 1;
+        continue;
+      }
+    }
     if (line.length < 4 || line.length > 220) continue;
     if (RECEIPT_BUNDLE_NON_PRODUCT_LINE.test(line)) continue;
+    if (isReceiptBundleMetadataLine(line)) continue;
     if (/^(?:vara|lysing|lýsing|magn|verd|verð|eining|upphaed|upphæð)\b/i.test(line)) {
       continue;
     }
@@ -763,6 +955,7 @@ export function extractDeterministicReceiptBundlePurchaseLines(
     const description = left.replace(/\s{2,}/g, " ").trim();
     if (description.length < 3) continue;
     if (RECEIPT_BUNDLE_NON_PRODUCT_LINE.test(description)) continue;
+    if (isReceiptBundleMetadataLine(description)) continue;
 
     purchaseLines.push({
       description,
@@ -776,20 +969,19 @@ export function extractDeterministicReceiptBundlePurchaseLines(
   // Sum PDF-textalög raða dálkum þannig að vöruheitið stendur eitt á línu
   // en magn/verð á næstu línu. Ef við sjáum skýran vörutöfluhaus tökum við
   // því einnig textalínur innan sjálfrar vörutöflunnar, án þess að giska á verð.
-  const headerIndex = lines.findIndex((line) => {
-    const normalized = normalizeIdentityText(line);
-    const hasDescriptionHeader = /\b(vara|lysing|lýsing|heiti)\b/.test(normalized);
-    const hasNumericHeader = /\b(magn|verd|verð|samtals|upphaed|upphæð)\b/.test(normalized);
-    return hasDescriptionHeader && hasNumericHeader;
-  });
-
   if (headerIndex >= 0) {
     for (let index = headerIndex + 1; index < lines.length; index += 1) {
       const line = lines[index];
-      if (/\b(?:heildar\s+greidsla|heildar\s+greiðsla|greidslukort|greiðslukort)\b/i.test(line)) {
+      if (receiptBundleTableEndsAt(line)) {
         break;
       }
+      if (consumedTableLineIndexes.has(index)) continue;
       if (RECEIPT_BUNDLE_NON_PRODUCT_LINE.test(line)) continue;
+      if (isReceiptBundleMetadataLine(line)) continue;
+      // Heilar dálkalínur voru þegar lesnar með nákvæmum samtölum hér að ofan.
+      // Þessi seinni leið er aðeins fallback þegar PDF-textalag skiptir heiti og
+      // töludálkum niður á fleiri línur.
+      if (parseReceiptBundleTableProductRow(line)) continue;
       if (!/[A-Za-zÁÉÍÓÚÝÞÆÖÐáéíóúýþæöð]/.test(line)) continue;
       if (/^(?:borda inni|borða inni|taka med|taka með)$/i.test(line)) continue;
 
@@ -800,6 +992,7 @@ export function extractDeterministicReceiptBundlePurchaseLines(
 
       if (description.length < 3 || description.length > 180) continue;
       if (RECEIPT_BUNDLE_NON_PRODUCT_LINE.test(description)) continue;
+      if (isReceiptBundleMetadataLine(description)) continue;
 
       purchaseLines.push({
         description,
@@ -809,11 +1002,23 @@ export function extractDeterministicReceiptBundlePurchaseLines(
     }
   }
 
-  // Forðumst tvítekningu ef PDF textalag endurtekur sömu línu.
+  // Forðumst tvítekningu ef PDF textalag endurtekur nákvæmlega sömu línu,
+  // en megum ekki fella út tvö raunveruleg kaup á sömu vöru með öðru magni
+  // eða annarri línusamtölu.
   const seen = new Set<string>();
   return purchaseLines.filter((line) => {
-    const key = normalizeIdentityText(line.description);
-    if (!key || seen.has(key)) return false;
+    const descriptionKey = normalizeIdentityText(line.description);
+    if (!descriptionKey) return false;
+
+    const key = [
+      descriptionKey,
+      normalizeReference(line.supplierItemCode),
+      typeof line.quantity === "number" ? String(line.quantity) : "",
+      typeof line.unitPrice === "number" ? String(line.unitPrice) : "",
+      typeof line.lineTotal === "number" ? String(line.lineTotal) : "",
+    ].join("|");
+
+    if (seen.has(key)) return false;
     seen.add(key);
     return true;
   });

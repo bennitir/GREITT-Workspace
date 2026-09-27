@@ -1,0 +1,23 @@
+GLÖGGT – Frumskjal: snúningur og leiðrétting söluaðila
+Dagsetning: 26.09.2026
+
+Tilgangur
+- Leyfa bókara að snúa vinnusýn frumskjals í 90° skrefum án þess að breyta frumritinu.
+- Leyfa bókara að leiðrétta rangt lesinn söluaðila beint í Yfirferðargögnum.
+
+Hegðun
+1. ↺ og ↻ snúa mynd/PDF aðeins í vinnusýn. Zoom/pan og snúningur varðveitast fyrir sama frumskjal/síðu meðan unnið er.
+2. "Breyta" við Söluaðila opnar handvirka leiðréttingu.
+3. Leiðréttingin er audit-rekjanleg; fyrra AI/OCR-gildið er varðveitt í beforeData.
+4. Ef eldri kennitala seljanda fylgdi röngu auðkenni er hún hreinsuð og þarf sérstaka staðfestingu síðar.
+5. Ef skjalið var þegar merkt yfirfarið er reviewedAt hreinsað svo notandi staðfesti skjalið aftur eftir auðkennisbreytingu.
+6. Fyrir einskjalafylgiskjal er receipt-level merchantName einnig uppfært svo OCR-yfirlit og yfirferð sýni sama staðfesta seljanda.
+7. Ekki er leyft að leiðrétta söluaðila eftir endanlega bókun/afgreiðslu.
+
+Smoke-test
+- Opna mynd sem liggur á hlið og prófa ↺ / ↻, zoom og pan.
+- Breyta röngum söluaðila, t.d. AI-lestri, í nafn sem sést á frumskjali.
+- Staðfesta að nafnið uppfærist eftir refresh.
+- Staðfesta að rekjanleiki sýni "Leiðrétti söluaðila á fylgiskjali".
+- Ef skjalið var yfirfarið fyrir breytingu á það að þurfa yfirferð aftur.
+- Keyra npx tsc --noEmit áður en commit/push er gert.

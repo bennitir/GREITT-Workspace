@@ -6,6 +6,7 @@ import { getCompanyModuleSettings } from "@/lib/core/company-module-repository";
 import { getEnabledCompanyModules } from "@/lib/core/company-modules";
 import { getCurrentInterfaceLanguage } from "@/lib/i18n/current-language";
 import { receiptPrintText } from "@/lib/i18n/receipt-print";
+import { uiText } from "@/lib/i18n/ui";
 import { formatDate } from "@/lib/locale";
 import { prisma } from "@/lib/prisma";
 import { supabaseAdmin } from "@/lib/supabase";
@@ -17,7 +18,7 @@ export default async function PrintDetectedDocumentPage({
   searchParams,
 }: {
   params: Promise<{ id: string }>;
-  searchParams: Promise<{ document?: string; autoprint?: string }>;
+  searchParams: Promise<{ document?: string; autoprint?: string; nextDocument?: string }>;
 }) {
   const { id } = await params;
   const { document: documentParam, autoprint } = await searchParams;
@@ -165,6 +166,29 @@ export default async function PrintDetectedDocumentPage({
   });
 
   const printT = receiptPrintText(interfaceLanguage);
+  const t = uiText(interfaceLanguage);
+
+  // Prentsýnin finnur næsta virka fylgiskjal í allri yfirferð fyrirtækisins.
+  // Hún er því ekki bundin við sama fjölskjal/PDF og fylgiskjalið sem var prentað.
+  const nextDocument = await prisma.aiDetectedDocument.findFirst({
+    where: {
+      id: { not: document.id },
+      // Sama virka röð og á Óunnum fylgiskjölum: yfirfarið skjal getur
+      // enn verið óbókað og á því að teljast næst. Aðeins endanlega
+      // bókuð/afgreidd eða til-hliðar skjöl falla úr venjulegu röðinni.
+      approvedAt: null,
+      voucherNumber: null,
+      disposedAt: null,
+      disposition: null,
+      needsAttentionAt: null,
+      receipt: { companyId: receipt.companyId },
+    },
+    orderBy: [{ date: "asc" }, { id: "asc" }],
+    select: { id: true, receiptId: true },
+  });
+  const nextHref = nextDocument
+    ? `/fylgiskjol/${nextDocument.receiptId}?document=${nextDocument.id}`
+    : null;
 
   return (
     <PrintableDetectedDocument
@@ -178,6 +202,7 @@ export default async function PrintDetectedDocumentPage({
       bookingLines={bookingLines}
       autoPrint={autoprint !== "0"}
       backHref={`/fylgiskjol/${receipt.id}?document=${document.id}`}
+      nextHref={nextHref}
       labels={{
         title: printT.printThisDocument,
         voucherLabel: printT.voucherLabel,
@@ -190,6 +215,7 @@ export default async function PrintDetectedDocumentPage({
         credit: printT.credit,
         renderError: printT.renderError,
         sourcePage: printT.sourcePage,
+        nextDocument: t.nextDocument,
       }}
     />
   );

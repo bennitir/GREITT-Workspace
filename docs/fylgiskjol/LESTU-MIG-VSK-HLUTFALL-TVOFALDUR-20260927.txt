@@ -1,0 +1,42 @@
+GLÖGGT – VSK hlutfallsfrádráttur, tvöföld beiting lagfærð 27.09.2026
+
+Vandamál
+- Nova 30.06.2026, samtals 6.779 kr., var með eldri handvirka 75% skiptingu:
+  - 2520 innskattur 984 kr.
+  - Ófrádráttarbær VSK 328 kr.
+- Innskattsfrádráttarspjaldið tók 984 kr. sem 100% VSK-grunn og lagði 75% aftur
+  ofan á þá tölu. Það sýndi því ranglega 984 / 738 / 246 í stað
+  1.312 / 984 / 328.
+
+Lagfæring
+- DetectedDocumentEntriesEditor greinir nú sérstaka debetlínu með texta sem
+  merkir „Ófrádráttarbær VSK“.
+- Þegar slík lína er til og engin staðfest vatDeduction metadata liggur fyrir
+  er 100% VSK-grunnur reiknaður sem:
+    núverandi innskattur + ófrádráttarbær VSK.
+- Hlutfallið er einnig dregið af þessari skiptingu, þannig að 984 + 328 gefur
+  1.312 kr. grunn og 75% í bókun.
+- Ef eldri metadata er lægri en sýnileg skipting bókunarinnar vinnur sýnilegi
+  heildargrunnurinn í UI svo spjaldið sýni ekki tvöfaldan frádrátt.
+
+Server action
+- setDetectedDocumentVatDeduction styður nú tvær rekjanlegar leiðir:
+  1. OFFSET – fullur innskattur + VSK-mótfærsla (fyrri nútímaleið).
+  2. SPLIT_NON_DEDUCTIBLE – frádráttarbær innskattur + sérstök
+     „Ófrádráttarbær VSK“ debetlína (eldri/manual leið).
+- Í split-leið er fullur VSK summa beggja hluta og bæði innskatts- og
+  ófrádráttarbæri hlutinn eru endurreiknuð út frá sama 100% grunni.
+- Metadata vatDeduction er nú version 2 og geymir mode og
+  originalNonDeductibleEntries auk fyrri snapshots.
+
+Raunpróf sem þarf eftir innsetningu
+1. Opna Nova 30.06.2026 aftur.
+2. Staðfesta að spjaldið sýni:
+   - VSK á reikningi 1.312 kr.
+   - Frádráttarbær innskattur 984 kr.
+   - Ófrádráttarbær VSK 328 kr.
+   - 75% í bókun / 75% þegar staðfest.
+3. Velja 75% og „Nota hlutfall“.
+4. Staðfesta að tölurnar haldist 984 + 328, ekki 738 + 246.
+5. Prófa 50% og svo aftur 75% eða 100% til að staðfesta að grunnurinn haldist
+   1.312 kr. og engin uppsöfnuð afrúnun/tvöföld beiting eigi sér stað.

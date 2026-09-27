@@ -1,0 +1,123 @@
+GLÖGGT – LESTU MIG
+Fylgiskjöl – frumskjal inni í yfirferð, zoom/pan og fljótandi bókunargögn
+Dagsetning: 26. september 2026
+
+MARKMIÐ
+-------
+Draga úr tíma við handvirka yfirferð fylgiskjala. Fyrra flæði krafðist þess oft
+að bókari opnaði Frumskjal í sér sýn, stillti zoom og færi síðan til baka í
+bókunina. Þetta varð sérstaklega seinlegt þegar mörg skjöl voru yfirfarin í röð.
+
+BREYTING
+--------
+1. Frumskjalið birtist nú beint á /fylgiskjol/[id] þegar frumskjal er til.
+2. Myndfylgiskjöl fá:
+   - zoom + / -,
+   - fit/reset,
+   - drag/pan með mús eða pointer,
+   - stækkanlegt vinnusvæði.
+3. Fljótandi spjald „Yfirferðargögn“ birtist ofan á frumskjalinu og sýnir m.a.:
+   - seljanda,
+   - dagsetningu,
+   - upphæð,
+   - reiknings-/kvittunarnúmer þar sem það er til,
+   - fylgiskjalsnúmer eftir bókun,
+   - bókunarlínur.
+4. Spjaldið er draganlegt og má fela/opna aftur.
+5. PDF notar áfram innbyggðan PDF-skoðara en er nú inni í yfirferðarsíðunni og
+   opnar rétta pageNumber síðu þegar undirskjal vísar í síðu.
+6. OCR „Lesinn texti“ er samanfallinn að sjálfgefnu til að minnka sjónrænan
+   hávaða. Frumskjal + bókunargögn eru aðal yfirferðarsýnin.
+
+MIKILVÆG TAKMÖRKUN
+------------------
+Núverandi Receipt/AiDetectedDocument gagnalíkan varðveitir ekki bounding boxes /
+hnit fyrir dagsetningu, upphæð, kennitölu eða aðra lesna reiti á ljósmyndinni.
+Því má UI EKKI þykjast vita nákvæma staðsetningu textans og teikna falskt
+highlight. Næsta highlight-lag krefst þess að staðsetningarhnit úr deterministic
+lestri/OCR séu varðveitt rekjanlega.
+
+REKJANLEIKI OG FRUMRIT
+---------------------
+Frumritinu er ekki breytt með þessari breytingu. Viewer er aðeins birtingarlag.
+Auto-crop, perspective correction og bleksparandi prentútgáfa eru sérstakt næsta
+lag og mega ekki skrifa yfir eða koma í stað varðveitts frumskjals.
+
+PRÓFUN EFTIR INNSETNINGU
+------------------------
+1. Opna ljósmyndað fylgiskjal.
+2. Staðfesta að frumskjalið sjáist beint á yfirferðarsíðunni.
+3. Prófa + / - og drag/pan.
+4. Færa Yfirferðargögn til með því að draga haus spjaldsins.
+5. Fela spjaldið og opna aftur.
+6. Prófa „Stækka vinnusvæði“ og fara aftur í minni sýn.
+7. Opna PDF-fylgiskjal með pageNumber og staðfesta að rétt síða opnist.
+8. Staðfesta að bókunarlínur í fljótandi spjaldi samsvari bókunarforminu.
+9. Prófa safnskjal með mörgum undirskjölum og fletta næsta/fyrra undirskjal.
+10. Keyra npx tsc --noEmit áður en commit/push er gert.
+
+ENGIN SCHEMA BREYTING
+---------------------
+Þessi lota krefst engrar Prisma migration.
+
+
+VIÐBÓT – 26.09.2026, ÖNNUR PRUFA
+---------------------------------
+Raunpróf sýndi að yfirferðargagnaspjaldið er gagnlegt en fullbreiður viewer tók
+of mikið lóðrétt pláss. Nýja uppsetningin færir frumskjalið niður í vinstri
+vinnudálk, undir OCR/bókunarsamantekt, með sticky hegðun á desktop. Hægri
+dálkur heldur áfram að bera ítarlega yfirferð og bókun.
+
+Ljósmyndir fá nú varfærna deterministic hreinsun á mjög augljósum dökkum
+jaðri sem snertir myndbrún. Þetta er EKKI almenn document-boundary/OCR
+segmentation og má ekki klippa óviss svæði. Ef öruggur jaðar finnst ekki er
+frumritið sýnt óbreytt. Notandi getur alltaf valið „Sýna frumrit“.
+
+Prentun ljósmynda notar sömu varfærnu jaðrahreinsun áður en bókunarmerking er
+sett á prentútgáfuna. Markmið: spara tóner, sérstaklega þegar ljósmynd inniheldur
+stóran svartan/dökkan flöt fyrir neðan eða utan reikning. Frumskrá í storage er
+áfram óbreytt.
+
+NÝJAR SKRÁR/BREYTINGAR
+----------------------
+- components/ReceiptReviewSourceViewer.tsx
+- lib/documents/image-cleanup.ts
+- app/fylgiskjol/[id]/page.tsx
+- app/fylgiskjol/[id]/prenta/PrintableDetectedDocument.tsx
+- docs/leidbeiningar/bokhald/BOKA-FYLGISKJAL.md
+
+PRÓFA SÉRSTAKLEGA
+-----------------
+1. Sama ljósmynd og sýndi svartan flöt undir reikningi.
+2. Staðfesta að „Hreinsa dökka jaðra“/hreinsuð sýn fjarlægi aðeins dökka
+   bakgrunninn og ekkert af reikningnum.
+3. Velja „Sýna frumrit“ og staðfesta að allt upprunalega myndsvæðið komi aftur.
+4. Scrolla niður í langa bókun og staðfesta að frumskjalið nýtist í vinstri
+   dálki meðan hægri yfirferð er unnin.
+5. Prenta bókaða ljósmynd og staðfesta minni svartan flöt/tónernotkun og að
+   bókunarmerking sé á prentútgáfunni.
+6. Prófa ljósmynd án dökks jaðars: GLÖGGT á ekki að þvinga crop.
+7. Prófa PDF: PDF-hegðun á að vera óbreytt nema að viewerinn sé nú í vinstri
+   vinnudálki.
+
+
+VIÐBÓT – 26.09.2026, PDF ZOOM + PAN
+-----------------------------------
+Raunpróf á Olís safnskjali sýndi að þegar GLÖGGT-zoom var bætt við PDF hvarf
+möguleikinn á að draga skjalið með músinni. Lagfæring sameinar nú bæði:
+- − / Passa / + fyrir PDF,
+- drag/pan með vinstri músarhnappi,
+- tvöfaldur smellur eða Passa miðjar og passar aftur,
+- pageNumber helst óbreytt svo rétt undirsíða opnist.
+
+PDF-innbyggði skoðarinn er aðeins birtingarlag í þessari vinnusýn; GLÖGGT-stýringar
+stjórna zoom/pan svo hegðunin verði samræmd við ljósmyndir. Frum-PDF er óbreytt.
+
+PRÓFA SÉRSTAKLEGA
+-----------------
+1. Opna Olís undirskjal, t.d. síðu 42 af 103.
+2. Stækka með +.
+3. Draga PDF til vinstri/hægri og upp/niður með músinni.
+4. Smella Passa og staðfesta að skjalið fari aftur í miðju/passaða sýn.
+5. Staðfesta að sama pageNumber sé enn sýnt.
+6. Keyra npx tsc --noEmit áður en commit/push er gert.

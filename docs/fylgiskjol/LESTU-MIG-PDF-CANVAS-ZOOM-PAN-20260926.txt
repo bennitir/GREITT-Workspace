@@ -1,0 +1,30 @@
+GLÖGGT – Fylgiskjöl – PDF canvas zoom/pan – 26.09.2026
+
+Markmið
+- Leiðrétta PDF-yfirferð þar sem prósentutalan breyttist en PDF-síðan varð ekki raunverulega stærri.
+- Forðast óskýrt CSS/pixla-zoom.
+- Halda sömu músarhreyfingu (pan) og fyrir myndir.
+
+Breyting
+- ReceiptReviewSourceViewer notar PDF.js til að teikna aðeins rétta PDF-síðu á canvas í stað þess að reyna að stækka innbyggða Chrome PDF-skoðarann með CSS.
+- 100% = Passa í tiltækt vinnusvæði.
+- + / - endurteiknar PDF-síðuna í nýrri upplausn.
+- Draga með vinstri músarhnappi færir canvas-síðuna.
+- Tvöfaldur smellur eða Passa miðjar aftur og setur í 100%.
+- Ef PDF.js nær ekki að teikna skjalið fellur viewerinn aftur í venjulegan PDF-skoðara.
+
+Rekjanleiki
+- Frum-PDF er óbreytt.
+- Engin Prisma breyting.
+- Engin breyting á bókunarvél eða OCR/AI gögnum.
+
+Próf
+1. npx tsc --noEmit
+2. Opna sama Olís undirskjal (t.d. síðu 42 af 103).
+3. Prófa 100% -> 150% -> 200% -> 300%.
+4. Staðfesta að textinn sjálfur verði stærri og haldist skýr.
+5. Draga skjalið til með músinni eftir stækkun.
+6. Ýta á Passa og staðfesta að 100% og miðjun komi aftur.
+
+Athugasemd
+- Fyrsta canvas-útgáfan notar versionaðan PDF.js worker frá jsDelivr í vafranum. Þetta er hentugt í prufunni; áður en þetta verður endanleg production-lausn ætti workerinn að vera hýstur með GLÖGGT sjálfu svo viewerinn sé ekki háður ytri CDN.

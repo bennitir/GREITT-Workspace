@@ -1,0 +1,16 @@
+GLÖGGT – JSON type fix fyrir endurteknar vörulínur – 26.09.2026
+
+Lagfæring eftir tsc villu í receiptActions.ts þar sem PurchaseLineLike[] var ekki
+sannanlega Prisma JsonValue vegna unknown-reita í parser-týpunni.
+
+Breyting:
+- Metadata er nú serialiserað yfir JSON-mörk með toPrismaInputJsonValue áður en
+  extractionMetadata er vistað.
+- Þetta fjarlægir undefined og gefur Prisma InputJsonValue án þess að breyta
+  deterministic vörulínu-/matching hegðuninni.
+- Sama leið er notuð í báðum hydration-stöðum til að halda hegðun samræmdri.
+
+Próf hjá notanda:
+  npx tsc --noEmit
+
+Ef hreint: prófa aftur Olís skjal 38/103 og Endurbyggja tillögu úr staðfestum gögnum.
