@@ -1,0 +1,21 @@
+GLÖGGT – bókunarvörn / React #441 – 27.09.2026
+
+Vandamál
+- Við bókun á greindu fylgiskjali gat production sýnt „Minified React error #441“.
+- approveDetectedDocument notaði throw Error með strengjamerkjum eins og OLDER_UNBOOKED og POSSIBLE_DUPLICATE til að senda væntanlega viðskiptareglu yfir Server Action mörkin.
+- Í production hylur React/Next villuskil frá server-render/server action, þannig að notandi sá ekki raunverulega skýringu.
+
+Dæmi
+- Midgard Restaurant & Bar, 06.07.2026, 14.670 kr. reyndi að bókast meðan eldra óbókað fylgiskjal var enn til.
+- Bókunarvörnin stöðvaði réttilega bókunina, en UI sýndi #441 í stað „Eldra óbókað fylgiskjal...“.
+
+Lagfæring
+- approveDetectedDocument grípur nú væntanleg OLDER_UNBOOKED og POSSIBLE_DUPLICATE skilyrði innan server actions og skilar serializable structured result í stað þess að láta þau sleppa út sem exception.
+- ApproveDocumentButton les structured result og sýnir skýra viðvörun + „Opna eldra fylgiskjal“ eða „Bóka samt“ eftir því sem við á.
+- Óvæntar kerfisvillur eru enn kastaðar áfram svo þær dulist ekki sem viðskiptaregla.
+
+Próf eftir innsetningu
+1. npx tsc --noEmit
+2. Opna Midgard 06.07.2026 og ýta á „Bóka fylgiskjal“ meðan eldra óbókað skjal er til.
+3. Vænt niðurstaða: engin React #441; gul skýring segir hvaða eldri dagsetning stöðvar bókun og hnappur opnar eldra fylgiskjalið.
+4. Bóka/afgreiða eldra skjalið og reyna síðan Midgard aftur.

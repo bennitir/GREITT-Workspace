@@ -20,58 +20,64 @@ const [olderDocumentUrl, setOlderDocumentUrl] = useState("");
   const [isLoading, setIsLoading] = useState(false);
   const [canBookAnyway, setCanBookAnyway] = useState(false);
 
+  function applyBookingResult(
+    result: Awaited<ReturnType<typeof approveDetectedDocument>>
+  ) {
+    if (result.status === "BOOKED") {
+      setError("");
+      setOlderDocumentUrl("");
+      setCanBookAnyway(false);
+      return true;
+    }
+
+    if (result.status === "OLDER_UNBOOKED") {
+      setError(
+        `Bókun stöðvuð. Eldra óbókað fylgiskjal er til frá ${formatDate(
+          new Date(result.date)
+        )}.`
+      );
+      setOlderDocumentUrl(
+        `/fylgiskjol/${result.receiptId}?document=${result.documentId}`
+      );
+      setCanBookAnyway(false);
+      return false;
+    }
+
+    setError(
+      `Möguleg tvíbókun: ${result.merchantName} – ${formatNumber(
+        result.totalAmount
+      )} kr.` +
+        (result.voucherNumber
+          ? ` Fannst áður sem fylgiskjal ${result.voucherNumber}.`
+          : " Sambærilegt fylgiskjal fannst áður.")
+    );
+    setOlderDocumentUrl(
+      `/fylgiskjol/${result.receiptId}?document=${result.documentId}`
+    );
+    setCanBookAnyway(true);
+    return false;
+  }
+
   async function handleBook() {
     try {
       setError("");
       setIsLoading(true);
-setCanBookAnyway(false);
-      await approveDetectedDocument(documentId);
+      setCanBookAnyway(false);
 
-      router.refresh();
-   } catch (err) {
-  const message =
-    err instanceof Error
-      ? err.message
-      : "Ekki tókst að bóka fylgiskjalið.";
+      const result = await approveDetectedDocument(documentId);
 
-  if (message.startsWith("OLDER_UNBOOKED|")) {
-    const [, receiptId, olderDocumentId, olderDate] =
-      message.split("|");
-
-   setError(
-  `Bókun stöðvuð. Eldra óbókað fylgiskjal er til frá ${formatDate(new Date(olderDate))}.`
-);
-
-    setOlderDocumentUrl(
-      `/fylgiskjol/${receiptId}?document=${olderDocumentId}`
-    );
-  } else if (message.startsWith("POSSIBLE_DUPLICATE|")) {
-    const [
-      ,
-      receiptId,
-      duplicateDocumentId,
-      voucherNumber,
-      merchantName,
-      totalAmount,
-    ] = message.split("|");
-
-    setError(
-  `Möguleg tvíbókun: ${merchantName} – ${formatNumber(
-    Number(totalAmount)
-  )} kr.` +
-    (voucherNumber
-      ? ` Fannst áður sem fylgiskjal ${voucherNumber}.`
-      : " Sambærilegt fylgiskjal fannst áður.")
-);
-setCanBookAnyway(true);
-    setOlderDocumentUrl(
-      `/fylgiskjol/${receiptId}?document=${duplicateDocumentId}`
-    );
-  } else {
-    setError(message);
-    setOlderDocumentUrl("");
-  }
-} finally {
+      if (applyBookingResult(result)) {
+        router.refresh();
+      }
+    } catch (err) {
+      setError(
+        err instanceof Error
+          ? err.message
+          : "Ekki tókst að bóka fylgiskjalið."
+      );
+      setOlderDocumentUrl("");
+      setCanBookAnyway(false);
+    } finally {
       setIsLoading(false);
     }
   }
@@ -110,14 +116,15 @@ setCanBookAnyway(true);
                   setError("");
                   setIsLoading(true);
 
-                  await approveDetectedDocument(
+                  const result = await approveDetectedDocument(
                     documentId,
                     undefined,
                     true
                   );
 
-                  setCanBookAnyway(false);
-                  router.refresh();
+                  if (applyBookingResult(result)) {
+                    router.refresh();
+                  }
                 } catch (err) {
                   setError(
                     err instanceof Error

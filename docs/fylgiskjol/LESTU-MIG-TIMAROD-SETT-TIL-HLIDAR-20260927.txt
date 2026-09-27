@@ -1,0 +1,15 @@
+GLÖGGT – tímaröð bókunar og skjöl sett til hliðar – 27.09.2026
+
+Vandamál:
+- Fylgiskjal merkt „Þarf nánari skoðun“ gat áfram stöðvað bókun yngri skjala.
+- Tvö skjöl með sömu sýnilegu dagsetningu gátu talist í eldri/yngri röð vegna mismunandi tímastimpla.
+
+Lagfæring:
+- Chronology guard útilokar AiDetectedDocument með needsAttentionAt != null.
+- Guard útilokar einnig Receipt í NEEDS_ATTENTION stöðu.
+- Samanburður við „eldra“ skjal miðast við upphaf almanaksdags (UTC; Ísland er UTC), þannig að skjöl sama dags blokka ekki hvert annað.
+
+Æskilegt smoke-test:
+1. Bílanaust 06.07.2026 er sett til hliðar vegna óstaðfests bókhaldsumhverfis.
+2. Midgard 06.07.2026 má bóka án þess að Bílanaust stöðvi.
+3. Raunverulega eldra óbókað skjal, sem ekki er sett til hliðar, á áfram að stöðva bókun.

@@ -18,3 +18,8 @@ Markmiðið er að skrá raunverulegt vinnulag jafnóðum og það er staðfest 
 - [Prenta PDF-fylgiskjal](bokhald/PRENTA-PDF-FYLGISKJAL.md)
 - [Hvernig GLÖGGT lærir af yfirferð bókara](bokhald/HVERNIG-GLOGGT-LAERIR.md)
 - [Hlutfallsfrádráttur innskatts](bokhald/VSK-HLUTFALLSFRADRATTUR.md)
+
+
+## Innsýn
+
+- [Innsýn – skildu reksturinn](innsyn/INNSYN.md)

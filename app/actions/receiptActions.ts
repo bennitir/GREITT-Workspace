@@ -6792,11 +6792,28 @@ async function learnConfirmedAccountSelectionPatterns(
   }
 }
 
- export async function approveDetectedDocument(
+export type ApproveDetectedDocumentResult =
+  | { status: "BOOKED" }
+  | {
+      status: "OLDER_UNBOOKED";
+      receiptId: number;
+      documentId: number;
+      date: string;
+    }
+  | {
+      status: "POSSIBLE_DUPLICATE";
+      receiptId: number;
+      documentId: number;
+      voucherNumber: number | null;
+      merchantName: string;
+      totalAmount: number;
+    };
+
+export async function approveDetectedDocument(
   documentId: number,
   manualVoucherNumber?: number,
   allowPossibleDuplicate = false
-) {
+): Promise<ApproveDetectedDocumentResult> {
   const document = await prisma.aiDetectedDocument.findUnique({
     where: {
       id: documentId,
@@ -6856,7 +6873,8 @@ if (!document.date) {
   );
 }
 
-  await prisma.$transaction(async (tx) => {
+  try {
+    await prisma.$transaction(async (tx) => {
     const company = await tx.company.findUnique({
       where: {
         id: document.receipt.companyId,
@@ -6927,6 +6945,13 @@ if (document.receiptNumber) {
   }
 }
 
+// Tímaröð er dagsetningarvörn, ekki tímastimpilsvörn.
+// Skjöl sama almanaksdag mega bókast í hvaða röð sem er.
+// Skjöl sem bókari hefur vísvitandi sett til hliðar (Þarf nánari skoðun)
+// mega heldur ekki stöðva áframhaldandi yfirferð annarra fylgiskjala.
+const documentDayStart = new Date(document.date!);
+documentDayStart.setUTCHours(0, 0, 0, 0);
+
 const olderUnbookedDocument =
   await tx.aiDetectedDocument.findFirst({
     where: {
@@ -6935,12 +6960,16 @@ const olderUnbookedDocument =
       },
       receipt: {
         companyId: company.id,
+        status: {
+          not: "NEEDS_ATTENTION",
+        },
       },
       approvedAt: null,
       disposedAt: null,
+      needsAttentionAt: null,
       date: {
         not: null,
-        lt: document.date!,
+        lt: documentDayStart,
       },
     },
     orderBy: {
@@ -7128,15 +7157,51 @@ if (remainingUnapproved === 0) {
 
   await archiveReceiptFile(document.receiptId);
 }
-  });
+    });
+  } catch (error) {
+    const message = error instanceof Error ? error.message : "";
 
+    if (message.startsWith("OLDER_UNBOOKED|")) {
+      const [, receiptId, olderDocumentId, olderDate] = message.split("|");
 
+      return {
+        status: "OLDER_UNBOOKED",
+        receiptId: Number(receiptId),
+        documentId: Number(olderDocumentId),
+        date: olderDate,
+      };
+    }
+
+    if (message.startsWith("POSSIBLE_DUPLICATE|")) {
+      const [
+        ,
+        receiptId,
+        duplicateDocumentId,
+        voucherNumber,
+        merchantName,
+        totalAmount,
+      ] = message.split("|");
+
+      return {
+        status: "POSSIBLE_DUPLICATE",
+        receiptId: Number(receiptId),
+        documentId: Number(duplicateDocumentId),
+        voucherNumber: voucherNumber ? Number(voucherNumber) : null,
+        merchantName,
+        totalAmount: Number(totalAmount),
+      };
+    }
+
+    throw error;
+  }
 
   revalidatePath(
     `/fylgiskjol/${document.receiptId}`
   );
   revalidatePath("/fylgiskjol");
   revalidatePath("/");
+
+  return { status: "BOOKED" };
 }
   export async function approveAiSuggestion(receiptId: number) {
   const receipt = await prisma.receipt.findUnique({

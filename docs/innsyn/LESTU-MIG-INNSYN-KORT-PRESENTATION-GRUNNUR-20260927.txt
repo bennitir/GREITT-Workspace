@@ -1,0 +1,57 @@
+GLÖGGT – Innsýn kort + presentation-grunnur – 27.09.2026
+
+Staða
+- Fyrsta örugga skrefið í nýrri Innsýn-hönnun.
+- Engin breyting gerð á núverandi app/innsyn/page.tsx.
+- Engin Prisma migration.
+- Engin production-hegðun breytist við þetta skref eitt og sér.
+
+Nýtt í app/innsyn/_lib
+1. presentation-model.ts
+   - InsightTruthState: BOOKED / KNOWN / PENDING_CONFIRMATION
+   - InsightViewMode: MIXED / VISUAL / NUMBERS / EXPLANATION
+   - InsightPeriodPreset
+   - evidence/narrative/series/breakdown/attention contracts
+   - PaymentCard reconciliation summary contract
+   - InsightPresentationModel
+
+2. period.ts
+   - selected-period helper fyrir mánuð, ársfjórðung, ár, síðustu 12 mánuði og custom.
+   - býr einnig til jafnlanga comparison-period.
+   - 2026 er ekki hardcode-regla.
+
+Docs
+- docs/innsyn/INNSYN-KORT-OG-ARKITEKTUR-20260927.md
+- docs/innsyn/INNSYN-SJONRAEN-FORSKRIFT-V1-20260927.md
+- docs/leidbeiningar/innsyn/INNSYN.md
+- docs/leidbeiningar/README.md uppfært með Innsýn-kafla.
+
+Meginreglur varðveittar
+- Reksturinn → Innsýn.
+- Gögn fyrst, AI síðan.
+- Bókað / Þekkt / Bíður staðfestingar.
+- Ein greiningarvél, margar sýnir.
+- Fyrst heildarmynd, síðan drill-down í sönnunargögn.
+- Ekki sækja alla bankasögu til að birta fyrsta skjá.
+
+Næsta skref
+- Byggja loadInsightSummary(companyId, period) sem les tímabilsafmarkaðar staðreyndir.
+- Byrja á bókuðum tekjum/kostnaði/niðurstöðu + PaymentCard reconciliation.
+- Ekki flytja alla gömlu page.tsx regluflóruna í einu.
+
+Próf í þessu skrefi
+- Pure TypeScript skrár má syntax/type-checka sjálfstætt.
+- Fullt npx tsc --noEmit þarf að keyra í C:\GLÖGGT eftir overlay.
+
+3. booked-summary.ts
+   - pure deterministic samantekt úr bókuðum ReceiptEntry gögnum.
+   - tekjur = credit - debit á REVENUE.
+   - gjöld = debit - credit á EXPENSE.
+   - VSK input/output les account type.
+   - mánaðarserie + sundurliðun eftir gjaldalykli og mótaðila.
+   - tímabilsafmarkað; les ekki sjálft gagnagrunn.
+
+4. card-summary.ts
+   - pure tímabilssamantekt á PaymentCardTransaction.
+   - RECONCILED talið afstemmt; annað óafstemmt.
+   - núverandi import setur UNRECONCILED, þannig að raunafstemmingarflæði þarf að koma áður en reconciled tölur verða lifandi.
