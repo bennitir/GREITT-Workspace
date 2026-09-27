@@ -48,58 +48,77 @@ export default async function FylgiskjolPage() {
     redirect("/");
   }
 
-  const receiptsUnsorted = await prisma.receipt.findMany({
-    where: {
-      companyId,
-      status: {
-        not: "APPROVED",
-      },
-    },
-    select: {
-      id: true,
-      date: true,
-      aiDate: true,
-      description: true,
-      amount: true,
-      voucherNumber: true,
-      status: true,
-      company: {
-        select: {
-          name: true,
+  /*
+   * Afkastaregla fyrir biðlistann:
+   * - sækja aðeins óafgreidd greind undirskjöl;
+   * - sækja handvirk/ógreind fylgiskjöl sér;
+   * - ekki flytja öll afgreidd undirskjöl yfir netið til að henda þeim síðan í JS.
+   *
+   * Þetta varðveitir fyrri sýnilega hegðun: parent Receipt þarf áfram að vera
+   * ó-APPROVED og greint skjal telst sýnilegt aðeins meðan það er hvorki
+   * bókað né sett í endanlega disposition.
+   */
+  const [pendingDocuments, manualReceipts] = await Promise.all([
+    prisma.aiDetectedDocument.findMany({
+      where: {
+        disposedAt: null,
+        disposition: null,
+        approvedAt: null,
+        voucherNumber: null,
+        receipt: {
+          companyId,
+          status: {
+            not: "APPROVED",
+          },
         },
       },
-      aiDetectedDocuments: {
-        orderBy: {
-          id: "asc",
-        },
-        select: {
-          id: true,
-          disposedAt: true,
-          disposition: true,
-          approvedAt: true,
-          voucherNumber: true,
-          merchantName: true,
-          date: true,
-          totalAmount: true,
-          reviewedAt: true,
-          needsAttentionAt: true,
-          duplicateMarkedAt: true,
-          duplicateVoucherNumber: true,
+      select: {
+        id: true,
+        merchantName: true,
+        date: true,
+        totalAmount: true,
+        reviewedAt: true,
+        needsAttentionAt: true,
+        duplicateMarkedAt: true,
+        duplicateVoucherNumber: true,
+        receipt: {
+          select: {
+            id: true,
+            company: {
+              select: {
+                name: true,
+              },
+            },
+          },
         },
       },
-    },
-  });
-
-  const receipts = receiptsUnsorted.sort((a, b) => {
-    const dateA = a.aiDate ?? a.date;
-    const dateB = b.aiDate ?? b.date;
-
-    if (!dateA && !dateB) return 0;
-    if (!dateA) return 1;
-    if (!dateB) return -1;
-
-    return dateA.getTime() - dateB.getTime();
-  });
+    }),
+    prisma.receipt.findMany({
+      where: {
+        companyId,
+        status: {
+          not: "APPROVED",
+        },
+        aiDetectedDocuments: {
+          none: {},
+        },
+      },
+      select: {
+        id: true,
+        date: true,
+        aiDate: true,
+        description: true,
+        amount: true,
+        voucherNumber: true,
+        status: true,
+        company: {
+          select: {
+            name: true,
+          },
+        },
+      },
+    }),
+  ]);
 
   type DisplayItem = {
     key: string;
@@ -114,60 +133,41 @@ export default async function FylgiskjolPage() {
     duplicateVoucherNumber: number | null;
   };
 
-  const displayItems: DisplayItem[] = [];
-
-  for (const receipt of receipts) {
-    if (receipt.aiDetectedDocuments.length > 0) {
-      for (const document of receipt.aiDetectedDocuments) {
-        const isFinalizedWithoutBooking =
-          document.disposedAt !== null ||
-          document.disposition !== null;
-
-        const isBooked =
-          document.approvedAt !== null ||
-          document.voucherNumber !== null;
-
-        if (isFinalizedWithoutBooking || isBooked) {
-          continue;
-        }
-
-        displayItems.push({
-          key: `document-${document.id}`,
-          receiptId: receipt.id,
-          documentId: document.id,
-          voucherNumber: document.voucherNumber,
-          title: document.merchantName ?? t.unknownDocument,
-          companyName: receipt.company.name,
-          date: document.date,
-          amount: document.totalAmount ?? 0,
-          statusText: document.reviewedAt
-            ? "Yfirfarið"
-            : document.needsAttentionAt
-              ? "NEEDS_ATTENTION"
-              : document.duplicateMarkedAt
-                ? "DUPLICATE_CANDIDATE"
-                : "Til yfirferðar",
-          duplicateVoucherNumber: document.duplicateVoucherNumber,
-        });
-      }
-    } else {
-      displayItems.push({
-        key: `receipt-${receipt.id}`,
-        receiptId: receipt.id,
-        documentId: null,
-        voucherNumber: receipt.voucherNumber,
-        title: receipt.description,
-        companyName: receipt.company.name,
-        date: receipt.aiDate ?? receipt.date,
-        amount: receipt.amount,
-        statusText:
-          receipt.status === "REVIEWED"
-            ? "Yfirfarið"
-            : receipt.status,
-        duplicateVoucherNumber: null,
-      });
-    }
-  }
+  const displayItems: DisplayItem[] = [
+    ...pendingDocuments.map((document) => ({
+      key: `document-${document.id}`,
+      receiptId: document.receipt.id,
+      documentId: document.id,
+      voucherNumber: null,
+      title: document.merchantName ?? t.unknownDocument,
+      companyName: document.receipt.company.name,
+      date: document.date,
+      amount: document.totalAmount ?? 0,
+      statusText: document.reviewedAt
+        ? "Yfirfarið"
+        : document.needsAttentionAt
+          ? "NEEDS_ATTENTION"
+          : document.duplicateMarkedAt
+            ? "DUPLICATE_CANDIDATE"
+            : "Til yfirferðar",
+      duplicateVoucherNumber: document.duplicateVoucherNumber,
+    })),
+    ...manualReceipts.map((receipt) => ({
+      key: `receipt-${receipt.id}`,
+      receiptId: receipt.id,
+      documentId: null,
+      voucherNumber: receipt.voucherNumber,
+      title: receipt.description,
+      companyName: receipt.company.name,
+      date: receipt.aiDate ?? receipt.date,
+      amount: receipt.amount,
+      statusText:
+        receipt.status === "REVIEWED"
+          ? "Yfirfarið"
+          : receipt.status,
+      duplicateVoucherNumber: null,
+    })),
+  ];
 
   displayItems.sort((a, b) => {
     const timeA = a.date?.getTime() ?? 0;

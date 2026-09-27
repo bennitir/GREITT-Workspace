@@ -1,0 +1,41 @@
+GLÖGGT – Fylgiskjöl listi, afkastagrunnur v1
+Dagsetning: 27. september 2026
+
+Markmið
+- Byrja hraða-/andlitsuppfærslu Fylgiskjala með lítilli áhættubreytingu.
+- Engin breyting á bókunar-, VSK-, learning- eða disposition-reglum.
+- Fyrsta skrefið er eingöngu að minnka gagnamagn og vinnslu á /fylgiskjol.
+
+Breyting
+Áður sótti /fylgiskjol öll Receipt sem voru ekki APPROVED ásamt ÖLLUM
+AiDetectedDocument undirskjölum þeirra. Síðan voru bókuð/afgreidd undirskjöl síuð út í JS.
+Þetta gat valdið því að listinn flutti og umbreytti miklu meira magni gagna en
+sjálf biðröðin þurfti, sérstaklega fyrir stór PDF-söfn með mörgum undirskjölum.
+
+Núna eru keyrðar tvær afmarkaðar fyrirspurnir samhliða:
+1) aðeins óafgreidd AiDetectedDocument sem mega birtast í biðröðinni;
+2) aðeins handvirk/ógreind Receipt sem hafa engin AiDetectedDocument.
+
+Sýnileg hegðun er varðveitt:
+- parent Receipt þarf áfram að vera status != APPROVED;
+- greint skjal birtist aðeins ef disposedAt/disposition/approvedAt/voucherNumber eru null;
+- Reviewed / Needs attention / Duplicate candidate flokkun helst óbreytt;
+- röðun er áfram eftir dagsetningu;
+- engin Prisma schema-breyting.
+
+Af hverju þetta er sérstaklega mikilvægt
+Stór frumskjöl geta innihaldið mjög mörg greind undirskjöl. Þegar flest þeirra
+eru þegar afgreidd er óþarfi að sækja þau öll í biðlistann til að henda þeim síðan.
+
+Smoke-test eftir uppsetningu
+1. npx tsc --noEmit
+2. Opna /fylgiskjol.
+3. Staðfesta að sömu óafgreiddu skjöl sjáist og áður.
+4. Staðfesta að "Yfirfarið", "Þarf skoðun" og duplicate candidate birtist rétt.
+5. Opna eitt greint undirskjal og eitt handvirkt/ógreint skjal ef slíkt er til.
+6. Engin breyting á /fylgiskjol/[id] á að hafa orðið í þessari lotu.
+
+Næsta lota
+- mæla/greina review-síðuna /fylgiskjol/[id];
+- skoða signed URL / frumskjal / OCR panel og óþarfa gagnalestur;
+- síðan sjónræn þétting og sameiginlegur Fylgiskjöl-listagrunnur.
