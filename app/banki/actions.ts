@@ -3,7 +3,10 @@
 import { createHash } from "crypto";
 import * as XLSX from "xlsx";
 import { cookies } from "next/headers";
+import { revalidatePath } from "next/cache";
 import { redirect } from "next/navigation";
+import { Prisma } from "@/app/generated/prisma/client";
+import { getCompanyAccess } from "@/lib/core/access-control";
 import { prisma } from "@/lib/prisma";
 
 async function bankContext(requestedCompanyId?: number) {
@@ -310,4 +313,264 @@ export async function confirmBankImport(formData: FormData) {
     data: { status: duplicates > 0 ? `IMPORTED:${imported}:DUPLICATES:${duplicates}` : `IMPORTED:${imported}` },
   });
   redirect(`/banki/${batch.bankAccountId}`);
+}
+
+export async function confirmFinancialEventPaymentAllocation(formData: FormData) {
+  const allocationId = Number(formData.get("allocationId"));
+  if (!Number.isInteger(allocationId) || allocationId < 1) {
+    throw new Error("Ógild greiðsluúthlutun.");
+  }
+
+  // Fyrsta uppfletting finnur aðeins fyrirtækið sem á færsluna svo heimildir
+  // séu staðfestar áður en nokkur breyting er gerð. Allar fjárhagslegar
+  // forsendur eru síðan lesnar aftur inni í SERIALIZABLE transaction.
+  const target = await prisma.financialEventPaymentAllocation.findUnique({
+    where: { id: allocationId },
+    select: {
+      payment: {
+        select: {
+          event: { select: { companyId: true } },
+        },
+      },
+    },
+  });
+
+  if (!target) throw new Error("Greiðsluúthlutun fannst ekki.");
+
+  const companyId = target.payment.event.companyId;
+  const { userId } = await bankContext(companyId);
+  const access = await getCompanyAccess(companyId);
+
+  if (!access.allowed || !access.canReconcileBookkeeping) {
+    throw new Error("Þú hefur ekki heimild til að afstemma greiðslur.");
+  }
+
+  const confirmedAt = new Date();
+
+  const result = await prisma.$transaction(
+    async (tx) => {
+      const allocation = await tx.financialEventPaymentAllocation.findUnique({
+        where: { id: allocationId },
+        include: {
+          payment: {
+            include: {
+              event: true,
+              bankTransaction: {
+                include: { bankAccount: true },
+              },
+            },
+          },
+          scheduleItem: true,
+        },
+      });
+
+      if (!allocation) throw new Error("Greiðsluúthlutun fannst ekki.");
+
+      const { payment, scheduleItem } = allocation;
+      const { event, bankTransaction } = payment;
+
+      if (event.companyId !== companyId) {
+        throw new Error("Fyrirtæki greiðslu breyttist við staðfestingu.");
+      }
+      if (bankTransaction.bankAccount.companyId !== companyId) {
+        throw new Error("Bankafærsla tilheyrir ekki sama fyrirtæki og skuldbindingin.");
+      }
+      if (scheduleItem.eventId !== event.id) {
+        throw new Error("Gjalddagi tilheyrir ekki sömu skuldbindingu og greiðslan.");
+      }
+      if (allocation.status !== "PROPOSED") {
+        throw new Error("Aðeins má staðfesta greiðsluúthlutun sem er PROPOSED.");
+      }
+      if (payment.status !== "PROPOSED") {
+        throw new Error("Greiðslan sjálf er ekki lengur PROPOSED.");
+      }
+      if (scheduleItem.status === "CANCELLED") {
+        throw new Error("Ekki má staðfesta greiðslu á felldan gjalddaga.");
+      }
+      if (
+        payment.currency !== event.currency ||
+        scheduleItem.currency !== event.currency
+      ) {
+        throw new Error("Gjaldmiðill greiðslu, skuldbindingar og gjalddaga stemmir ekki.");
+      }
+
+      const zero = new Prisma.Decimal(0);
+      const allocationAmount = allocation.amount;
+      const paymentAmount = payment.amount;
+      const scheduleAmount = scheduleItem.amount;
+      const bankAmount = bankTransaction.amount.abs();
+
+      if (
+        allocationAmount.lte(zero) ||
+        paymentAmount.lte(zero) ||
+        scheduleAmount.lte(zero) ||
+        bankAmount.lte(zero)
+      ) {
+        throw new Error("Upphæðir í greiðsluafstemmingu verða að vera stærri en núll.");
+      }
+      if (allocationAmount.gt(paymentAmount)) {
+        throw new Error("Úthlutun er hærri en greiðslan.");
+      }
+      if (allocationAmount.gt(scheduleAmount)) {
+        throw new Error("Úthlutun er hærri en gjalddaginn.");
+      }
+      if (paymentAmount.gt(bankAmount)) {
+        throw new Error("Greiðslan er hærri en bankafærslan.");
+      }
+
+      const [otherPaymentAllocations, otherScheduleAllocations, otherBankPayments] =
+        await Promise.all([
+          tx.financialEventPaymentAllocation.aggregate({
+            where: {
+              paymentId: payment.id,
+              status: "CONFIRMED",
+              id: { not: allocation.id },
+            },
+            _sum: { amount: true },
+          }),
+          tx.financialEventPaymentAllocation.aggregate({
+            where: {
+              scheduleItemId: scheduleItem.id,
+              status: "CONFIRMED",
+              id: { not: allocation.id },
+            },
+            _sum: { amount: true },
+          }),
+          tx.financialEventPayment.aggregate({
+            where: {
+              bankTransactionId: bankTransaction.id,
+              status: "CONFIRMED",
+              id: { not: payment.id },
+            },
+            _sum: { amount: true },
+          }),
+        ]);
+
+      const paymentConfirmedAfter = (
+        otherPaymentAllocations._sum.amount ?? zero
+      ).plus(allocationAmount);
+      const schedulePaidAfter = (
+        otherScheduleAllocations._sum.amount ?? zero
+      ).plus(allocationAmount);
+
+      if (paymentConfirmedAfter.gt(paymentAmount)) {
+        throw new Error("Staðfestar úthlutanir fara yfir greiðsluupphæð.");
+      }
+      if (schedulePaidAfter.gt(scheduleAmount)) {
+        throw new Error("Staðfestar greiðslur fara yfir gjalddagaupphæð.");
+      }
+
+      const paymentFullyConfirmed = paymentConfirmedAfter.eq(paymentAmount);
+      const scheduleStatus = schedulePaidAfter.eq(scheduleAmount)
+        ? "PAID"
+        : schedulePaidAfter.gt(zero)
+          ? "PARTIALLY_PAID"
+          : "OPEN";
+
+      const bankConfirmedAfter = (
+        otherBankPayments._sum.amount ?? zero
+      ).plus(paymentFullyConfirmed ? paymentAmount : zero);
+
+      if (bankConfirmedAfter.gt(bankAmount)) {
+        throw new Error("Staðfestar greiðslutengingar fara yfir bankafærsluna.");
+      }
+
+      const bankFullyReconciled = bankConfirmedAfter.eq(bankAmount);
+
+      await tx.financialEventPaymentAllocation.update({
+        where: { id: allocation.id },
+        data: {
+          status: "CONFIRMED",
+          confirmedAt,
+        },
+      });
+
+      await tx.financialEventScheduleItem.update({
+        where: { id: scheduleItem.id },
+        data: {
+          paidAmount: schedulePaidAfter,
+          status: scheduleStatus,
+        },
+      });
+
+      if (paymentFullyConfirmed) {
+        await tx.financialEventPayment.update({
+          where: { id: payment.id },
+          data: {
+            status: "CONFIRMED",
+            confirmedAt,
+          },
+        });
+      }
+
+      if (bankFullyReconciled) {
+        await tx.bankTransaction.update({
+          where: { id: bankTransaction.id },
+          data: { status: "RECONCILED" },
+        });
+      }
+
+      await tx.auditEvent.create({
+        data: {
+          companyId,
+          userId,
+          entityType: "FinancialEventPaymentAllocation",
+          entityId: allocation.id,
+          action: "CONFIRM_PAYMENT_ALLOCATION",
+          parentEntityType: "FinancialEventPayment",
+          parentEntityId: payment.id,
+          source: "USER",
+          description: `Greiðsluúthlutun ${allocation.id} staðfest á gjalddaga ${scheduleItem.sequence}.`,
+          beforeData: {
+            allocationStatus: allocation.status,
+            paymentStatus: payment.status,
+            scheduleStatus: scheduleItem.status,
+            schedulePaidAmount: scheduleItem.paidAmount.toString(),
+            bankTransactionStatus: bankTransaction.status,
+          },
+          afterData: {
+            allocationStatus: "CONFIRMED",
+            paymentStatus: paymentFullyConfirmed ? "CONFIRMED" : payment.status,
+            scheduleStatus,
+            schedulePaidAmount: schedulePaidAfter.toString(),
+            bankTransactionStatus: bankFullyReconciled
+              ? "RECONCILED"
+              : bankTransaction.status,
+          },
+          metadata: {
+            eventId: event.id,
+            paymentId: payment.id,
+            scheduleItemId: scheduleItem.id,
+            bankTransactionId: bankTransaction.id,
+            allocationAmount: allocationAmount.toString(),
+            paymentConfirmedAmount: paymentConfirmedAfter.toString(),
+            bankConfirmedAmount: bankConfirmedAfter.toString(),
+            reconciliationVersion: "financial-event-payment-v1",
+          },
+        },
+      });
+
+      return {
+        allocationId: allocation.id,
+        paymentId: payment.id,
+        scheduleItemId: scheduleItem.id,
+        bankTransactionId: bankTransaction.id,
+        allocationStatus: "CONFIRMED",
+        paymentStatus: paymentFullyConfirmed ? "CONFIRMED" : payment.status,
+        scheduleStatus,
+        schedulePaidAmount: schedulePaidAfter.toString(),
+        bankTransactionStatus: bankFullyReconciled
+          ? "RECONCILED"
+          : bankTransaction.status,
+        bankAccountId: bankTransaction.bankAccountId,
+      };
+    },
+    { isolationLevel: Prisma.TransactionIsolationLevel.Serializable },
+  );
+
+  revalidatePath("/banki");
+  revalidatePath(`/banki/${result.bankAccountId}`);
+  revalidatePath("/innsyn");
+
+  return result;
 }
