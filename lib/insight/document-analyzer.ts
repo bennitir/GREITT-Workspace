@@ -169,7 +169,7 @@ async function prepareInsightSource(
 ): Promise<PreparedInsightSource> {
   const localPath = resolvePublicFilePath(filePath);
 
-  if (existsSync(localPath)) {
+  if (existsSync(/*turbopackIgnore: true*/ localPath)) {
     return { fullPath: localPath, source: "LOCAL" };
   }
 
@@ -702,7 +702,7 @@ export async function analyzeDocumentForInsight(
 
   if (isImage && fullPath) {
     const imageBuffer =
-      await readFile(fullPath);
+      await readFile(/*turbopackIgnore: true*/ fullPath);
 
     const mimeType =
       extension === ".png"
@@ -719,7 +719,7 @@ export async function analyzeDocumentForInsight(
     const uploadedFile =
       await openai.files.create({
         file: createReadStream(
-          fullPath,
+          /*turbopackIgnore: true*/ fullPath,
         ),
         purpose: "user_data",
       });
