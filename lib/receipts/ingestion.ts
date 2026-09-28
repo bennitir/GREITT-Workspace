@@ -4,7 +4,7 @@ import { extractTextFromPdfBuffer } from "@/lib/core/pdf-text";
 import { inspectCanonicalReceiptKnowledge } from "@/lib/insight/reconciliation";
 
 export const RECEIPT_PROCESSING_VERSION = "receipt-v5-data-first-page-split";
-export const DETERMINISTIC_RECEIPT_PURCHASE_LINE_VERSION = "pos-lines-v3";
+export const DETERMINISTIC_RECEIPT_PURCHASE_LINE_VERSION = "pos-lines-v4-fuel-decimals";
 
 export type ReceiptSourceSnapshot = {
   sourceText: string | null;
@@ -837,19 +837,37 @@ function parseReceiptBundleTableProductRow(
 
   const unitPrice = values[0] != null && values[0] > 0 ? values[0] : null;
   const quantityCandidate = values[1];
+  // Magn á POS-línum er ekki endilega heiltala. Eldsneyti er dæmigert dæmi:
+  // 26,06 l má aldrei detta út bara vegna þess að parserinn bjóst við stk.-magni.
   const quantity =
     quantityCandidate != null &&
     Number.isFinite(quantityCandidate) &&
     quantityCandidate > 0 &&
-    quantityCandidate <= 1000 &&
-    Math.abs(quantityCandidate - Math.round(quantityCandidate)) < 1e-9
+    quantityCandidate <= 100000
       ? quantityCandidate
       : null;
+
+  // Sum POS-snið prenta aðeins dálkinn „Magn“ en ekki mælieininguna sjálfa.
+  // Fyrir skýrt eldsneytisheiti má leiða „l“ deterministic, en aðeins ef
+  // prentað einingarverð × magn stemmir við prentaða línuheild innan lítils
+  // námundunarvikmarks. Þetta er almenn regla, ekki birgjasérkóði.
+  const normalizedDescription = normalizeIdentityText(description);
+  const looksLikeFuel = /\b(?:(?:diesel|disel|dizel)(?:olia|oliu|oliar)?|bensin|petrol|gasoline|eldsneyti|fuel)\b/.test(
+    normalizedDescription,
+  );
+  const fuelArithmeticMatches =
+    looksLikeFuel &&
+    quantity != null &&
+    unitPrice != null &&
+    lineTotal != null &&
+    Math.abs(unitPrice * quantity - lineTotal) <= Math.max(1, lineTotal * 0.001);
+  const unit = fuelArithmeticMatches ? "l" : null;
 
   return {
     description,
     supplierItemCode,
     quantity,
+    unit,
     unitPrice,
     lineTotal,
     stockCandidate: true,

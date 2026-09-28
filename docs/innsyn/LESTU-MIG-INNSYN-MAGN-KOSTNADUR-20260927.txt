@@ -1,0 +1,11 @@
+GLÖGGT – Innsýn magn/kostnaður á einingarverði – 27.09.2026
+
+Bætt við deterministic samantekt í einingarverðs-drill-down:
+- heildarmagn,
+- heildarkostnaður,
+- magnvegið meðalverð,
+- mánaðarlegt magn, kostnaður og magnvegið meðalverð.
+
+Engin Prisma-breyting.
+Ekkert nýtt AI-kall.
+Heildarkostnaður notar varðveitta lineTotal þegar hún er til, annars unitPrice × quantity.

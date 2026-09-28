@@ -1,0 +1,12 @@
+GLÖGGT – Innsýn þróunargraf, gagnamörk – 27.09.2026
+
+Ákvörðun / lagfæring:
+- Tímalínugraf má ekki teikna tóma mánuði sem 0 fyrir eða eftir raunveruleg gögn.
+- Graf byrjar við fyrsta mánuð með bókuðum færslum og stoppar við síðasta mánuð með bókuðum færslum.
+- Tómur mánuður inni á milli raunverulegra gagnamánuða verður rof í línunni, ekki tilbúinn núllpunktur.
+- Mánuður með raunverulegum bókunum má sýna 0 fyrir tekjur/gjöld ef sá mælikvarði er í raun 0.
+
+Tæknilegt:
+- BookedInsightMonth fékk hasBookedEntries.
+- InsightMixedOverview trim-ar leiðandi/eftirfarandi tóma mánuði og teiknar línur í samfelldum gagnasegmentum.
+- Engin Prisma breyting.

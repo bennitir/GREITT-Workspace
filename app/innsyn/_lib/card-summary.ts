@@ -21,15 +21,27 @@ export function buildCardReconciliationSummary(
   });
 
   let reconciledTransactions = 0;
-  let reconciledAmount = 0;
-  let unreconciledAmount = 0;
+  let purchaseAmount = 0;
+  let creditAmount = 0;
+  let reconciledAbsoluteAmount = 0;
+  let unreconciledAbsoluteAmount = 0;
 
   for (const transaction of selected) {
+    const absoluteAmount = Math.abs(transaction.amount);
+
+    // Kortainnflutningur varðveitir formerki yfirlitsins:
+    // neikvætt = kaup/úttekt, jákvætt = endurgreiðsla/inneign.
+    if (transaction.amount < 0) {
+      purchaseAmount += absoluteAmount;
+    } else {
+      creditAmount += transaction.amount;
+    }
+
     if (isReconciled(transaction.status)) {
       reconciledTransactions += 1;
-      reconciledAmount += transaction.amount;
+      reconciledAbsoluteAmount += absoluteAmount;
     } else {
-      unreconciledAmount += transaction.amount;
+      unreconciledAbsoluteAmount += absoluteAmount;
     }
   }
 
@@ -37,8 +49,10 @@ export function buildCardReconciliationSummary(
     totalTransactions: selected.length,
     reconciledTransactions,
     unreconciledTransactions: selected.length - reconciledTransactions,
-    totalAmount: reconciledAmount + unreconciledAmount,
-    reconciledAmount,
-    unreconciledAmount,
+    purchaseAmount,
+    creditAmount,
+    totalAbsoluteAmount: reconciledAbsoluteAmount + unreconciledAbsoluteAmount,
+    reconciledAbsoluteAmount,
+    unreconciledAbsoluteAmount,
   };
 }

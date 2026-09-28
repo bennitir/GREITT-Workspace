@@ -1,0 +1,34 @@
+GLÖGGT – INNSÝN DRILL-DOWN V1
+Dagsetning: 27.09.2026
+
+Tilgangur
+- Fyrsta rekjanlega sundurliðunin í /innsyn/ny.
+- Gjaldalykill og mótaðili verða smellanlegir.
+- Sama bókaða tala er sundurliðuð eftir mánuðum, gagnstæðri vídd og fylgiskjölum.
+
+Helstu skrár
+- app/innsyn/_lib/drilldown.ts
+- app/innsyn/_lib/booked-summary.ts
+- app/innsyn/_lib/load-summary.ts
+- app/innsyn/_lib/mixed-copy.ts
+- app/innsyn/_components/InsightMixedOverview.tsx
+- app/innsyn/ny/page.tsx
+- docs/leidbeiningar/innsyn/INNSYN.md
+- docs/innsyn/INNSYN-SJONRAEN-FORSKRIFT-V1-20260927.md
+
+Gögn og sannleikur
+- Aðeins expense-lyklar með entryRole=EXPENSE mynda gjaldadrill-down.
+- Mótaðiladrill-down notar nettó rekstrargjöld bókaðs skjals.
+- Kreditlínur halda neikvæðu áhrifunum.
+- Engin AI-ályktun er notuð til að búa til upphæðir.
+- Fylgiskjalalisti tengist bókuðu fylgiskjali með voucherNumber þegar það er tiltækt.
+
+Prófun
+1. Opna /innsyn/ny.
+2. Smella á 4910 eða annan gjaldalykil.
+3. Staðfesta að heild drill-down passi við línuna sem smellt var á.
+4. Staðfesta mánuði og mótaðila.
+5. Opna eitt fylgiskjal og staðfesta að rétt bókað skjal opnist.
+6. Loka sundurliðun.
+7. Smella á Olís eða annan mótaðila og staðfesta gjaldalyklaskiptingu.
+8. Skipta um tímabil með drill-down opið og staðfesta að sama viðfangsefni haldist valið ef gögn eru til.

@@ -1,0 +1,23 @@
+GLÖGGT – Innsýn: almenn semantic framsetning mælieininga
+Dagsetning: 27.09.2026
+
+Tilgangur
+- Staðfesta að deterministic einingarverðskjarninn sé ekki sérlausn fyrir eldsneyti.
+- Gera klst., stk., kg, kWh, km, m, m² og m³ skiljanleg í sömu stjórnendasýn.
+
+Breyting
+- Bætt við insightUnitSemanticCopy() í mixed-copy.ts.
+- Einingarverðs-drill-down notar nú einingamiðuð heiti fyrir heildarmagn, mánaðarsýn, magnáhrif og magnbreytingu.
+- Dæmi: klst. → Heildartímar/Tímaáhrif; stk. → Heildarfjöldi/Fjöldaáhrif.
+- Allar fjórar UI-tungur prófunarsýnar hafa fallback og semantic heiti.
+
+Óbreytt
+- buildUnitPriceSummary() og deterministic stærðfræðin eru óbreytt.
+- Engin Prisma-breyting.
+- Ekkert nýtt AI-kall.
+- Engin bókun eða vörulína er breytt.
+
+Prófun
+- Prófa sérstaklega klst.-línu með tveimur dagsetningum: vegið meðalverð, heildartímar, mánaðarlegir tímar og Tímaáhrif.
+- Prófa sérstaklega stk.-línu: Heildarfjöldi og Fjöldaáhrif.
+- Keyra npx tsc --noEmit í C:\GLÖGGT.

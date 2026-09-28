@@ -1,0 +1,19 @@
+GLÖGGT – Innsýn / eldsneyti – decimal magn
+27. september 2026
+
+Raunpróf:
+- Olís
+- Dieselolía sjálfsafgr.
+- Verð 218,20
+- Magn 26,06
+- Samtals 5.686,00
+
+Orsök:
+Eldri deterministic POS-parser tók aðeins magn sem var heiltala. 26,06 féll því út sem quantity=null. Parserinn setti heldur ekki implicit lítraeiningu á skýra eldsneytislínu.
+
+Lagfæring:
+1. Decimal quantity er leyft á POS-línum.
+2. Skýr eldsneytislína fær unit="l" þegar unitPrice × quantity stemmir við lineTotal innan námundunarvikmarks.
+3. Parser-version hækkar í pos-lines-v4-fuel-decimals.
+4. Innsýn hefur þröngt backward-compatible deterministic fallback fyrir eldri eldsneytislínur: ef prentað unitPrice + lineTotal eru til og description er ótvírætt fuel má endurreikna 2ja aukastafa lítramagn, aðeins ef niðurstaðan stemmir innan vikmarka.
+5. Ekkert AI-kall. Engin Prisma-breyting.

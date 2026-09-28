@@ -563,6 +563,7 @@ export default async function InnsynPage() {
     receipts,
     entities,
     facts,
+    insuranceFacts,
     incomeFacts,
     financialEvents,
     processingJobs,
@@ -686,6 +687,50 @@ export default async function InnsynPage() {
         createdAt: "desc",
       },
       take: 250,
+      select: {
+        id: true,
+        receiptId: true,
+        documentId: true,
+        entityId: true,
+        eventId: true,
+        factType: true,
+        label: true,
+        numberValue: true,
+        textValue: true,
+        dateValue: true,
+        booleanValue: true,
+        unit: true,
+        currency: true,
+        confidence: true,
+        source: true,
+        periodStart: true,
+        periodEnd: true,
+        createdAt: true,
+      },
+    }),
+
+    // Tryggingasagan má ekki ráðast af almennu `take: 250` glugganum.
+    // Þegar fleiri Innsýn-staðreyndir bætast við geta eldri en enn gild
+    // Sjóvá-skírteini annars horfið úr tryggingaspjaldinu þó gögnin séu
+    // enn til. Lesum því tryggingastaðreyndir markvisst og án handahófskennds
+    // heildartakmarks; isInsuranceFact() síar síðan endanlega í UI-laginu.
+    prisma.insightFact.findMany({
+      where: {
+        companyId,
+        OR: [
+          { factType: { startsWith: "INSURANCE_" } },
+          { factType: { in: ["PREMIUM", "COVERAGE", "DEDUCTIBLE"] } },
+          { label: { contains: "trygg", mode: "insensitive" } },
+          { label: { contains: "iðgjald", mode: "insensitive" } },
+          { label: { contains: "idgjald", mode: "insensitive" } },
+          { label: { contains: "kask", mode: "insensitive" } },
+          { label: { contains: "áhætta", mode: "insensitive" } },
+          { label: { contains: "ahaetta", mode: "insensitive" } },
+        ],
+      },
+      orderBy: {
+        createdAt: "desc",
+      },
       select: {
         id: true,
         receiptId: true,
@@ -1715,7 +1760,7 @@ export default async function InnsynPage() {
     }
   >();
 
-  for (const fact of facts) {
+  for (const fact of insuranceFacts) {
     if (!isInsuranceFact(fact)) {
       continue;
     }
@@ -1767,8 +1812,35 @@ export default async function InnsynPage() {
         a.latestCreatedAt.getTime()
     );
 
+  const insurancePremiumMovementTypesForOverview = new Set([
+    "INSURANCE_PREMIUM",
+    "INSURANCE_PREMIUM_ADJUSTMENT",
+    "INSURANCE_PREMIUM_REVERSAL",
+  ]);
+
+  const insurancePremiumMovementCount = (document: (typeof insuranceDocuments)[number]) =>
+    document.facts.filter(
+      (fact) =>
+        fact.numberValue !== null &&
+        insurancePremiumMovementTypesForOverview.has(
+          normalizeFactType(fact.factType)
+        )
+    ).length;
+
+  // Stakt nýtt tryggingaskjal (t.d. ein greiðslukvittun eða eitt
+  // barnatryggingarskjal) má ekki ýta heilu fjölskírteina-yfirliti úr sýn.
+  // Veljum nýjasta skjalið sem ber raunverulegt fjölskírteina-yfirlit;
+  // ef fyrirtækið hefur aðeins 1–2 skírteini fellum við aftur á nýjasta
+  // skjal með iðgjaldahreyfingu og að lokum nýjasta tryggingaskjalið.
   const latestInsurance =
-    insuranceDocuments[0] ?? null;
+    insuranceDocuments.find(
+      (document) => insurancePremiumMovementCount(document) >= 3
+    ) ??
+    insuranceDocuments.find(
+      (document) => insurancePremiumMovementCount(document) > 0
+    ) ??
+    insuranceDocuments[0] ??
+    null;
 
   const latestInsuranceKey =
     latestInsurance

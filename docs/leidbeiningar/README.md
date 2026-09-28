@@ -23,3 +23,8 @@ Markmiðið er að skrá raunverulegt vinnulag jafnóðum og það er staðfest 
 ## Innsýn
 
 - [Innsýn – skildu reksturinn](innsyn/INNSYN.md)
+
+
+## Banki
+
+- [Banki – bankayfirlit og kortayfirlit](banki/BANKI.md)

@@ -1,0 +1,30 @@
+GLÖGGT – Innsýn deterministic einingarverð v1 – 27.09.2026
+
+Tilgangur
+- Fylgjast með verði á mælieiningu úr þegar varðveittum canonical vörulínum.
+- Engin ný AI-köll eru gerð í greiningunni.
+
+Kóði
+- app/innsyn/_lib/unit-price.ts
+  - les canonicalExtraction.purchaseLines úr extractionMetadata,
+  - normalíserar studdar mælieiningar,
+  - notar explicit unitPrice eða leiðir af lineTotal/quantity,
+  - hópar sambærilegar línur eftir vöruheiti + canonical einingu,
+  - reiknar nýjasta/meðal/lágmark/hámark og breytingu frá síðustu mælingu.
+- app/innsyn/_lib/load-summary.ts
+  - sækir extractionMetadata með bókuðum skjölum,
+  - bætir unitPrices við LoadedInsightSummary.
+- app/innsyn/_components/InsightMixedOverview.tsx
+  - sýnir Einingarverð sem KNOWN lag,
+  - sýnir aðeins trendkort þegar 2+ mælingar eru til.
+
+Truth-state
+- Einingarverð er ekki ný bókhaldsstaðreynd.
+- Það er þekkt úr vörulínum sem liggja fyrir í bókuðu/afgreiddu skjali.
+- Vantar magn/einingu/verð er línunni sleppt; ekkert er giskað.
+
+Studdar canonical einingar í v1
+- l, kg, stk., m, m², m³, kWh, klst., km.
+- algengar minni/stærri einingar eru umbreyttar deterministic þegar öruggt er.
+
+Engin Prisma migration.

@@ -143,10 +143,10 @@ export default async function FylgiskjolPage() {
       companyName: document.receipt.company.name,
       date: document.date,
       amount: document.totalAmount ?? 0,
-      statusText: document.reviewedAt
-        ? "Yfirfarið"
-        : document.needsAttentionAt
-          ? "NEEDS_ATTENTION"
+      statusText: document.needsAttentionAt
+        ? "NEEDS_ATTENTION"
+        : document.reviewedAt
+          ? "Yfirfarið"
           : document.duplicateMarkedAt
             ? "DUPLICATE_CANDIDATE"
             : "Til yfirferðar",

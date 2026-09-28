@@ -1,0 +1,47 @@
+GLÖGGT – Innsýn loadInsightSummary – 27.09.2026
+
+Staða
+- Næsta örugga lag eftir commit 341cda0.
+- Engin Prisma migration.
+- Núverandi app/innsyn/page.tsx er enn óbreytt.
+- Engin ný UI-sýn verður virk við þetta skref eitt og sér.
+
+Nýtt
+1. app/innsyn/_lib/load-summary.ts
+   - loadInsightSummary(companyId, period)
+   - sækir aðeins valið tímabil + samanburðartímabil, ekki alla söguna.
+   - sameinar bókað, bankagögn og greiðslukort í eitt bounded summary-lag.
+
+2. app/innsyn/_lib/bank-summary.ts
+   - deterministic bankasamantekt:
+     * fjöldi færslna,
+     * brúttó innstreymi,
+     * brúttó útstreymi,
+     * nettó peningaflæði,
+     * óafstemmdar færslur og absolute fjárhæð þeirra.
+
+3. card-summary.ts styrkt
+   - reconciliation notar absolute fjárhæðir svo endurgreiðslur felli ekki niður kaup í coverage-tölu.
+   - kaup og endurgreiðslur eru varðveitt sérstaklega.
+
+4. Mikilvæg bókunarregla í loader
+   - bókuð AI-skjöl eru lesin úr AiDetectedDocument.bookingEntries.
+   - handvirk fylgiskjöl eru lesin úr Receipt.entries aðeins þegar Receipt.voucherNumber er til.
+   - ástæða: eitt Receipt/frumskjal getur innihaldið fleiri en eitt bókað AiDetectedDocument. Að lesa bara Receipt.entries sem eina færslu getur ruglað dagsetningu/mótaðila og verður hættulegt í drill-down.
+   - þessi leið forðast einnig að telja AI-bókanir tvisvar.
+
+5. booked-summary.ts
+   - source-id er nú string (document:123 / receipt:456) svo evidence/drill-down geti síðar varðveitt upprunann án id-árekstra.
+
+Næsta skref
+- Tengja loadInsightSummary í nýja Blönduðu Innsýn-sýnina án þess að flytja gömlu 3.700 línu sérreglurnar í einu.
+- Byrja á:
+  * stjórnendayfirliti,
+  * mánaðarþróun tekna/gjalda/niðurstöðu,
+  * helstu gjaldalyklum og mótaðilum,
+  * banka coverage,
+  * VISA/korta coverage.
+- Síðan bæta evidence/drill-down og FinancialEventScheduleItem við.
+
+Próf eftir overlay í C:\GLÖGGT
+- npx tsc --noEmit

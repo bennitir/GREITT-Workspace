@@ -256,3 +256,72 @@ Framsetning þarf að segja skýrt hvort niðurstaða sé byggð á bókun, bank
 Kjarnaprófið stendur áfram:
 
 > Grípur þetta mig? Skil ég reksturinn á nokkrum sekúndum?
+
+## 10. Tímabilsafmarkað loader-lag – 27.09.2026
+
+Næsta lag eftir presentation-grunninn er `loadInsightSummary(companyId, period)`.
+
+Loaderinn er viljandi takmarkaður við valið tímabil og jafnlanga samanburðartímabilið. Hann á ekki að endurtaka eldri hegðun þar sem öll saga fylgiskjala/bankafærslna er lesin við hverja opnun.
+
+Fyrsta útgáfa sameinar:
+
+- bókaðar færslur,
+- bankafærslur,
+- greiðslukortafærslur.
+
+### Bókuð gögn – mikilvæg upprunaregla
+
+Eitt `Receipt` getur verið stórt frumskjal/PDF sem inniheldur fleiri en eitt greint og bókað `AiDetectedDocument`. Þess vegna er ekki öruggt að nota `Receipt.entries` sem eina dagsetta/mótaðilatengda einingu fyrir nýja Innsýn.
+
+Nýja summary-lagið les því:
+
+- bókuð AI-skjöl úr `AiDetectedDocument.bookingEntries` þegar `voucherNumber` og `approvedAt` eru til,
+- handvirk fylgiskjöl úr `Receipt.entries` aðeins þegar `Receipt.voucherNumber` er til.
+
+Þetta varðveitir rétta dagsetningu og mótaðila fyrir hvert bókað skjal og kemur í veg fyrir tvítalningu.
+
+### Banki og kort
+
+Bankasamantekt varðveitir brúttó innstreymi, brúttó útstreymi og nettóflæði sem aðskildar stærðir. Kortaafstemming notar absolute fjárhæð fyrir coverage svo endurgreiðsla felli ekki út kaup í heildarafstemmingu; kaup og inneignir eru jafnframt sundurliðuð.
+
+## 11. Fyrsta raunverulega Blönduða sýnin – 27.09.2026
+
+Fyrsta UI-sýnin yfir nýja summary-lagið er nú byggð sem aðskilin prófunarleið undir:
+
+`/innsyn/ny`
+
+Markmiðið er að sannreyna tölur, sjónræna röð og stjórnendaupplifun áður en nýja sýnin tekur yfir `/innsyn`.
+
+Sýnin notar aðeins `loadInsightSummary(...)` og þarf því ekki að lesa gamla stóra Innsýn-gagnasafnið eða keyra eldri ársgreininguna til að teikna fyrsta skjá.
+
+V1 sýnir:
+
+- deterministic stjórnendafrásögn úr bókuðum tölum og afstemmingarstöðu,
+- tekjur, rekstrargjöld og niðurstöðu með samanburði þegar sambærileg gögn eru til,
+- eitt sameiginlegt þróunargraf eftir mánuðum,
+- stærstu bókuðu gjaldalykla,
+- stærstu mótaðila eftir bókuðum rekstrarkostnaði,
+- sérmerkt bankagögn og kortagögn,
+- gagnacoverage fyrir valið tímabil,
+- truth-state skýringu: Bókað / Þekkt / Bíður staðfestingar.
+
+### Mikilvæg leiðrétting í loader
+
+Manual `Receipt` er aðeins tekið inn þegar það hefur **engin** `AiDetectedDocument` tengd við sig. Þetta fylgir sömu canonical reglu og bókaða skjalasafnið og kemur í veg fyrir að bókun úr greindu skjali og móður-Receipt verði talin tvisvar.
+
+`coverage` telur nú aðeins gögn **innan valda aðaltímabilsins**, ekki samanlagt aðaltímabil + samanburðartímabil.
+
+### Tímabil
+
+Tímabilshelperinn var hertur áður en UI var tengt:
+
+- `Þessi mánuður`, `Þessi ársfjórðungur` og `Þetta ár` eru nú **til dagsins í dag**, ekki út í framtíðina,
+- samanburður þeirra er almanakslega sambærilegur við fyrra tímabil,
+- `Síðustu 12 mánuðir` bera saman við sömu rúllandi 12 mánaða glugga ári fyrr,
+- sérvalið tímabil heldur jafnlöngum fyrri samanburði.
+
+Þetta kemur í veg fyrir að núverandi mánuður/ár líti út fyrir að hafa hrunið bara vegna framtíðardaga án gagna.
+
+### Af hverju sérstök leið fyrst?
+
+Gamla `/innsyn` er víðtæk djúpgreining sem enn inniheldur verðmæta vinnu. Hún er ekki rifin niður í fyrsta UI-áfanga. `/innsyn/ny` leyfir beina A/B-sannprófun á nýju stjórnendasýninni án þess að raska núverandi rannsóknarflæði.

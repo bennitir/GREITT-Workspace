@@ -6814,6 +6814,19 @@ export async function approveDetectedDocument(
   manualVoucherNumber?: number,
   allowPossibleDuplicate = false
 ): Promise<ApproveDetectedDocumentResult> {
+  const perfStartedAt = Date.now();
+  let perfLastAt = perfStartedAt;
+  const perf = (label: string) => {
+    if (process.env.GLOGGT_PERF_LOG !== "1") return;
+    const now = Date.now();
+    console.log(
+      `[GLÖGGT PERF][book:${documentId}] ${label}: +${now - perfLastAt} ms (total ${now - perfStartedAt} ms)`,
+    );
+    perfLastAt = now;
+  };
+
+  perf("start");
+
   const document = await prisma.aiDetectedDocument.findUnique({
     where: {
       id: documentId,
@@ -6823,6 +6836,7 @@ export async function approveDetectedDocument(
       receipt: true,
     },
   });
+  perf("load document");
 
   if (!document) {
     throw new Error("Greint fylgiskjal fannst ekki.");
@@ -6831,6 +6845,7 @@ export async function approveDetectedDocument(
   await requireCompanyBookAccess(document.receipt.companyId);
 
   const user = await getEffectiveUser();
+  perf("access + user");
 
   if (!user) {
     throw new Error("Innskráning er nauðsynleg.");
@@ -6873,6 +6888,8 @@ if (!document.date) {
   );
 }
 
+  perf("prechecks");
+
   try {
     await prisma.$transaction(async (tx) => {
     const company = await tx.company.findUnique({
@@ -6890,6 +6907,7 @@ if (!document.date) {
       company,
       document.bookingEntries
     );
+    perf("tx company + VAT");
 // Öryggisvörn gegn tvíbókun sama fylgiskjals
 if (document.receiptNumber) {
   if (
@@ -6945,6 +6963,8 @@ if (document.receiptNumber) {
   }
 }
 
+perf("tx duplicate checks");
+
 // Tímaröð er dagsetningarvörn, ekki tímastimpilsvörn.
 // Skjöl sama almanaksdag mega bókast í hvaða röð sem er.
 // Skjöl sem bókari hefur vísvitandi sett til hliðar (Þarf nánari skoðun)
@@ -6982,6 +7002,8 @@ if (olderUnbookedDocument?.date) {
     `OLDER_UNBOOKED|${olderUnbookedDocument.receiptId}|${olderUnbookedDocument.id}|${olderUnbookedDocument.date.toISOString()}`
   );
 }
+
+    perf("tx chronology check");
 
     let voucherNumber: number;
 
@@ -7041,6 +7063,8 @@ if (usedByAi || usedByManual) {
       );
     }
 
+    perf("tx voucher allocation + uniqueness + reservation");
+
     await tx.receiptEntry.createMany({
       data: document.bookingEntries.map(
         (entry) => ({
@@ -7085,6 +7109,8 @@ if (hasVatActivity && !isVatSettlement) {
     },
   });
 }
+
+    perf("tx receipt entries + VAT period");
 
     const approvedAt = new Date();
 
@@ -7133,6 +7159,8 @@ if (hasVatActivity && !isVatSettlement) {
       },
     });
 
+perf("tx document + audit");
+
 const remainingUnapproved =
   await tx.aiDetectedDocument.count({
     where: {
@@ -7154,10 +7182,15 @@ if (remainingUnapproved === 0) {
       status: "APPROVED",
     },
   });
+  perf("tx remaining count + receipt status");
 
   await archiveReceiptFile(document.receiptId);
+  perf("tx archiveReceiptFile");
 }
+
+perf("tx finalize receipt");
     });
+    perf("transaction committed");
   } catch (error) {
     const message = error instanceof Error ? error.message : "";
 
@@ -7200,6 +7233,7 @@ if (remainingUnapproved === 0) {
   );
   revalidatePath("/fylgiskjol");
   revalidatePath("/");
+  perf("revalidate paths");
 
   return { status: "BOOKED" };
 }
@@ -8347,11 +8381,10 @@ export async function markReceiptNeedsAttention(
     if (
       document.approvedAt ||
       document.voucherNumber != null ||
-      document.reviewedAt ||
       document.disposedAt ||
       document.disposition
     ) {
-      throw new Error("Ekki er hægt að setja afgreitt eða yfirfarið skjal til hliðar.");
+      throw new Error("Ekki er hægt að setja endanlega afgreitt skjal til hliðar.");
     }
 
     await prisma.aiDetectedDocument.update({

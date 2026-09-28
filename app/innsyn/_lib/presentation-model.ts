@@ -97,13 +97,27 @@ export type InsightAttentionItem = {
   evidence: InsightEvidenceLink[];
 };
 
+export type InsightBankActivitySummary = {
+  totalTransactions: number;
+  grossInflows: number;
+  grossOutflows: number;
+  netCashFlow: number;
+  unreconciledTransactions: number;
+  unreconciledAbsoluteAmount: number;
+};
+
 export type InsightCardReconciliationSummary = {
   totalTransactions: number;
   reconciledTransactions: number;
   unreconciledTransactions: number;
-  totalAmount: number;
-  reconciledAmount: number;
-  unreconciledAmount: number;
+  /** Purchases/charges represented as a positive magnitude. */
+  purchaseAmount: number;
+  /** Refunds/credits represented as a positive magnitude. */
+  creditAmount: number;
+  /** Sum of absolute transaction values; useful for reconciliation coverage. */
+  totalAbsoluteAmount: number;
+  reconciledAbsoluteAmount: number;
+  unreconciledAbsoluteAmount: number;
 };
 
 export type InsightPresentationModel = {
@@ -128,6 +142,9 @@ export type InsightPresentationModel = {
 
   /** Upcoming obligations, anomalies and other items worth attention. */
   attention: InsightAttentionItem[];
+
+  /** Included when bank data exists for the selected period. */
+  bankActivity?: InsightBankActivitySummary;
 
   /** Included when payment-card data exists for the selected period. */
   cardReconciliation?: InsightCardReconciliationSummary;

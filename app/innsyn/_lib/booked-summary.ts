@@ -14,7 +14,10 @@ export type BookedInsightEntry = {
 };
 
 export type BookedInsightReceipt = {
-  id: number;
+  id: string;
+  receiptId: number | null;
+  documentId: number | null;
+  voucherNumber: number | null;
   date: Date | null;
   merchantName: string | null;
   description: string | null;
@@ -26,6 +29,7 @@ export type BookedInsightMonth = {
   revenue: number;
   expenses: number;
   result: number;
+  hasBookedEntries: boolean;
 };
 
 export type BookedInsightBreakdown = {
@@ -72,11 +76,11 @@ function enumerateMonths(start: Date, end: Date) {
 }
 
 function addBreakdown(
-  map: Map<string, { label: string; value: number; receiptIds: Set<number> }>,
+  map: Map<string, { label: string; value: number; receiptIds: Set<string> }>,
   id: string,
   label: string,
   value: number,
-  receiptId: number,
+  receiptId: string,
 ) {
   if (Math.abs(value) < 0.005) return;
   const current = map.get(id);
@@ -109,17 +113,17 @@ export function buildBookedInsightSummary(
   const monthMap = new Map(
     enumerateMonths(period.start, period.end).map((key) => [
       key,
-      { periodKey: key, revenue: 0, expenses: 0, result: 0 },
+      { periodKey: key, revenue: 0, expenses: 0, result: 0, hasBookedEntries: false },
     ]),
   );
 
   const expenseAccountMap = new Map<
     string,
-    { label: string; value: number; receiptIds: Set<number> }
+    { label: string; value: number; receiptIds: Set<string> }
   >();
   const expenseMerchantMap = new Map<
     string,
-    { label: string; value: number; receiptIds: Set<number> }
+    { label: string; value: number; receiptIds: Set<string> }
   >();
 
   let revenue = 0;
@@ -131,6 +135,7 @@ export function buildBookedInsightSummary(
     if (!inPeriod(receipt.date, period) || !receipt.date) continue;
 
     const month = monthMap.get(monthKey(receipt.date));
+    if (month && receipt.entries.length > 0) month.hasBookedEntries = true;
     let receiptExpense = 0;
 
     for (const entry of receipt.entries) {
@@ -183,7 +188,7 @@ export function buildBookedInsightSummary(
   }));
 
   const toRows = (
-    map: Map<string, { label: string; value: number; receiptIds: Set<number> }>,
+    map: Map<string, { label: string; value: number; receiptIds: Set<string> }>,
   ): BookedInsightBreakdown[] =>
     Array.from(map.entries())
       .map(([id, item]) => ({

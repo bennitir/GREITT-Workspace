@@ -148,8 +148,22 @@ export default async function ReceiptPage({
   params: Promise<{ id: string }>;
   searchParams: Promise<{ document?: string; insightPrivacy?: string }>;
 }) {
+  const perfStartedAt = Date.now();
+  let perfLastAt = perfStartedAt;
+  let perfScope = "receipt";
+  const perf = (label: string) => {
+    if (process.env.GLOGGT_PERF_LOG !== "1") return;
+    const now = Date.now();
+    console.log(
+      `[GLÖGGT PERF][page:${perfScope}] ${label}: +${now - perfLastAt} ms (total ${now - perfStartedAt} ms)`,
+    );
+    perfLastAt = now;
+  };
+
+  perf("start");
     const cookieStore = await cookies();
   const interfaceLanguage = await getCurrentInterfaceLanguage();
+  perf("cookies + interface language");
   const t = uiText(interfaceLanguage);
   const printT = receiptPrintText(interfaceLanguage);
   const activeUserId = cookieStore.get("activeUserId")?.value;
@@ -177,9 +191,11 @@ const accounts = await prisma.account.findMany({
     number: "asc",
   },
 });
+perf("accounts");
 
 
 const companyAccess = await getCompanyAccess(companyId);
+perf("company access");
 const canBook = companyAccess.canBook ?? false;
 const canDelete = companyAccess.canDelete ?? false;
 const canEdit = companyAccess.canWrite ?? false;
@@ -191,13 +207,16 @@ const canEdit = companyAccess.canWrite ?? false;
         },
       })
     : null;
+  perf("active user");
 
     const { id } = await params;
+  perfScope = `receipt:${id}`;
   
   const {
     document: documentParam,
     insightPrivacy: insightPrivacyParam,
   } = await searchParams;
+  perf("params + search params");
 
   const selectedDocumentId = documentParam
     ? Number(documentParam)
@@ -277,6 +296,7 @@ const canEdit = companyAccess.canWrite ?? false;
     },
   },
 });
+perf("receipt graph query");
 if (!receipt) {
   notFound();
 }
@@ -314,6 +334,7 @@ const [receiptAuditEvents, receiptAiUsage] = await Promise.all([
     },
   }),
 ]);
+perf("audit + AI usage");
 
 
 const traceUserIds = Array.from(new Set(receipt.aiDetectedDocuments.flatMap((document) =>
@@ -323,6 +344,7 @@ const traceUsers = traceUserIds.length ? await prisma.user.findMany({
   where: { id: { in: traceUserIds } },
   select: { id: true, name: true },
 }) : [];
+perf("trace users");
 const traceUserNameById = new Map(traceUsers.map((user) => [user.id, user.name]));
 
 const auditActionLabels: Record<string, string> = {
@@ -438,8 +460,10 @@ if (receipt.storagePath) {
     originalFileUrl = data.signedUrl;
   }
 }
+perf("signed source URL");
 
 const moduleSettings = await getCompanyModuleSettings(receipt.companyId);
+perf("module settings");
 
 const enabledModuleIds = getEnabledCompanyModules(moduleSettings).map(
   (module) => module.id,
@@ -464,6 +488,7 @@ const [inventoryItems, inventoryLocations] = inventoryEnabled
       }),
     ])
   : [[], []];
+perf("inventory lists");
 
 if (activeUser && activeUser.role !== "ADMIN") {
   const hasAccess = await prisma.userCompany.findFirst({
@@ -478,6 +503,7 @@ if (activeUser && activeUser.role !== "ADMIN") {
     notFound();
   }
 }
+perf("secondary access check");
   const selectedDocumentFromParam = selectedDocumentId
     ? receipt.aiDetectedDocuments.find(
         (document) => document.id === selectedDocumentId,
@@ -571,6 +597,7 @@ const nextCompanyReviewDocument = selectedDocument
       select: { id: true, receiptId: true },
     })
   : null;
+perf("next review lookup / ready to render");
   
     return (
   <main className="w-full max-w-[1400px] mx-auto p-4">
@@ -2142,9 +2169,57 @@ const nextCompanyReviewDocument = selectedDocument
   </>
 ) : document.reviewedAt ? (
   <>
-    <div className="mt-3 rounded border border-green-300 bg-green-50 p-3 text-green-700">
-      ✓ Fylgiskjal yfirfarið
+    <div
+      className={
+        document.needsAttentionAt
+          ? "mt-3 rounded border border-amber-300 bg-amber-50 p-3 text-amber-900"
+          : "mt-3 rounded border border-green-300 bg-green-50 p-3 text-green-700"
+      }
+    >
+      {document.needsAttentionAt
+        ? t.needsAttentionDeferred
+        : "✓ Fylgiskjal yfirfarið"}
     </div>
+
+    {canBook &&
+      (document.needsAttentionAt ? (
+        <form
+          action={async () => {
+            "use server";
+            await restoreReceiptFromNeedsAttention(receipt.id, document.id);
+          }}
+          className="mt-3 rounded border border-amber-200 bg-amber-50 p-3"
+        >
+          <p className="text-sm text-amber-900">
+            {t.deferredForAttentionHelp}
+          </p>
+          <button
+            type="submit"
+            className="mt-2 rounded border border-amber-500 bg-white px-4 py-2 font-semibold text-amber-800 hover:bg-amber-100"
+          >
+            {t.restoreToReview}
+          </button>
+        </form>
+      ) : (
+        <form
+          action={async () => {
+            "use server";
+            await markReceiptNeedsAttention(receipt.id, document.id);
+            redirect("/fylgiskjol");
+          }}
+          className="mt-3"
+        >
+          <button
+            type="submit"
+            className="rounded bg-amber-500 px-4 py-2 font-semibold text-white hover:bg-amber-600"
+          >
+            {t.deferForAttention}
+          </button>
+          <p className="mt-1 text-xs text-slate-600">
+            {t.deferForAttentionHelp}
+          </p>
+        </form>
+      ))}
     {(() => {
       const nextDocument = getNextUnresolvedDocument(document.id);
       return nextDocument ? (

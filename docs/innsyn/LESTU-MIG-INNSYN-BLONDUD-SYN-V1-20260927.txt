@@ -1,0 +1,44 @@
+GLÖGGT – Innsýn Blönduð sýn v1
+Dagsetning: 27.09.2026
+
+Markmið
+- Tengja fyrsta raunverulega UI-ið ofan á loadInsightSummary.
+- Prófa nýja stjórnendasýn án þess að raska gömlu /innsyn djúpgreiningunni.
+
+Ný leið
+- /innsyn/ny
+
+Nýjar skrár
+- app/innsyn/ny/page.tsx
+- app/innsyn/_components/InsightMixedOverview.tsx
+- app/innsyn/_lib/mixed-view.ts
+- app/innsyn/_lib/mixed-copy.ts
+
+Breyttar skrár
+- app/innsyn/_lib/period.ts
+- app/innsyn/_lib/load-summary.ts
+- docs/innsyn/INNSYN-KORT-OG-ARKITEKTUR-20260927.md
+- docs/innsyn/INNSYN-SJONRAEN-FORSKRIFT-V1-20260927.md
+- docs/leidbeiningar/innsyn/INNSYN.md
+
+Mikilvægar gagnaleiðréttingar
+1. Manual Receipt er aðeins talið með ef aiDetectedDocuments er tómt. Þetta kemur í veg fyrir tvítalningu.
+2. Coverage telur aðeins aðaltímabilið, ekki samanburðargluggann líka.
+3. Núverandi mánuður/ársfjórðungur/ár er til dagsins í dag og samanburður er almanakslega sambærilegur.
+
+UI v1
+- Blönduð sýn er virk.
+- Myndræn / Tölur / Skýring eru merkt sem næstu skref en ekki virkjuð.
+- Deterministic stjórnendafrásögn.
+- Tekjur/gjöld/niðurstaða + samanburður.
+- Eitt SVG þróunargraf.
+- Gjaldalyklar + mótaðilar sem láréttar súlur.
+- Banki/kort sérmerkt sem ekki-bókaður sannleikur þar til staðfesting liggur fyrir.
+
+Próf eftir innsetningu
+1. npx tsc --noEmit
+2. Opna /innsyn/ny hjá Sturlu.
+3. Prófa tímabilsval.
+4. Bera heildartekjur/gjöld við bókuð gögn.
+5. Staðfesta að banki/kort séu ekki lögð saman við bókhaldsniðurstöðu.
+6. Athuga að gömul /innsyn sé óbreytt.

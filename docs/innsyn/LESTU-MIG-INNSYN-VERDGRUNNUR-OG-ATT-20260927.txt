@@ -1,0 +1,15 @@
+GLÖGGT – Innsýn einingarverð: verðgrunnur og átt
+27.09.2026
+
+Vandamál sem kom í ljós í klst.-prófi:
+- 66 klst. × 10.000 kr./klst. birtist með 818.400 kr. línuheild (með VSK),
+- 76 klst. × 10.000 kr./klst. birtist með 760.000 kr. línuheild (án VSK),
+- þar með varð vegið meðalverð og verðáhrif röng þótt einingarverðið væri óbreytt.
+
+Lagfæring:
+1. Þegar explicit einingarverð er til er canonical greiningarverðmæti línu = magn × einingarverð.
+2. Línuheild úr frumgagni er aðeins fallback þegar einingarverð er dregið af línuheild.
+3. Sala/kaup eru aðgreind deterministic út frá bókuðum reikningslyklum (REVENUE/EXPENSE).
+4. Sama vara/þjónusta er ekki sameinuð milli SALE/PURCHASE/UNKNOWN.
+5. UI segir Heildartekjur/Tekjubreyting fyrir sölu, Heildarkostnaður/Kostnaðarbreyting fyrir kaup og hlutlaust línuverðmæti ef átt er óviss.
+6. Engin Prisma-breyting og ekkert nýtt AI-kall.

@@ -1,0 +1,13 @@
+GLÖGGT – Innsýn einingarverð drill-down
+Dagsetning: 27.09.2026
+
+Breyting:
+- Einingarverðskort eru smellanleg í /innsyn/ny.
+- Valið kort opnar rekjanlega sundurliðun með nýjasta/meðal/lágmarks/hámarksverði.
+- Hver undirliggjandi vörulína sýnir dagsetningu, seljanda, magn, mælieiningu, einingarverð og línuheild.
+- Uppruni einingarverðs er merktur explicit vs deterministic derived.
+- Þegar bókað fylgiskjal er tiltækt má opna það beint úr sundurliðun.
+- Ekkert nýtt AI-kall og engin Prisma-breyting.
+
+Öryggisregla:
+One-off þjónustulínur eins og möguleg verkefna-/staðarlýsing eru ekki faldar með ágiskunarheuristic. Rekja skal fyrst niður í frumgagn og festa síðan deterministic síureglu ef mynstrið er staðfest.

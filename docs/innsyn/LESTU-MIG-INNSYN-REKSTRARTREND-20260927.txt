@@ -1,0 +1,29 @@
+GLÖGGT – Innsýn rekstrarþróun / tímaskekkja
+27. september 2026
+
+Ástæða:
+Mánaðarlína bókaðrar niðurstöðu gat gefið ranga stjórnendamynd þegar tekjureikningar komu á óreglulegum dagsetningum. Dæmið hjá Sturlu sýndi háa tekjufærslu í mars, enga tekjufærslu í apríl og nýja tekjufærslu í maí, þó ekki væri heimild til að fullyrða að reksturinn hefði stöðvast í apríl.
+
+Ákvörðun:
+1. Bókaða línan er áfram authoritative og óbreytt.
+2. Innsýn sýnir sérstaka stjórnendalega línu: „Rekstrarþróun (3 mán.)“.
+3. Hún er 3 mánaða hlaupandi meðaltal af bókaðri niðurstöðu.
+4. Hún byrjar aðeins þegar þrír samfelldir mánuðir með bókuðum gögnum liggja fyrir.
+5. Hún reiknast ekki yfir gagnagat og notar aldrei tilbúið núll fyrir mánuð sem vantar.
+6. Trendlínan er sjónræn túlkun, ekki bókun, og er sérmerkt strikalína.
+7. Notendaleiðbeiningar og sjónræn forskrift voru uppfærðar samhliða.
+
+Breyttar skrár:
+- app/innsyn/_lib/mixed-view.ts
+- app/innsyn/_lib/mixed-copy.ts
+- app/innsyn/_components/InsightMixedOverview.tsx
+- docs/leidbeiningar/innsyn/INNSYN.md
+- docs/innsyn/INNSYN-SJONRAEN-FORSKRIFT-V1-20260927.md
+- docs/innsyn/LESTU-MIG-INNSYN-REKSTRARTREND-20260927.txt
+
+Próf eftir innsetningu:
+- npx tsc --noEmit
+- opna /innsyn/ny hjá Sturlu
+- staðfesta að bókaða bláa niðurstöðulínan sé óbreytt
+- staðfesta að fjólublá strikalína „Rekstrarþróun (3 mán.)“ birtist frá fyrsta fulla 3 mánaða glugga
+- staðfesta að hún mýki aprílfrávikið án þess að færa mars-/maítekjur í apríl

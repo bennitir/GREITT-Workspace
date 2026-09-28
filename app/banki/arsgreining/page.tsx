@@ -89,26 +89,59 @@ export default async function AnnualBankAnalysisPage({ searchParams }: Props) {
   const x = annualAnalysisExtraText(language);
   const statementText = annualStatementText(language);
 
-  const accounts = await prisma.bankAccount.findMany({
-    where: { companyId, isActive: true },
-    orderBy: { id: "asc" },
-  });
+  const [accounts, paymentCards] = await Promise.all([
+    prisma.bankAccount.findMany({
+      where: { companyId, isActive: true },
+      orderBy: { id: "asc" },
+    }),
+    prisma.paymentCard.findMany({
+      where: { companyId, isActive: true },
+      orderBy: { id: "asc" },
+      select: {
+        id: true,
+        name: true,
+        issuerName: true,
+        network: true,
+        lastFour: true,
+      },
+    }),
+  ]);
   const accountIds = accounts.map((account) => account.id);
+  const paymentCardIds = paymentCards.map((card) => card.id);
   const accountById = new Map(accounts.map((account) => [account.id, account]));
 
-  // Only the year selector needs cross-year information. Fetch distinct years
-  // as a tiny aggregate instead of loading every BankTransaction into memory.
-  const yearRows = accountIds.length
-    ? await prisma.$queryRaw<Array<{ year: number }>>`
-        SELECT DISTINCT EXTRACT(YEAR FROM bt."date")::int AS "year"
-        FROM "BankTransaction" bt
-        INNER JOIN "BankAccount" ba ON ba."id" = bt."bankAccountId"
-        WHERE ba."companyId" = ${companyId}
-          AND ba."isActive" = true
-        ORDER BY "year" DESC
-      `
-    : [];
-  const years = yearRows.map((row) => Number(row.year)).filter((value) => Number.isInteger(value));
+  // The year selector must reflect every financial source already imported.
+  // Bank transactions and payment-card transactions stay separate datasets;
+  // the union here is only for navigation, not for accounting aggregation.
+  const [bankYearRows, cardYearRows] = await Promise.all([
+    accountIds.length
+      ? prisma.$queryRaw<Array<{ year: number }>>`
+          SELECT DISTINCT EXTRACT(YEAR FROM bt."date")::int AS "year"
+          FROM "BankTransaction" bt
+          INNER JOIN "BankAccount" ba ON ba."id" = bt."bankAccountId"
+          WHERE ba."companyId" = ${companyId}
+            AND ba."isActive" = true
+          ORDER BY "year" DESC
+        `
+      : Promise.resolve([] as Array<{ year: number }>),
+    paymentCardIds.length
+      ? prisma.$queryRaw<Array<{ year: number }>>`
+          SELECT DISTINCT EXTRACT(YEAR FROM pct."date")::int AS "year"
+          FROM "PaymentCardTransaction" pct
+          INNER JOIN "PaymentCard" pc ON pc."id" = pct."paymentCardId"
+          WHERE pc."companyId" = ${companyId}
+            AND pc."isActive" = true
+          ORDER BY "year" DESC
+        `
+      : Promise.resolve([] as Array<{ year: number }>),
+  ]);
+  const years = Array.from(
+    new Set(
+      [...bankYearRows, ...cardYearRows]
+        .map((row) => Number(row.year))
+        .filter((value) => Number.isInteger(value)),
+    ),
+  ).sort((a, b) => b - a);
   const requestedYear = Number(query.year);
   const year = Number.isInteger(requestedYear) && years.includes(requestedYear)
     ? requestedYear
@@ -116,15 +149,36 @@ export default async function AnnualBankAnalysisPage({ searchParams }: Props) {
 
   const yearStart = new Date(Date.UTC(year, 0, 1));
   const nextYearStart = new Date(Date.UTC(year + 1, 0, 1));
-  const yearTransactionRows = accountIds.length
-    ? await prisma.bankTransaction.findMany({
-        where: {
-          bankAccountId: { in: accountIds },
-          date: { gte: yearStart, lt: nextYearStart },
-        },
-        orderBy: [{ date: "asc" }, { id: "asc" }],
-      })
-    : [];
+  const [yearTransactionRows, yearCardTransactionRows] = await Promise.all([
+    accountIds.length
+      ? prisma.bankTransaction.findMany({
+          where: {
+            bankAccountId: { in: accountIds },
+            date: { gte: yearStart, lt: nextYearStart },
+          },
+          orderBy: [{ date: "asc" }, { id: "asc" }],
+        })
+      : Promise.resolve([]),
+    paymentCardIds.length
+      ? prisma.paymentCardTransaction.findMany({
+          where: {
+            paymentCardId: { in: paymentCardIds },
+            date: { gte: yearStart, lt: nextYearStart },
+          },
+          select: {
+            id: true,
+            paymentCardId: true,
+            date: true,
+            merchantText: true,
+            amount: true,
+            status: true,
+            sourceFileName: true,
+            cardPeriod: true,
+          },
+          orderBy: [{ date: "asc" }, { id: "asc" }],
+        })
+      : Promise.resolve([]),
+  ]);
 
   const yearTransactions = yearTransactionRows.map((item) => ({
     id: item.id,
@@ -135,6 +189,64 @@ export default async function AnnualBankAnalysisPage({ searchParams }: Props) {
     amount: Number(item.amount),
     sourceRawData: item.sourceRawData,
   }));
+
+  const paymentCardById = new Map(paymentCards.map((card) => [card.id, card]));
+  const yearCardTransactions = yearCardTransactionRows.map((item) => ({
+    id: item.id,
+    paymentCardId: item.paymentCardId,
+    date: item.date,
+    merchantText: item.merchantText,
+    amount: Number(item.amount),
+    status: item.status,
+    sourceFileName: item.sourceFileName,
+    cardPeriod: item.cardPeriod,
+  }));
+  const cardStatementFiles = new Set(
+    yearCardTransactions.flatMap((item) => item.sourceFileName ? [item.sourceFileName] : []),
+  );
+  const cardPeriods = new Set(
+    yearCardTransactions.flatMap((item) => item.cardPeriod ? [item.cardPeriod] : []),
+  );
+  const cardStatementCount = cardStatementFiles.size || cardPeriods.size;
+  const cardPurchaseAmount = yearCardTransactions.reduce(
+    (sum, item) => sum + (item.amount < 0 ? Math.abs(item.amount) : 0),
+    0,
+  );
+  const cardCreditAmount = yearCardTransactions.reduce(
+    (sum, item) => sum + (item.amount > 0 ? item.amount : 0),
+    0,
+  );
+  const cardUnreconciledCount = yearCardTransactions.filter(
+    (item) => item.status.trim().toUpperCase() !== "RECONCILED",
+  ).length;
+  const cardFirstDate = yearCardTransactions[0]?.date ?? null;
+  const cardLastDate = yearCardTransactions.at(-1)?.date ?? null;
+  const cardMerchantMap = new Map<string, { merchant: string; count: number; amount: number }>();
+  for (const item of yearCardTransactions) {
+    if (item.amount >= 0) continue;
+    const merchant = item.merchantText.trim() || x.unknownCardMerchant;
+    const key = merchant.toLocaleLowerCase("is");
+    const current = cardMerchantMap.get(key) ?? { merchant, count: 0, amount: 0 };
+    current.count += 1;
+    current.amount += Math.abs(item.amount);
+    cardMerchantMap.set(key, current);
+  }
+  const topCardMerchants = [...cardMerchantMap.values()]
+    .sort((a, b) => b.amount - a.amount || b.count - a.count)
+    .slice(0, 12);
+  const cardSourceRows = paymentCards
+    .map((card) => {
+      const rows = yearCardTransactions.filter((item) => item.paymentCardId === card.id);
+      return {
+        ...card,
+        transactionCount: rows.length,
+        purchaseAmount: rows.reduce(
+          (sum, item) => sum + (item.amount < 0 ? Math.abs(item.amount) : 0),
+          0,
+        ),
+      };
+    })
+    .filter((card) => card.transactionCount > 0);
 
   const analysis = buildAnnualBankAnalysis(yearTransactions);
   const grantAccountIds = new Set(
@@ -854,8 +966,94 @@ export default async function AnnualBankAnalysisPage({ searchParams }: Props) {
         ))}
       </nav>
 
+      {yearCardTransactions.length > 0 ? (
+        <section className="mt-6 rounded-2xl border-2 border-blue-200 bg-blue-50/30 p-6">
+          <div className="flex flex-wrap items-start justify-between gap-4">
+            <div>
+              <p className="text-sm font-semibold uppercase tracking-wide text-blue-700">{x.cardDataTitle}</p>
+              <p className="mt-2 max-w-4xl text-sm text-slate-600">{x.cardDataHelp}</p>
+            </div>
+            <span className="rounded-full border border-blue-200 bg-white px-3 py-1 text-xs font-semibold text-blue-800">
+              {x.cardDataSeparate}
+            </span>
+          </div>
+
+          <div className="mt-5 grid gap-3 sm:grid-cols-2 xl:grid-cols-5">
+            <Stat label={x.cardStatements} value={formatNumber(cardStatementCount)} />
+            <Stat label={x.cardTransactions} value={formatNumber(yearCardTransactions.length)} />
+            <Stat label={x.cardPurchases} value={`${formatNumber(Math.round(cardPurchaseAmount))} kr.`} />
+            <Stat label={x.cardCredits} value={`${formatNumber(Math.round(cardCreditAmount))} kr.`} />
+            <Stat label={x.cardUnreconciled} value={formatNumber(cardUnreconciledCount)} />
+          </div>
+
+          <p className="mt-4 text-sm text-slate-600">
+            <strong>{x.cardDateRange}:</strong>{" "}
+            {cardFirstDate && cardLastDate ? `${formatDate(cardFirstDate)} – ${formatDate(cardLastDate)}` : "—"}
+          </p>
+
+          <div className="mt-6 grid gap-6 xl:grid-cols-2">
+            <div className="rounded-xl border bg-white p-4">
+              <h3 className="font-semibold">{x.cardSources}</h3>
+              <div className="mt-3 space-y-2">
+                {cardSourceRows.map((card) => (
+                  <Link
+                    key={card.id}
+                    href={`/banki/kort/${card.id}`}
+                    className="flex flex-wrap items-center justify-between gap-3 rounded-lg border p-3 transition hover:border-blue-300 hover:bg-blue-50/50"
+                  >
+                    <div>
+                      <p className="font-medium">
+                        {card.name}{card.lastFour ? ` · •••• ${card.lastFour}` : ""}
+                      </p>
+                      <p className="mt-1 text-xs text-slate-500">
+                        {[card.issuerName, card.network].filter(Boolean).join(" · ") || x.cardTransactions}
+                      </p>
+                    </div>
+                    <div className="text-right text-sm">
+                      <p className="font-semibold">{formatNumber(card.transactionCount)} {x.transactionsLabel}</p>
+                      <p className="text-slate-500">{formatNumber(Math.round(card.purchaseAmount))} kr.</p>
+                      <p className="mt-1 text-xs font-medium text-blue-700">{x.cardOpen} →</p>
+                    </div>
+                  </Link>
+                ))}
+              </div>
+            </div>
+
+            <div className="rounded-xl border bg-white p-4">
+              <h3 className="font-semibold">{x.cardTopMerchants}</h3>
+              <p className="mt-1 text-xs text-slate-500">{x.cardTopMerchantsHelp}</p>
+              <div className="mt-3 overflow-x-auto">
+                <table className="min-w-full text-sm">
+                  <thead className="border-b text-left text-slate-500">
+                    <tr>
+                      <th className="p-2">{x.cardMerchant}</th>
+                      <th className="p-2 text-right">{x.transactionsLabel}</th>
+                      <th className="p-2 text-right">{x.amount}</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {topCardMerchants.map((merchant) => (
+                      <tr key={merchant.merchant} className="border-b last:border-0">
+                        <td className="p-2 font-medium">{merchant.merchant}</td>
+                        <td className="p-2 text-right">{formatNumber(merchant.count)}</td>
+                        <td className="p-2 text-right font-medium">{formatNumber(Math.round(merchant.amount))} kr.</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          </div>
+        </section>
+      ) : null}
+
       {yearTransactions.length === 0 ? (
-        <div className="mt-6 rounded-lg border bg-gray-50 p-6">{t.noData}</div>
+        <div className="mt-6 rounded-lg border bg-gray-50 p-6">
+          <p className="font-semibold">{yearCardTransactions.length > 0 ? x.noBankDataButCardsTitle : t.noData}</p>
+          {yearCardTransactions.length > 0 ? (
+            <p className="mt-2 max-w-4xl text-sm text-gray-600">{x.noBankDataButCardsHelp}</p>
+          ) : null}
+        </div>
       ) : (
         <>
           <section className={`${view === "summary" ? "" : "hidden"} mt-6 space-y-6`}>

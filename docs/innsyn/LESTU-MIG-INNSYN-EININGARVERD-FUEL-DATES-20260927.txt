@@ -1,0 +1,19 @@
+GLÖGGT – Innsýn / einingarverð: eldsneyti + raunveruleg tímaröð
+Dagsetning: 27.09.2026
+
+Breyting:
+- Einingarverðssýnin birtir nú einnig röð með aðeins einni staðfestri dagsetningu sem "Síðasta þekkta verð".
+- Verðþróun/prósentubreyting er aðeins reiknuð milli ólíkra almanaksdaga.
+- Margar sambærilegar línur sama dag eru sameinaðar í einn tímapunkt með magnvegnu einingarverði.
+- Skýr eldsneytisheiti í lítrum eru canonical-uð deterministic án AI:
+  * Dísel / Diesel / Disel -> Dísel
+  * Bensín + 95 / 95 oktan -> Bensín 95
+  * Bensín + 98 / 98 oktan -> Bensín 98
+  * almennt Bensín -> Bensín
+  * almennt Eldsneyti/Fuel -> Eldsneyti
+- Óljós heiti eru ekki sameinuð.
+- Eldsneytisröðum er raðað framar í einingarverðssýninni þegar þær finnast.
+- Engin Prisma-breyting og ekkert nýtt AI-kall.
+
+Sannleikaregla:
+Einingarverð er áfram KNOWN úr varðveittum vörulínum. Kerfið flytur ekki verð milli daga og giskar ekki á magn, einingu eða vöruheiti sem ekki eru skýr.

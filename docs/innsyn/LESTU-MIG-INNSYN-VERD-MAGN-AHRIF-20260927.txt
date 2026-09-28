@@ -1,0 +1,15 @@
+GLÖGGT – Innsýn verðáhrif vs. magnáhrif – 27.09.2026
+
+Bætt við deterministic sundurgreiningu á mánaðarlegri kostnaðarbreytingu í einingarverðs-drill-down:
+- heildar kostnaðarbreyting,
+- magnáhrif,
+- verðáhrif,
+- breyting á magni,
+- breyting á magnvegnu meðalverði.
+
+Aðeins samfelldir almanaksmánuðir eru bornir saman.
+Magnáhrif og verðáhrif nota samhverfa sundurgreiningu og leggjast nákvæmlega saman í heildarbreytinguna.
+
+Engin Prisma-breyting.
+Ekkert nýtt AI-kall.
+Engin breyting á bókunum eða varðveittum vörulínum.
