@@ -2731,7 +2731,8 @@ model BankTransaction {
   createdAt     DateTime @default(now())
   updatedAt     DateTime @updatedAt
 
-  bankAccount BankAccount @relation(fields: [bankAccountId], references: [id], onDelete: Cascade)
+  bankAccount             BankAccount              @relation(fields: [bankAccountId], references: [id], onDelete: Cascade)
+  financialEventPayments FinancialEventPayment[]
 
   @@unique([bankAccountId, fingerprint])
   @@index([bankAccountId, date])
@@ -3025,6 +3026,7 @@ model FinancialEvent {
   entityLinks   FinancialEventEntity[]
   facts         InsightFact[]
   scheduleItems FinancialEventScheduleItem[]
+  payments      FinancialEventPayment[]
   outgoingRelations FinancialEventRelation[] @relation("FinancialEventRelationFrom")
   incomingRelations FinancialEventRelation[] @relation("FinancialEventRelationTo")
 
@@ -3054,11 +3056,75 @@ model FinancialEventScheduleItem {
   createdAt         DateTime @default(now())
   updatedAt         DateTime @updatedAt
 
-  event FinancialEvent @relation(fields: [eventId], references: [id], onDelete: Cascade)
+  event              FinancialEvent                    @relation(fields: [eventId], references: [id], onDelete: Cascade)
+  paymentAllocations FinancialEventPaymentAllocation[]
 
   @@unique([eventId, sequence])
   @@index([eventId, dueDate])
   @@index([status, dueDate])
+}
+
+// Rekjanleg greiðsla úr banka yfir á fjárhagsatburð/skuldbindingu.
+// amount er alltaf jákvæð úthlutun af abs(BankTransaction.amount).
+// PROPOSED má vera deterministic tillaga; CONFIRMED telst greitt á atburðinn.
+// AuditEvent varðveitir hver staðfesti eða hafnaði þegar mannleg staðfesting á sér stað.
+model FinancialEventPayment {
+  id                Int @id @default(autoincrement())
+  eventId           Int
+  bankTransactionId Int
+
+  amount   Decimal
+  currency String @default("ISK")
+
+  // PROPOSED, CONFIRMED, REJECTED, VOID.
+  status     String @default("PROPOSED")
+  // Dæmi: EXACT_REFERENCE, EXACT_COUNTERPARTY_AMOUNT, MANUAL.
+  matchType  String
+  confidence Float?
+  source     String @default("SYSTEM")
+
+  confirmedAt DateTime?
+  metadata    Json?
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  event           FinancialEvent                    @relation(fields: [eventId], references: [id], onDelete: Cascade)
+  bankTransaction BankTransaction                   @relation(fields: [bankTransactionId], references: [id], onDelete: Cascade)
+  allocations     FinancialEventPaymentAllocation[]
+
+  @@unique([eventId, bankTransactionId])
+  @@index([bankTransactionId, status])
+  @@index([eventId, status])
+}
+
+// Valfrjáls nákvæm úthlutun staðfestrar/tilgreindrar greiðslu á gjalddaga.
+// Greiðsla má vera staðfest á FinancialEvent án þess að þessi tafla innihaldi
+// færslu enn; þannig má vita heildar-greitt/eftir án þess að giska á gjalddaga.
+model FinancialEventPaymentAllocation {
+  id             Int @id @default(autoincrement())
+  paymentId      Int
+  scheduleItemId Int
+
+  amount Decimal
+
+  // PROPOSED, CONFIRMED, REJECTED, VOID.
+  status     String @default("PROPOSED")
+  // Dæmi: EXACT_DUE_REFERENCE, NEAREST_UNPAID_DUE, MANUAL.
+  matchType  String
+  confidence Float?
+  source     String @default("SYSTEM")
+
+  confirmedAt DateTime?
+  metadata    Json?
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  payment      FinancialEventPayment      @relation(fields: [paymentId], references: [id], onDelete: Cascade)
+  scheduleItem FinancialEventScheduleItem @relation(fields: [scheduleItemId], references: [id], onDelete: Cascade)
+
+  @@unique([paymentId, scheduleItemId])
+  @@index([scheduleItemId, status])
+  @@index([paymentId, status])
 }
 
 model FinancialEventRelation {
