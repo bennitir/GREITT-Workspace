@@ -1037,6 +1037,7 @@ async function analyzeReceiptWithAIInternal(
               id: true,
               name: true,
               identifierValue: true,
+              status: true,
             },
           },
         },
@@ -1051,9 +1052,13 @@ async function analyzeReceiptWithAIInternal(
         entityId: link.entity.id,
         name: link.entity.name,
         loanNumber: link.entity.identifierValue?.trim() ?? "",
+        status: link.entity.status,
       }))
     )
-    .filter((hint) => hint.loanNumber.length > 0);
+    .filter(
+      (hint) =>
+        hint.loanNumber.length > 0 && hint.status === "ACTIVE"
+    );
 
   const finalizedDetectedDocument = await prisma.aiDetectedDocument.findFirst({
     where: {

@@ -1433,7 +1433,8 @@ perf("next review lookup / ready to render");
                         !document.entityLinks.some(
                           (link) =>
                             link.role === "LOAN" &&
-                            link.entity.entityType === "LOAN"
+                            link.entity.entityType === "LOAN" &&
+                            link.entity.status === "ACTIVE"
                         ) && (
                           <div className="mt-4 rounded border border-amber-300 bg-amber-50 p-4 text-amber-950">
                             <div className="font-semibold">
@@ -1662,7 +1663,8 @@ perf("next review lookup / ready to render");
                         .filter(
                           (link) =>
                             link.role === "LOAN" &&
-                            link.entity.entityType === "LOAN"
+                            link.entity.entityType === "LOAN" &&
+                            link.entity.status === "ACTIVE"
                         )
                         .map((link) => {
                           const confirmedAccount =
