@@ -2085,6 +2085,238 @@ return {
   a.insuredItem.localeCompare(b.insuredItem, "is")
 );
 
+  // Núverandi tryggingastaða á að ráðast af skírteinisnúmeri og gildistíma,
+  // ekki af einu "nýjasta" yfirlitsskjali. Sama skírteini getur komið fyrir
+  // í mörgum greiðslukvittunum og yfirlitum yfir árið.
+  const normalizeInsurancePolicyNumber = (
+    value: string | null | undefined
+  ) => {
+    const match = value?.match(/\b0*\d{7,11}\b/);
+
+    if (!match) {
+      return null;
+    }
+
+    const normalized = match[0].replace(/^0+/, "");
+    return normalized.length >= 7 ? normalized : null;
+  };
+
+  const insurancePolicyFacts = new Map<
+    string,
+    typeof insuranceFacts
+  >();
+
+  for (const fact of insuranceFacts) {
+    const factType = normalizeFactType(fact.factType);
+    const policyNumber =
+      normalizeInsurancePolicyNumber(fact.label) ??
+      (factType === "INSURANCE_POLICY_NUMBER"
+        ? normalizeInsurancePolicyNumber(fact.textValue)
+        : null);
+
+    if (!policyNumber) {
+      continue;
+    }
+
+    const current = insurancePolicyFacts.get(policyNumber) ?? [];
+    current.push(fact);
+    insurancePolicyFacts.set(policyNumber, current);
+  }
+
+  const insuranceReferenceDate = new Date();
+  const isDateWithinFactPeriod = (fact: (typeof insuranceFacts)[number]) => {
+    const startsBeforeOrToday =
+      fact.periodStart === null ||
+      fact.periodStart.getTime() <= insuranceReferenceDate.getTime();
+    const endsTodayOrLater =
+      fact.periodEnd !== null &&
+      fact.periodEnd.getTime() >= insuranceReferenceDate.getTime();
+
+    return startsBeforeOrToday && endsTodayOrLater;
+  };
+
+  const parsedInsurancePolicyStates = Array.from(
+    insurancePolicyFacts.entries()
+  )
+    .map(([policyNumber, policyFacts]) => {
+      const premiumFacts = policyFacts.filter(
+        (fact) =>
+          normalizeFactType(fact.factType) === "INSURANCE_PREMIUM" &&
+          fact.numberValue !== null &&
+          Number(fact.numberValue) > 0
+      );
+
+      if (premiumFacts.length === 0) {
+        return null;
+      }
+
+      const currentPremiumFacts = premiumFacts
+        .filter(isDateWithinFactPeriod)
+        .sort((a, b) => {
+          const amountDifference =
+            Number(b.numberValue ?? 0) - Number(a.numberValue ?? 0);
+
+          if (amountDifference !== 0) {
+            return amountDifference;
+          }
+
+          return b.createdAt.getTime() - a.createdAt.getTime();
+        });
+
+      const latestPremiumFact = [...premiumFacts].sort((a, b) => {
+        const endDifference =
+          (b.periodEnd?.getTime() ?? 0) -
+          (a.periodEnd?.getTime() ?? 0);
+
+        if (endDifference !== 0) {
+          return endDifference;
+        }
+
+        return b.createdAt.getTime() - a.createdAt.getTime();
+      })[0];
+
+      const currentReversal = policyFacts.find(
+        (fact) =>
+          normalizeFactType(fact.factType) ===
+            "INSURANCE_PREMIUM_REVERSAL" &&
+          isDateWithinFactPeriod(fact)
+      );
+
+      const referencePremium =
+        currentPremiumFacts[0] ?? latestPremiumFact;
+
+      if (!referencePremium) {
+        return null;
+      }
+
+      const label = referencePremium.label?.trim() || policyNumber;
+      const parts = label
+        .split("·")
+        .map((part) => part.trim())
+        .filter(Boolean);
+      const policyPartIndex = parts.findIndex(
+        (part) => normalizeInsurancePolicyNumber(part) === policyNumber
+      );
+      const insuredItem =
+        policyPartIndex === 0
+          ? parts[1] ?? label
+          : parts[0] ?? label;
+      const insuranceType =
+        policyPartIndex >= 0
+          ? parts[policyPartIndex + 1] ?? parts.at(-1) ?? null
+          : parts.at(-1) ?? null;
+      const latestCreatedAt = policyFacts.reduce(
+        (latest, fact) =>
+          fact.createdAt > latest ? fact.createdAt : latest,
+        policyFacts[0]?.createdAt ?? referencePremium.createdAt
+      );
+      const hasReversal = policyFacts.some(
+        (fact) =>
+          normalizeFactType(fact.factType) ===
+          "INSURANCE_PREMIUM_REVERSAL"
+      );
+      const isActive =
+        currentPremiumFacts.length > 0 && currentReversal === undefined;
+
+      return {
+        policyNumber,
+        insuredItem,
+        insuranceType,
+        amount: Number(referencePremium.numberValue ?? 0),
+        periodStart: referencePremium.periodStart,
+        periodEnd: referencePremium.periodEnd,
+        latestCreatedAt,
+        isActive,
+        historyReason: hasReversal
+          ? "REVERSAL"
+          : "PERIOD_ENDED",
+      };
+    })
+    .filter(
+      (
+        policy
+      ): policy is NonNullable<typeof policy> => policy !== null
+    );
+
+  const activeInsurancePolicies = parsedInsurancePolicyStates
+    .filter((policy) => policy.isActive)
+    .sort((a, b) =>
+      a.insuredItem.localeCompare(b.insuredItem, "is")
+    );
+
+  const historicalInsurancePolicies = parsedInsurancePolicyStates
+    .filter((policy) => !policy.isActive)
+    .sort(
+      (a, b) =>
+        (b.periodEnd?.getTime() ?? 0) -
+        (a.periodEnd?.getTime() ?? 0)
+    );
+
+  const activeInsuranceAssetGroups = Array.from(
+    activeInsurancePolicies.reduce(
+      (groups, policy) => {
+        const key = normalizeText(policy.insuredItem);
+        const current = groups.get(key) ?? {
+          insuredItem: policy.insuredItem,
+          amount: 0,
+          policies: [] as typeof activeInsurancePolicies,
+        };
+
+        current.amount += policy.amount;
+        current.policies.push(policy);
+        groups.set(key, current);
+        return groups;
+      },
+      new Map<
+        string,
+        {
+          insuredItem: string;
+          amount: number;
+          policies: typeof activeInsurancePolicies;
+        }
+      >()
+    ).values()
+  ).sort((a, b) =>
+    a.insuredItem.localeCompare(b.insuredItem, "is")
+  );
+
+  const activeInsuranceAnnualPremiumTotal =
+    activeInsurancePolicies.reduce(
+      (sum, policy) => sum + policy.amount,
+      0
+    );
+
+  const activeInsuranceLatestUpdate =
+    activeInsurancePolicies.reduce<Date | null>(
+      (latest, policy) =>
+        latest === null || policy.latestCreatedAt > latest
+          ? policy.latestCreatedAt
+          : latest,
+      null
+    );
+
+  const activeInsuranceVehicleCount = new Set(
+    activeInsurancePolicies
+      .filter((policy) => {
+        const type = normalizeText(policy.insuranceType);
+        return type.includes("okut") || type.includes("kasko");
+      })
+      .map((policy) => normalizeText(policy.insuredItem))
+  ).size;
+
+  const activeInsurancePropertyCount = new Set(
+    activeInsurancePolicies
+      .filter((policy) => {
+        const type = normalizeText(policy.insuranceType);
+        return (
+          type.includes("fasteign") ||
+          type.includes("brunatrygg") ||
+          type.includes("heimilistrygg")
+        );
+      })
+      .map((policy) => normalizeText(policy.insuredItem))
+  ).size;
+
   const insurancePropertyNames = new Set(
     insuranceProperties.map((property) =>
       normalizeText(property.name)
@@ -3443,18 +3675,18 @@ return {
                 <div>
                   <h2 className="text-xl font-bold text-slate-950">{t.insurance}</h2>
                   <p className="mt-2 text-3xl font-bold text-slate-950">
-  {innsynInsuranceCount(insurancePolicies.length, interfaceLanguage)}
+  {innsynInsuranceCount(activeInsurancePolicies.length, interfaceLanguage)}
 </p>
 
 <p className="mt-1 text-sm text-slate-500">
-  {interfaceLanguage === "en" ? "Net premium movements in the overview" : interfaceLanguage === "pl" ? "Zmiany netto składek w zestawieniu" : interfaceLanguage === "sr" ? "Нето кретање премија у прегледу" : "Nettó iðgjaldahreyfingar á yfirliti"}{" "}
+  {interfaceLanguage === "en" ? "Known annual premiums for active policies" : interfaceLanguage === "pl" ? "Znane roczne składki aktywnych polis" : interfaceLanguage === "sr" ? "Познате годишње премије активних полиса" : "Þekkt ársiðgjöld virkra trygginga"}{" "}
   <span className="font-semibold text-slate-700">
-    {formatKr(insurancePremiumNetTotal)}
+    {formatKr(activeInsuranceAnnualPremiumTotal)}
   </span>
 </p>
                 </div>
                 <span className="rounded-full bg-slate-50 px-3 py-1 text-xs font-medium text-slate-500">
-                  {formatDate(latestInsurance.latestCreatedAt)}
+                  {formatDate(activeInsuranceLatestUpdate ?? latestInsurance.latestCreatedAt)}
                 </span>
               </div>
 
@@ -3462,16 +3694,16 @@ return {
                 <div className="rounded-lg bg-slate-50 p-3">
                   <p className="text-xs text-slate-500">{t.insurance}</p>
                   <p className="mt-1 text-lg font-bold">
-  {insurancePolicies.length}
+  {activeInsurancePolicies.length}
 </p>
                 </div>
                 <div className="rounded-lg bg-slate-50 p-3">
                   <p className="text-xs text-slate-500">{t.vehicles}</p>
-                  <p className="mt-1 text-lg font-bold">{insuranceVehicles.length}</p>
+                  <p className="mt-1 text-lg font-bold">{activeInsuranceVehicleCount}</p>
                 </div>
                 <div className="rounded-lg bg-slate-50 p-3">
                   <p className="text-xs text-slate-500">{t.properties}</p>
-                  <p className="mt-1 text-lg font-bold">{insuranceProperties.length}</p>
+                  <p className="mt-1 text-lg font-bold">{activeInsurancePropertyCount}</p>
                 </div>
               </div>
 
@@ -3511,30 +3743,30 @@ return {
                     </div>
                   )}
 
-                  {(insuranceVehicles.length > 0 || insuranceProperties.length > 0) && (
+                  {activeInsuranceAssetGroups.length > 0 && (
                     <div>
                       <p className="font-semibold text-slate-900">{t.insured}</p>
                       <div className="mt-2 flex flex-wrap gap-2">
-                        {[...insuranceVehicles, ...insuranceProperties].map((entity) => (
+                        {activeInsuranceAssetGroups.map((asset) => (
                           <span
-                            key={entity.id}
+                            key={normalizeText(asset.insuredItem)}
                             className="rounded-full border bg-slate-50 px-3 py-1 text-xs text-slate-700"
                           >
-                            {entity.name}
+                            {asset.insuredItem}
                           </span>
                         ))}
                       </div>
                     </div>
                   )}
 
-                  {insurancePolicies.length > 0 && (
+                  {activeInsurancePolicies.length > 0 && (
   <div>
     <p className="font-semibold text-slate-900">
-      Tryggingar eftir eignum
+      {interfaceLanguage === "en" ? "Active policies by insured item" : interfaceLanguage === "pl" ? "Aktywne polisy według przedmiotu ubezpieczenia" : interfaceLanguage === "sr" ? "Активне полисе по осигураној имовини" : "Virkar tryggingar eftir því sem er tryggt"}
     </p>
 
     <div className="mt-3 space-y-3">
-      {insuranceAssetGroups.map((asset) => (
+      {activeInsuranceAssetGroups.map((asset) => (
   <div
     key={asset.insuredItem}
     className="rounded-lg border bg-white p-3"
@@ -3558,7 +3790,7 @@ return {
     <div className="mt-3 divide-y border-t">
       {asset.policies.map((policy) => (
         <div
-          key={policy.label}
+          key={policy.policyNumber}
           className="flex flex-wrap items-start justify-between gap-3 py-3"
         >
           <div>
@@ -3591,6 +3823,42 @@ return {
     </div>
   </div>
 )}
+
+
+                  {historicalInsurancePolicies.length > 0 && (
+                    <div className="rounded-lg border border-slate-200 bg-slate-50 p-3">
+                      <p className="font-semibold text-slate-900">
+                        {interfaceLanguage === "en" ? "Previous or reversed policies" : interfaceLanguage === "pl" ? "Poprzednie lub wycofane polisy" : interfaceLanguage === "sr" ? "Претходне или сторниране полисе" : "Eldri eða niðurfelld skírteini"}
+                      </p>
+                      <div className="mt-2 divide-y">
+                        {historicalInsurancePolicies.map((policy) => (
+                          <div
+                            key={policy.policyNumber}
+                            className="flex flex-wrap items-start justify-between gap-3 py-2"
+                          >
+                            <div>
+                              <p className="font-medium text-slate-800">
+                                {policy.insuredItem}
+                              </p>
+                              <p className="mt-0.5 text-xs text-slate-500">
+                                {policy.insuranceType ?? "Trygging"} · {policy.policyNumber}
+                              </p>
+                              {policy.periodEnd && (
+                                <p className="mt-0.5 text-xs text-slate-400">
+                                  {interfaceLanguage === "en" ? "Period ended" : interfaceLanguage === "pl" ? "Koniec okresu" : interfaceLanguage === "sr" ? "Период завршен" : "Tímabili lauk"} {formatDate(policy.periodEnd)}
+                                </p>
+                              )}
+                            </div>
+                            <span className="rounded-full bg-white px-2.5 py-1 text-xs font-medium text-slate-600">
+                              {policy.historyReason === "REVERSAL"
+                                ? interfaceLanguage === "en" ? "Reversed" : interfaceLanguage === "pl" ? "Wycofana" : interfaceLanguage === "sr" ? "Сторнирано" : "Bakfært / niðurfellt"
+                                : interfaceLanguage === "en" ? "Expired" : interfaceLanguage === "pl" ? "Wygasła" : interfaceLanguage === "sr" ? "Истекло" : "Tímabil lokið"}
+                            </span>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  )}
 
                   <details className="rounded-lg bg-slate-50">
                     <summary className="cursor-pointer p-3 font-medium text-slate-700">
