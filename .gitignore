@@ -74,3 +74,9 @@ dev.db.TEST
 
 /prisma/*.sql
 /prisma/schema-*.prisma
+
+# local GLOGGT scratch work
+/.scratch/
+
+# local GLOGGT archive
+/.local-archive/
