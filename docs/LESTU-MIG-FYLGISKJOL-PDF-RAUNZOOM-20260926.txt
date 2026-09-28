@@ -1,0 +1,22 @@
+GLÖGGT – Fylgiskjöl PDF raunzoom
+26. september 2026
+
+Vandamál
+- Zoom-prósentan hækkaði í PDF yfirferð (t.d. 150%, 275%) en sjálft skjalið varð ekki sýnilega stærra.
+- Ástæðan var að ytri stærð PDF-object var breytt, en innbyggði PDF-skoðarinn endurraðaði innihaldi sínu þannig að síðan hélt nánast sömu sjónrænu stærð.
+
+Lagfæring
+- PDF-viewerinn er nú sjónrænt skalaður með CSS transform í stað þess að aðeins stækka ytri viewport.
+- − / Passa / + stjórnar því raunverulegri sjónrænni stækkun.
+- Pan/drag með mús helst virkt.
+- Passa núllstillir zoom og færslu.
+- Rétt undirskjal/síða helst valin.
+
+Engin gagnagrunnsbreyting. Engin breyting á bókunarvél.
+
+Próf
+1. npx tsc --noEmit
+2. Opna Olís undirskjal, t.d. síðu 42 af 103.
+3. Ýta á + upp í 150–200% og staðfesta að texti/skjal verði raunverulega stærra.
+4. Draga skjalið með músinni og staðfesta pan.
+5. Ýta á Passa og staðfesta að skjalið fari aftur í sjálfgefna stærð/stöðu.

@@ -1,0 +1,25 @@
+GLÖGGT – Fylgiskjöl – skýrt PDF zoom
+Dagsetning: 26.09.2026
+
+Tilgangur
+- Laga óskýra/pixlaða PDF-birtingu þegar zoom fór yfir 100%.
+- Halda zoom + drag/pan inni í yfirferðinni.
+
+Orsök
+- Fyrri prufa stækkaði innbyggða PDF-skoðarann með CSS transform: scale(...).
+- Chrome getur þá stækkað þegar rasteraða sýn og textinn verður óskýr.
+
+Breyting
+- PDF-skoðarinn er nú stækkaður með raunverulegri breidd/hæð í vinnusvæðinu í stað CSS scale.
+- Ytri vinnusvæðið klippir sýnina og drag/pan flytur stækkaða skjalið.
+- Frum-PDF og bókunargögn breytast ekki.
+
+Próf
+1. npx tsc --noEmit
+2. Opna Olís undirskjal, t.d. síðu 42 af 103.
+3. Stækka í 150%, 200% og 225%.
+4. Staðfesta að textinn verði raunverulega stærri OG haldist skýr.
+5. Draga skjalið með músinni og staðfesta pan.
+6. Ýta á Passa og staðfesta 100% + upphafsstöðu.
+
+Ekki commit/push fyrr en tsc er hreint og skýr zoom-birting er staðfest í browser.

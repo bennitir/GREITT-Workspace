@@ -1,0 +1,30 @@
+GLÖGGT – data-first deterministic lestur merktra PDF-reikninga
+24. september 2026
+
+Breyttar skrár:
+- app/actions/receiptActions.ts
+- lib/receipts/ingestion.ts
+
+Markmið:
+- PDF-textalag fyrst, AI aðeins ef deterministic parser nær ekki öruggum grunnstaðreyndum.
+- Almenn fail-closed leið fyrir skýrt merkta innkaupareikninga.
+- Engin ágiskun á bókhaldslykla eða mótreikning.
+- Varðveitir greiðslumáta/kortanet/endatölur þegar þær finnast í texta.
+- Bætir stuðningi við Reikningsnr. og heildir á forminu "Samtals ISK með VSK".
+- Processing version: receipt-v4-data-first-labeled.
+
+Prófað sérstaklega gegn Nova-mynstrum úr 299–307:
+- mánaðarreikningur: Nova hf / BR... / DAGS. / Heimabanki / VSK-sundurliðun
+- búnaðarreikningur: Reikningsnr. S0001... / Dagsetning reiknings / Samtals ISK með VSK / Greiðslukort VISA
+
+Varnarreglur:
+- parserinn keyrir ekki á mjög löngum/margdagsetninga skjölum (>20.000 stafir eða >10 dagsetningar)
+- krefst kennitölu virka fyrirtækisins í skjalinu
+- krefst nákvæmlega eins annars útgefanda-auðkennis á VSK-línu
+- krefst skýrs reikningsnúmers, reikningsdags og heildar
+- ef eitt atriði vantar fellur núverandi AI-leið við, óbreytt
+
+Eftir uppsetningu:
+1. npx tsc --noEmit
+2. Ekki git add .
+3. Staðfesta diff aðeins fyrir þessar tvær skrár áður en commit er gerður.

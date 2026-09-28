@@ -1,0 +1,30 @@
+GLÖGGT – Banki / Ársgreining – kortagögn sýnileg án bankayfirlits
+Dagsetning: 27.09.2026
+
+Vandamál
+--------
+Ársgreining banka notaði eingöngu BankTransaction. Ef fyrirtæki hafði þegar flutt inn
+Visa/kortayfirlit en engin bankayfirlit, var yearTransactions tómt og öll sýnin féll í
+„Engar bankafærslur fundust fyrir þetta ár.“ Kortafærslur voru því til í
+PaymentCardTransaction en ósýnilegar í Ársgreiningu.
+
+Breyting
+--------
+- Áravalið tekur nú mið af bæði BankTransaction og PaymentCardTransaction.
+- Innflutt kortagögn eru sýnd sem sérstakt lag ofan við bankagreininguna:
+  * fjöldi innfluttra yfirlita/skráa,
+  * fjöldi kortafærslna,
+  * kaup/úttektir,
+  * inneignir/greiðslur,
+  * óafstemmdar færslur,
+  * tímabil gagna,
+  * kort með gögnum,
+  * stærstu söluaðilar eftir kortakaupum.
+- Ef bankafærslur vantar en kortagögn eru til er það sagt skýrt í stað þess að láta
+  líta út eins og engin gögn séu til.
+- Kortagögn eru EKKI lögð saman við bankapeningaflæði. Þetta kemur í veg fyrir
+  tvítalningu þegar bankayfirlit berast síðar og innihalda kortagreiðslur.
+- Nýir textar eru i18n-ready á is/en/pl/sr.
+
+Engin Prisma-breyting.
+Engin breyting á bókun eða afstemmingarreglum.

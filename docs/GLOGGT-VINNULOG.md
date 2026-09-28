@@ -1,0 +1,6911 @@
+# GLÖGGT – vinnudagbók
+
+Þessi skrá varðveitir þróunarsögu GLÖGGT.
+
+Markmiðið er að skrá:
+- hvað var unnið
+- hvað var prófað
+- hvað tókst
+- hvað mistókst
+- mikilvægar hönnunar- og kerfisákvarðanir
+- Git commit og deployment
+- ólokin verkefni
+- nákvæman stoppunkt fyrir næstu vinnulotu
+
+## Reglur
+
+1. Nýjasta vinnulota fer efst.
+2. Ekki breyta eldri niðurstöðum til að láta þær passa við nýja stöðu.
+3. Ef fyrri ákvörðun breytist skal skrá nýja ákvörðun og vísa í þá eldri.
+4. Aðeins staðfest próf skulu merkt sem staðfest.
+5. Commit-hash og production-staða skulu skráð þegar við á.
+6. Aldrei skrá lykilorð, API-lykla eða önnur leyndarmál.
+7. Vinnudagbókin er þróunarsaga — ekki staðgengill fyrir Git.
+
+---
+
+## 2026-09-26 — Fylgiskjöl: yfirferð sem flæðir, deterministic lærdómur, prentun og mannleg staðfesting
+
+### Heildarniðurstaða dagsins
+
+Dagurinn byrjaði ekki á nýrri „stórri einingu“ heldur á mjög raunverulegu vandamáli bókarans: **yfirferð fylgiskjala var of seinleg**. Upplýsingarnar við skjalið voru of litlar, frumskjalið þurfti að opna sér, zooma og færa til, og þegar farið er í gegnum marga tugi skjala verður hver aukasmellur og hver endurstilling að raunverulegum tíma.
+
+Úr því varð stærsti þráður dagsins:
+
+**frumskjalið á að vera þar sem bókarinn vinnur, læsilegt, hreyfanlegt og leiðréttanlegt — og GLÖGGT á að muna það sem þegar hefur verið staðfest svo næsta skjal verði auðveldara.**
+
+Samhliða varð mikilvægt AI-gæðatilvik mjög sýnilegt: sama frumskjal var lesið sem mismunandi söluaðilar og mismunandi fjárhæðir. Það undirstrikaði að staðfest mannleg leiðrétting og frumgögn verða að hafa hærra vægi en AI-niðurstaða.
+
+Nánari dagskýrsla er í:
+
+- `docs/GLOGGT-vinnudagbok-2026-09-26.md`
+
+---
+
+### Sálin í deginum
+
+Í dag varð GLÖGGT minna eins og kerfi sem „sýnir bókhaldsgögn“ og meira eins og vinnuborð sem á að **vinna með bókaranum**.
+
+Við byrjuðum á einfaldri athugasemd: upplýsingarnar voru of litlar og það tók of langan tíma að opna hvert blað og zooma. Sú athugasemd varð að röð af breytingum á viewer, crop, zoom, pan, stöðugleika, prentun og yfirferðargögnum.
+
+Svo kom annað mikilvægt augnablik þegar spurt var hvort við værum farin að **sérskrifa fyrir Sturlu**. Það var rétt stopp. Raunskjöl Sturlu mega vera testcase og staðfest saga hans má vera fyrirtækjasértæk gögn, en kjarninn þarf að vera almennur. Eftir það var línugreining, product-history og diagnostic-hugsunin færð aftur yfir í almenna deterministic reglu.
+
+Og undir lok dags kom sterkasta áminningin um af hverju frumgögnin skipta máli: sama mynd var lesin sem Pítan 4.890 kr., síðan Subway 7.930 kr., en frumritið sýndi Spíran og 11.780 kr. Þar vann maðurinn, frumritið og rekjanleikinn — ekki „öryggisprósentan“ frá AI.
+
+**Kjarninn sem dagurinn skildi eftir:**
+
+> GLÖGGT má hjálpa, læra og leggja til — en staðfest frumgögn og staðfest mannleg leiðrétting eru sannleikurinn.
+
+---
+
+### 1. Frumskjal inni í yfirferð — compact vinnusýn
+
+Yfirferðarsíðan var þróuð áfram þannig að frumskjalið sé hluti af sjálfri bókunarvinnunni í stað þess að bókari þurfi stöðugt að hoppa út í sérsýn.
+
+Komið var inn:
+
+- frumskjal vinstra megin;
+- bókun og yfirferð hægra megin;
+- fljótandi `Yfirferðargögn` spjald ofan á frumskjali;
+- draganlegt spjald;
+- zoom `− / Passa / +`;
+- pan með mús;
+- stækkanlegt vinnusvæði;
+- OCR-texti samanfallinn svo hann taki ekki yfir vinnusýnina.
+
+Meginmarkmið var ekki „flott viewer“ heldur **minni tími á hvert skjal**.
+
+---
+
+### 2. Zoom/pan — margar raunverulegar browser-villur fundust
+
+Viewerinn fór í gegnum nokkrar raunprófanir og villur:
+
+- zoom-takkar hurfu við breytingu;
+- zoom kom aftur en pan tapaðist;
+- prósentutala fór yfir 200–300% án þess að PDF stækkaði raunverulega;
+- CSS-stækkun gerði PDF óskýrt;
+- signed URL / bakgrunnsuppfærsla gat kastað skjali aftur í upphafsstöðu;
+- TypeScript-villur fundust í `changePdfZoom`, `resetPdfZoom`, `setPdfZoom` og JSON-týpum meðan lausnin var þróuð.
+
+Lausnin færðist yfir í **PDF.js canvas rendering** fyrir raunverulegt PDF-zoom og skýrleika, með zoom/pan stöðu sem varðveitist fyrir sama skjal/síðu.
+
+Staðfest í raunprófi:
+
+- PDF stækkar raunverulega;
+- hægt er að draga það til;
+- texti verður læsilegri við zoom;
+- viewer hoppar ekki jafn auðveldlega aftur í `Passa` við bakgrunnsuppfærslu.
+
+---
+
+### 3. Ljósmyndir — snyrting án þess að breyta frumriti
+
+Fyrir ljósmyndir var markmiðið tvíþætt:
+
+1. minnka óþarfa bakgrunn í vinnusýn;
+2. spara blek/tóner ef skjal er prentað.
+
+Byggð var varfærin crop/snyrting sem reynir að finna mörk skjals og fela dökkan eða óþarfan bakgrunn **í vinnusýn**, en varðveitir frumritið óbreytt.
+
+Raunpróf sýndu líka mörkin: of ákafur crop getur farið að kroppa í raunverulegt skjal. Reglan var því hert í átt að:
+
+**betra að skilja eftir smá bakgrunn en að skera af bókhaldsgögnum.**
+
+---
+
+### 4. Endurbyggja tillögu úr staðfestum gögnum — án AI
+
+Í Olís-prófun komu rangar OCR-/hauslínur inn sem bókunartillögur, m.a. `Nr. viðskipta` og `Kenni starfsmanns` með stórum tölum sem voru túlkaðar sem fjárhæðir.
+
+Þetta leiddi til nýrrar aðgerðar:
+
+**`Endurbyggja tillögu úr staðfestum gögnum`**
+
+Markmið:
+
+- hreinsa óstaðfesta tillögu;
+- nota canonical vörulínur;
+- nota staðfesta fyrirtækjasértæka bókunarsögu;
+- varðveita greiðslulínu þegar hún er örugg;
+- ekkert AI-kall;
+- betra að fá ófullkomna tillögu en giska.
+
+---
+
+### 5. Diagnostic sýn — hætt að giska á hvar vara dettur út
+
+Þegar Monster-lína kom ekki með í endurbyggingu var hætt að bæta við blindum fuzzy-reglum.
+
+Í staðinn var sett inn `Greining endurbyggingar` sem sýnir:
+
+- hvaða canonical vörulínur parser fann;
+- magn;
+- línusamtölu;
+- hvort product-pattern fannst;
+- hvort staðfest fyrri saga fannst;
+- hvaða reikningstenging var örugg;
+- hvaða lína var ópöruð.
+
+Diagnostic sýndi síðan nákvæmlega:
+
+- `Monster Zero Ultra White 500ml` — magn 2 — 738 kr. — parser fann línuna en engin örugg reikningssaga fannst;
+- `Barebells Strawberry sundae` — 550 kr. — fannst í fyrri staðfestri sögu á 4910;
+- rusllínur `Greiðslur` og `greidd` voru einnig að leka inn sem canonical línur.
+
+Þetta færði rannsóknina úr ágiskun yfir í mælanlegt lag.
+
+---
+
+### 6. Almenn product-history og footer-sía — staðfest testcase
+
+History lookup var síðan lagað almennt:
+
+- eldri yfirfarnar systursíður í sama safnskjali geta endurlesist deterministic ef þær voru unnar með eldri parser-útgáfu;
+- allar yfirfarnar systursíður í sama safnskjali komast inn í sögulegu leitina;
+- `Greiðslur`, `greidd`, `upph. greidd`, `Heildar greiðsla` o.fl. eru útilokuð sem vörulínur;
+- engin sérkóðun fyrir Sturlu, Olís eða Monster.
+
+**Staðfest testcase:**
+
+Olís skjal 38/103 varð:
+
+- 4910 `Monster Zero Ultra White 500ml` — D 738 kr.
+- 4910 `Barebells Strawberry sundae` — D 550 kr.
+- 2230 `VISA 6127` — K 1.288 kr.
+
+Debet = Kredit = 1.288 kr.
+
+Diagnostic sýndi:
+
+- 2 vörulínur;
+- 2 öruggar reikningstengingar.
+
+Þetta var mikilvæg staðfesting á því að **eldri staðfest saga geti raunverulega gert næsta skjal auðveldara án AI.**
+
+---
+
+### 7. „Þarf skoðun – setja til hliðar“
+
+Skjal sem þurfti nánari skoðun var að taka yfir venjulega yfirferðarröðina og koma aftur strax sem næsta skjal.
+
+Bætt var við `needsAttentionAt` og aðgerð til að:
+
+- setja skjal til hliðar;
+- halda því sýnilegu í sérstöku „Þarf nánari skoðun“ svæði;
+- taka það aftur inn í yfirferð síðar.
+
+Fyrsta próf sýndi að skjalið fór til hliðar en kom samt aftur næst vegna þess að `next`-leit tók það áfram með. Queue-leitin var því hert þannig að venjuleg yfirferð sleppi skjölum sem bíða nánari skoðunar.
+
+**Staða í lok dags:** virkni er komin langt, en nýjasta queue-hegðun eftir síðustu patcha er ekki production-staðfest og á að smoke-testa áður en hún er merkt fullkláruð.
+
+---
+
+### 8. Starfsmannastyrkir — einn almennur lykill, tegund sem gagnasamhengi
+
+Við raunskjal frá Ungmennafélagi Njarðvíkur kom upp heilsueflingarstyrkur til starfsmanns.
+
+Hönnunarniðurstaða:
+
+- ekki búa til nýjan bókhaldslykil fyrir hvert afbrigði styrks;
+- nota einn almennan starfsmannatengdan kostnaðarlykil;
+- varðveita tegund greiðslu, starfsmann, frumskjal og ársuppgjörsmerkingu sér í gögnum.
+
+Nýr grunnlykill:
+
+**4520 – Starfsmannastyrkir og endurgreiðslur**
+
+Hugsanlegar tegundir undir sama lykli síðar:
+
+- heilsuefling;
+- aksturs-/bílastyrkur;
+- nám;
+- annar starfsmannastyrkur.
+
+GLÖGGT á að gera atriðið sýnilegt í árs-/uppgjörsyfirliti fyrir þann sem annast launamiða/framtal, en ekki þykjast klára þá vinnu ef hún er utan þjónustunnar.
+
+---
+
+### 9. Legacy skjöl — halda áfram án óþarfs AI-endurlesturs
+
+Eldri greining gat stoppað með skilaboðum um að skjalið þyrfti eina endurlesningu vegna þess að umhverfisstaðfesting hafði áður verið blönduð við bókunargreiningu.
+
+Ný hugsun og útfærsla:
+
+**endurlesning á ekki að vera skyld ef núverandi gögn nægja.**
+
+Bætt var við leið þar sem notandi getur:
+
+- valið reikningslykil;
+- valið debet/kredit;
+- sett fjárhæð;
+- sett bókunartexta;
+- stofnað handvirkt BOOKABLE drög;
+- án AI-kalls;
+- án þess að GLÖGGT giski á mótreikning.
+
+Heilsueflingarskjalið var þannig fært yfir í:
+
+- 4520 — D 30.000 kr.;
+- 2230 — K 30.000 kr. þegar kreditkort var valið sem óafstemmd greiðsla.
+
+Þessi leið minnkar bæði kostnað og óþarfa bið vegna gamallar vinnslusögu.
+
+---
+
+### 10. Prentun — eitt fylgiskjal, eitt blað, síðan áfram
+
+Prentflæðið fékk mikla raunprófun.
+
+Staðfest vandamál sem komu upp í þróun:
+
+- HTML/browser print gat búið til 3 blöð;
+- fyrsta blað gat orðið tómt;
+- frumskjal og bókunarstimpill gátu lent sitt á hvoru blaði;
+- nýr flipi braut vinnurennslið;
+- sjálfvirkt `afterprint` gat farið of fljótt á næsta skjal áður en notandi náði að ýta á `Print`;
+- `next` leit var tímabundið bundin við sama PDF eða útilokaði yfirfarin en óbókuð skjöl.
+
+Rétta tæknilega leiðin var endurstaðfest:
+
+**búa til raunverulegt PDF fyrir prentun**, ekki prenta HTML-síðuna.
+
+Staðfest í print-preview:
+
+- **1 sheet of paper**;
+- frumskjalið heilt;
+- bókunarstimpill á sama blaði.
+
+Nýjasta UX-reglan í lok dags er:
+
+- GLÖGGT má opna prentunina þegar notandi er kominn í prentsýn;
+- það má **ekki fara sjálfkrafa á næsta skjal bara vegna `afterprint`**, því browser segir ekki örugglega hvort ýtt var á Print eða Cancel;
+- eftir að print-dialog lokast á að notandi geta valið `Næsta fylgiskjal`, og `Prenta` þarf að vera tiltækt aftur ef prentun fór ekki fram.
+
+**Staða:** one-sheet PDF er staðfest; endanlegt „prentun gleymist aldrei + next“ rennsli þarf eitt lokapróf eftir nýjustu patchana.
+
+---
+
+### 11. Snúa frumskjali og leiðrétta söluaðila
+
+Raunskjal lá á hlið og rangt AI-auðkenni gerði yfirferð erfiða.
+
+Bætt var við:
+
+- `↺ / ↻` 90° snúningi í vinnusýn;
+- frumritið sjálft helst óbreytt;
+- `Breyta` við Söluaðila í `Yfirferðargögn`;
+- leiðrétting er audit-rekjanleg;
+- fyrra AI/OCR-gildi varðveitist;
+- mögulega röng kennitala seljanda er ekki blindlega borin áfram;
+- ef skjal var þegar yfirfarið þarf að staðfesta yfirferð aftur eftir auðkennisbreytingu.
+
+Þetta var staðfest sjónrænt í viewer.
+
+---
+
+### 12. Mikilvægasta AI-gæðatilvik dagsins — Pítan / Subway / Spíran
+
+Sama frumskjal gaf ósamræmdar AI-niðurstöður:
+
+1. fyrst:
+   - Pítan;
+   - 4.890 kr.;
+2. eftir endurlestur:
+   - Subway Álfabakka;
+   - 7.930 kr.;
+3. frumritið sjálft sýndi:
+   - **Spíran**;
+   - **11.780 kr.**;
+   - **VISA 6127**;
+   - **7.6.2026 kl. 10:55**.
+
+Notandi snéri frumskjalinu, leiðrétti söluaðila og upphæð handvirkt og byggði rétta bókun:
+
+- 4910 Veitingar / Spíran — D 11.780 kr.;
+- 2230 VISA 6127 — K 11.780 kr.
+
+Bókun stemmdi.
+
+**Arkitektúrlexía dagsins:**
+
+Ef sama frumrit gefur verulega mismunandi AI-niðurstöðu við endurlestur á GLÖGGT ekki að halda háu öryggi eða láta nýjustu AI-niðurstöðu líta út sem sannleika. Þetta ætti síðar að mynda sjálfvirkt `AI inconsistency` merki og lækka traust þar til maður staðfestir frumgögnin.
+
+Staðfest handvirk leiðrétting á að verða authoritative fyrir áframhaldandi vinnu og learning; gamla AI-lýsingin má aðeins lifa sem rekjanleg söguleg greining.
+
+---
+
+### 13. Git / Production checkpoint
+
+Stór checkpoint var tekinn um miðjan dag eftir langa lotu af Fylgiskjala-, viewer-, print- og product-learning breytingum.
+
+Fyrir commit var staðfest:
+
+- Prisma migrations applied;
+- `npx tsc --noEmit` hreint;
+- `git diff --cached --check` hreint;
+- aðeins valdar skrár staged — ekki `git add .`.
+
+Commit:
+
+**`d002e9e` — `Improve receipt review workflow and product learning`**
+
+Niðurstaða:
+
+- 27 files changed;
+- 5.692 insertions;
+- 184 deletions;
+- push á `main` tókst;
+- `origin/main` = `d002e9e`.
+
+Vercel:
+
+- **Ready**;
+- **Production**;
+- build um **1m39s**.
+
+Þetta er öruggur production-checkpoint dagsins.
+
+Mikilvægt: margar breytingar sem voru gerðar **eftir `d002e9e`** — m.a. nýjustu history/diagnostic/queue/legacy/4520/print-next/snúningur/söluaðili patcharnir — eru ekki sjálfkrafa taldar commit-aðar eða production-staðfestar í þessari dagbók nema það hafi sérstaklega verið gert síðar.
+
+---
+
+### 14. Working tree og Git-regla
+
+Repoið er enn með eldri tracked deletions, rannsóknarskript, `_legacy-*`, `_inspect-*`, generated/ og fleira sem á ekki að fara óvart í commit.
+
+Reglan stendur óbreytt:
+
+**Aldrei `git add .` í þessu repo.**
+
+Áður en næsti checkpoint er tekinn:
+
+1. `git status --short`
+2. `npx tsc --noEmit`
+3. stage-a aðeins nákvæmar skrár frá þessari lotu
+4. `git diff --cached --check`
+5. `git diff --cached --name-status`
+6. `git diff --cached --stat`
+7. commit/push
+8. Vercel smoke-test
+
+---
+
+### Nákvæmur stoppunktur fyrir næstu vinnulotu
+
+1. **Ekki lesa Spíran-skjalið aftur með AI.** Rétt frumgögn og handvirk leiðrétting eru þegar komin.
+2. Staðfesta að leiðréttur söluaðili og upphæð haldist eftir refresh og að rekjanleiki sýni leiðréttinguna.
+3. Smoke-testa nýjasta prentflæðið:
+   - eitt blað;
+   - prentun opnast;
+   - GLÖGGT hoppar ekki sjálft áfram áður en notandi er tilbúinn;
+   - `Næsta fylgiskjal` fer í næsta raunverulega óbókað/óafgreitt skjal;
+   - skjöl sett til hliðar koma ekki aftur í venjulega röð.
+4. Prófa 1–2 ný endurtekin vörudæmi og staðfesta að product-history learning haldi áfram án AI.
+5. Skoða hvort diagnostic-kassinn eigi að vera áfram sýnilegur fyrir þróun eða færast undir rekjanleika/debug þegar reglan er orðin stöðug.
+6. Taka **nýjan nákvæman Git-checkpoint** fyrir breytingar eftir `d002e9e` þegar tsc og smoke-test eru hrein.
+7. Næsti gæðavörn í greiningarvél: merkja sjálfkrafa þegar sama frumskjal gefur ósamræmdar AI-niðurstöður og láta mannlega staðfestingu vinna.
+
+---
+
+### Lokaniðurstaða kvöldsins
+
+Dagurinn var langur, stundum þrjóskur og mjög gagnlegur.
+
+Við fórum ekki beina línu. Viewerinn missti zoom, pan tapaðist, PDF varð óskýrt, crop varð of ákafur, browser-prentun bjó til þrjú blöð, `next` fór vitlausa leið, TypeScript stoppaði okkur nokkrum sinnum og AI las sama frumrit á tvo ólíka vegu.
+
+En hver þessara villna varð að betri reglu í kerfinu.
+
+Í lok dags er GLÖGGT betur í stakk búið til að:
+
+- sýna frumskjalið þar sem bókarinn vinnur;
+- láta bókarann zooma, færa og snúa því;
+- leiðrétta rangt lesinn söluaðila;
+- endurbyggja tillögu úr staðfestum gögnum án AI;
+- læra almennt af staðfestum vörum;
+- halda vafasömum skjölum til hliðar;
+- halda legacy skjölum áfram án óþarfs AI-kalls;
+- prenta eitt raunverulegt fylgiskjal með bókunarstimplinum;
+- og — mikilvægast — láta staðfest frumgögn og mannlega yfirferð hafa síðasta orðið.
+
+Þetta var ekki bara dagur þar sem „mikið var smíðað“.
+
+Þetta var dagur þar sem vinnuflæði bókarans sjálfs fór að móta kerfið miklu meira en tæknin ein.
+
+## 2026-09-23 — Fylgiskjöl, deterministic reconciliation, Innsýn og AI-kostnaður
+
+### Heildarniðurstaða dagsins
+
+Vinnudagurinn færði GLÖGGT verulega nær markmiðinu **„gögn fyrst, AI síðan“** í Fylgiskjölum og Innsýn.
+
+Meginlínan sem nú er komin í production er:
+
+**frumgögn skjals → deterministic lestur → canonical identity → staðfest þekking → reconciliation → AI aðeins ef raunveruleg túlkunarþörf er enn eftir**
+
+Samhliða fannst og lagaðist alvarleg Innsýn-villa þar sem uppsafnaðar YTD-lífeyristölur voru ranglega taldar sem janúartekjur.
+
+---
+
+### Fylgiskjöl — UI og frumskjal
+
+Fylgiskjalalistinn og frumskjalaupplifunin voru hresst upp.
+
+Production checkpoint:
+
+- `4cfbeba` — `Hressa fylgiskjalalista og færa frumskjal inn í GLÖGGT`
+- Vercel Production: **Ready**
+
+Markmið breytingarinnar var meðal annars að frumskjalið upplifðist sem hluti af GLÖGGT sjálfu í stað aðskilins/ytra flæðis.
+
+---
+
+### AI-kostnaður — vandinn staðfestur
+
+Fjögur ný Konto-skjöl frá Sturla fóru öll í AI þrátt fyrir að vera mjög stöðluð skjöl.
+
+Rannsókn sýndi að:
+
+- deterministic snapshot var þegar búið til áður en AI var kallað;
+- en AI var samt alltaf keyrt;
+- PDF með textalagi fór sem `PDF_TEXT_ONLY`, ekki sem heilt PDF-upload;
+- breitt samhengi gerði þó inputið stórt, um 13k token á skjal í dæminu;
+- receipt 295–298 kostuðu saman um 51,53 kr. í AI.
+
+Þetta varð raunpróf á því að deterministic lestur þarf ekki aðeins að vera til staðar — hann þarf að geta **stöðvað AI-kallið alveg** þegar gögnin nægja.
+
+---
+
+### Deterministic Konto-gátt
+
+Byggður var fail-closed parser fyrir stöðluð Konto-sölureikningsskjöl.
+
+Read-only regression á receipt 295–298 gaf:
+
+- 4/4 `matched: true`
+- `analysisSource: DETERMINISTIC_TEMPLATE`
+- `templateId: KONTO_SALES_INVOICE_V1`
+- réttar dagsetningar
+- rétt reikningsnúmer
+- réttar heildarfjárhæðir
+- rétt VSK
+- jafnvægisbókanir
+
+Production checkpoint:
+
+- `c9c6e9f` — `Baeta vid deterministic AI-gatt fyrir Konto fylgiskjol`
+- Vercel Production: **Ready**
+
+Mikilvæg regla:
+
+> Sérparserar mega vera adapterar yfir í canonical facts, en meginreglur GLÖGGT mega ekki verða vendor-hardcode.
+
+---
+
+### Canonical identity — sameiginlegur grunnur Fylgiskjala og Innsýnar
+
+Greining á entity-gögnum sýndi að sama merking var oft til með mismunandi `identifierType`, t.d.:
+
+- `POLICY_NUMBER`
+- `SKIRTEINISNUMER`
+- `CERTIFICATE_NUMBER`
+
+og sambærilegt fyrir banka, mæla, lán o.fl.
+
+Einnig kom í ljós að veik auðkenni, t.d. síðustu fjórir tölustafir greiðslukorts, mega ekki valda sjálfvirkri sameiningu.
+
+Byggt var sameiginlegt canonical identity-lag með:
+
+- alias-normaliseringu identifier types;
+- canonical identifier type;
+- styrkleikaflokkun auðkenna;
+- sameiginlegum resolver fyrir Fylgiskjöl og Innsýn;
+- fail-closed hegðun við óvissu.
+
+Production checkpoint:
+
+- `6a42a7d` — `Sameina canonical entity identity fyrir Innsyn og fylgiskjol`
+- Vercel Production: **Ready**
+
+Mikilvæg langtímaregla:
+
+> Sama raunverulega entity á að hafa eina merkingarlega identity-línu þótt eldri gögn noti mismunandi identifierType.
+
+---
+
+### Deterministic reconciliation eftir staðfesta þekkingu
+
+Byggt var reconciliation-lag sem reynir að endurmeta skjal út frá staðfestum facts og entity/account-tengingum áður en AI er kallað aftur.
+
+Production checkpoint:
+
+- `ebfe601` — `Baeta vid deterministic reconciliation fyrir fylgiskjol og Innsyn`
+- Vercel Production: **Ready**
+
+Meginhegðun:
+
+- staðfest þekking fær forgang;
+- canonical facts eru notuð;
+- jafnvægi og nauðsynleg tengsl eru sannreynd;
+- ef gögn nægja verður skjalið `RECONCILED`;
+- ef gögn vantar er farið fail-closed;
+- AI er fallback, ekki sjálfgefið næsta skref.
+
+Handvirka aðgerðin „Lesa fylgiskjal aftur með AI“ er áfram skýr, viljandi AI-aðgerð.
+
+---
+
+### Sjóvá receipt 291 — canonical hydration og 0 ný AI-köll
+
+Receipt 291 varð mikilvægt raunpróf.
+
+Fyrra ástand:
+
+- tvö `RECEIPT_ANALYSIS` AI-köll höfðu þegar verið gerð;
+- eitt skírteini, `705186`, var til sem staðfest canonical entity;
+- en vantaði sem `DocumentEntityLink`;
+- reconciliation stoppaði því með `MISSING_ENTITY_LINK`.
+
+Canonical link hydration var bætt við þannig að reconciliation má:
+
+- finna vantað entity út frá sterku canonical identifier;
+- nota aðeins ótvíræða staðfesta þekkingu;
+- ekki stofna nýtt entity;
+- fail-closed ef fleiri en ein staðfest samsvörun finnst;
+- varðveita nýja SYSTEM-tengingu þegar örugg hydration tekst.
+
+Production checkpoint:
+
+- `5aff580` — `Laga canonical entity link hydration i reconciliation`
+- Vercel Production: **Ready**
+
+Read-only preview á receipt 291 staðfesti:
+
+- `status: RECONCILED`
+- `blockers: []`
+- `canPromoteToBookable: true`
+- `hydratedEntityLinkCount: 1`
+- `INSURANCE_POLICY:705186->4620`
+- allar 9 staðfestu tryggingatengingarnar nýttar
+- bókun jafnaði nákvæmlega 85.677 kr.
+- reason: ekkert nýtt AI-kall þurfti
+
+Þetta er lykilpróf á nýju kostnaðarlínunni:
+
+> Staðfest þekking + canonical facts + reconciliation á að geta leyst endurmat án þess að borga aftur fyrir sömu túlkun.
+
+---
+
+### Innsýn — YTD-villa í lífeyris- og greiðslusýn
+
+Í Innsýn birtist janúar 2026 ranglega sem:
+
+- `Óstaðfestur greiðandi`: 9.723.475 kr.
+- Tryggingastofnun: 267.040 kr.
+- samtals: 9.990.515 kr.
+
+Read-only trace sýndi nákvæmlega hvaðan 9.723.475 kr. komu:
+
+- júní YTD
+- júlí YTD
+- ágúst YTD
+
+uppsafnaðar lífeyristölur voru allar með `periodStart = 2026-01-01` og því ranglega settar á janúar.
+
+Niðurstaðan var því **ekki raunveruleg greiðsla og ekki bókun**, heldur aggregation-villa í Innsýn.
+
+Lagfæring:
+
+- YTD / annual / estimated / forecast / cumulative / fjölmánaða facts mega áfram vera varðveitt í Innsýn;
+- þau mega ekki sjálfkrafa teljast sem rauninnkoma eins mánaðar;
+- mánaðarsýn þarf að byggja á raunverulegum mánaðarlegum atburðum/facts.
+
+Commit:
+
+- `5cd1171` — `Laga manadartekjur og arssiu i Innsyn`
+
+Production smoke-test staðfesti:
+
+- janúar 2026 = **267.040 kr.**
+- janúar er eingöngu Tryggingastofnun í þessari sýn
+- 2026 heild janúar–ágúst = **4.107.145 kr.**
+- 2025 mánuðir birtast ekki lengur inni í 2026-listanum
+- `Staðan í dag` = 4.107.145 − 183.021 = **3.924.124 kr.**
+
+---
+
+### Innsýn — tímabilslag til framtíðar
+
+Núverandi ársfilter er öryggisvörn, ekki endanleg framtíðarhönnun.
+
+Innsýn þarf síðar sameiginlegt **selected period** lag sem getur stutt t.d.:
+
+- þennan mánuð;
+- síðasta mánuð;
+- ársfjórðung;
+- heilt ár;
+- fyrra ár;
+- síðustu 12 mánuði;
+- sérvalið frá–til tímabil;
+- samanburð milli tímabila.
+
+Meginregla:
+
+> „2026“ á ekki að vera hardcode-regla. Það er bara eitt valið tímabil.
+
+---
+
+### Innsýn — bókað, þekkt og bíður staðfestingar
+
+Umræða um tryggingakortið leiddi til mikilvægrar almennrar reglu.
+
+Innsýn þarf að halda skýrum aðskilnaði milli:
+
+1. **Bókað**
+   - aðeins staðfestar bókanir.
+
+2. **Þekkt**
+   - staðreyndir sem GLÖGGT þekkir úr skjölum, samningum, skírteinum, bankagögnum o.fl.
+
+3. **Bíður staðfestingar**
+   - þekkt áhrif sem mega ekki birtast eins og þau séu bókuð.
+
+Canonical entity- og reconciliation-lagið má auðga Innsýn, en má aldrei breyta „þekktu“ sjálfkrafa í „bókað“.
+
+Dæmi um betri framtíðarframsetningu trygginga:
+
+- 9 þekkt skírteini
+- bókuð iðgjöld: 0 kr.
+- 9 skírteini bíða bókhaldslegrar staðfestingar
+
+frekar en að sýna einfaldlega „0 tryggingar“ þegar kerfið veit meira en bókhaldið hefur enn staðfest.
+
+---
+
+### Explicit stable-prefix cache fyrir AI-lestur
+
+Eftir að óþarfa post-confirmation AI-endurlestrar höfðu verið færðir yfir á reconciliation var næsti kostnaðarstaður fyrsti AI-lesturinn þegar AI er raunverulega nauðsynlegt.
+
+Rannsókn sýndi að breytileg skjals- og fyrirtækisgögn voru áður of framarlega í promptinu til að sameiginlegi langi GLÖGGT-regluprompturinn nýttist vel sem cacheable prefix.
+
+Breytingin færði:
+
+**fyrir cache-breakpoint:**
+- aðeins stöðugar GLÖGGT-reglur.
+
+**eftir cache-breakpoint:**
+- fyrirtækisupplýsingar;
+- staðfest lán;
+- AccountingPattern;
+- yfirfarin bókunardæmi;
+- staðfest tryggingarskírteini;
+- Innsýn-tryggingahreyfingar;
+- reikningslykil;
+- deterministic PDF-texta/gögn;
+- mynd/file input.
+
+Einnig:
+
+- `prompt_cache_options.mode = "explicit"`
+- stöðugt `prompt_cache_key`
+- `metadata.promptLayout = EXPLICIT_GLOBAL_PREFIX_V1`
+
+Production checkpoint:
+
+- `163b85c` — `Baeta explicit stable prefix cache i AI lestur`
+- Vercel Production: **Ready**
+
+---
+
+### MIKILVÆGUR NÆSTI PRÓFUNARPUNKTUR — MÁ EKKI TÝNAST
+
+**Ekki kalla AI sérstaklega bara til að prófa cache.**
+
+Við næsta eðlilega fylgiskjal sem **raunverulega þarf AI** skal skoða:
+
+- `AiUsage.inputTokens`
+- `AiUsage.cachedInputTokens`
+- cache-write/cached usage þar sem það er tiltækt
+- `metadata.promptLayout`
+- staðfesta að það sé:
+  - `EXPLICIT_GLOBAL_PREFIX_V1`
+- raunverulegan kostnað í krónum
+
+Helst skal bera saman **tvö eða fleiri AI-skjöl unnin nálægt í tíma** svo sjáist hvort sameiginlegi prefixinn endurnýtist.
+
+Fyrsta request eftir cache-write getur verið dýrara en venjulegt uncached input. Ávinningurinn á að koma við endurnýtingu.
+
+Þessi mæling skal gerð **áður en næsta AI-kostnaðarlag er hannað**, svo ákvörðun byggi á raunverulegum GLÖGGT-gögnum en ekki tilgátu.
+
+---
+
+### Næsta AI-kostnaðarskref eftir cache-prófið
+
+Ef cache-prófið staðfestir væntanlega hegðun er næsta líklega skref:
+
+**deterministic context-routing**
+
+Markmið:
+
+- senda aðeins þau staðfestu lán, tryggingar, mynstur og önnur facts sem eiga raunverulega við skjalið;
+- ekki senda breiðan fyrirtækislista inn í hvert AI-kall;
+- halda hegðun fail-closed;
+- nýta canonical identity til að velja samhengi;
+- minnka input tokens án þess að veikja rekjanleika eða bókunaröryggi.
+
+---
+
+### Git / production checkpoints dagsins
+
+Staðfestir production-checkpoints úr þessari vinnulotu:
+
+- `4cfbeba` — Hressa fylgiskjalalista og færa frumskjal inn í GLÖGGT
+- `c9c6e9f` — deterministic AI-gátt fyrir Konto
+- `6a42a7d` — canonical entity identity
+- `ebfe601` — deterministic reconciliation fyrir Fylgiskjöl og Innsýn
+- `5cd1171` — Innsýn YTD-/árssýn lagfæring
+- `5aff580` — canonical entity link hydration í reconciliation
+- `163b85c` — explicit stable prefix cache í AI-lestri
+
+Vercel sýndi nýjasta commit `163b85c` sem **Ready / Production**.
+
+---
+
+### Git-regla stendur óbreytt
+
+Repo-ið inniheldur áfram gamlar eyðingar, copy-skrár og untracked möppur.
+
+Regla:
+
+> **Aldrei `git add .` í þessu repo.**
+
+Alltaf stage-a aðeins nákvæmlega þær skrár sem tilheyra viðkomandi breytingu.
+
+---
+
+### Nákvæmur stoppunktur
+
+1. Ekki framkalla AI-kall sérstaklega.
+2. Við næsta eðlilega fylgiskjal sem þarf AI:
+   - taka AI usage fyrir kallið;
+   - staðfesta `EXPLICIT_GLOBAL_PREFIX_V1`;
+   - skoða `inputTokens` og `cachedInputTokens`;
+   - bera kostnað saman við fyrri AI-lestur.
+3. Ef fleiri en eitt eðlilegt AI-skjal kemur nálægt í tíma:
+   - bera sérstaklega saman fyrsta og næsta kall til að sjá raunverulega prefix-endurnýtingu.
+4. Að því loknu:
+   - meta hvort næsta kostnaðarlag verði deterministic context-routing.
+5. Innsýn:
+   - varðveita framtíðarverk um sameiginlegt selected-period lag;
+   - halda aðskilnaði `Bókað / Þekkt / Bíður staðfestingar`.
+
+---
+
+## 2026-09-12
+
+### Upphaf dags
+
+Haldið áfram eftir vinnulotu 11.–12. september.
+
+Staða við upphaf:
+- Fjöltyngt GLÖGGT-viðmótslag komið upp.
+- Full viðmótstungumál: íslenska, enska, pólska og serbneska.
+- Innsýn staðfest fjöltyngd.
+- Þjónustutímakerfi komið með grunn fyrir sjálfvirka og handvirka skráningu.
+- Valin þjónustutímastilling: AUTO_PROMPT með 10 mínútna idle-mörkum.
+- Commit `fed4e6c` komið í production.
+- Vercel production staðfest Ready.
+
+### Verk dagsins
+
+- [ ] Stofna varanlega vinnudagbók í GLÖGGT-repo.
+- [ ] Setja eldri lykiláfanga inn í dagbókina.
+- [ ] Útfæra idle-spurningu þjónustutímakerfis.
+- [ ] Prófa breytingar.
+- [ ] Commit / deploy eftir því sem við á.
+
+### Næsti tæknilegi punktur
+
+Þjónustutímakerfið þarf að spyrja notanda þegar hann kemur aftur eftir óvirkni hvort óvirki tíminn eigi að teljast með í þjónustutíma.
+
+---
+
+# Eldri lykiláfangar
+
+## 2026-09-11 → 2026-09-12
+
+### Fjöltyngt GLÖGGT
+
+- Lokið við kerfisbundna fjöltyngingu á GLÖGGT.
+- Full viðmótstungumál:
+  - íslenska
+  - enska
+  - pólska
+  - serbneska
+- UI-tungumál og tungumál efnis/AI eru aðskilin hugtök.
+- Reikningsnúmer eru tungumálaóháð. Dæmi: `4400` helst alltaf `4400`.
+- Stöðluð heiti mega þýðast en sérsniðin notendaheiti ekki sjálfkrafa.
+- Innsýn var prófuð í röð:
+  - íslenska
+  - enska
+  - pólska
+  - serbneska
+- Fjöltyngd Innsýn staðfest virk.
+
+### Þjónustutími
+
+- Grunnur lagður að þjónustutímaskráningu fyrir bókara/notanda.
+- Þjónustutími er aðskilinn frá WorkLog / Vinnustund starfsmanna.
+- Kerfið getur tengt tíma við valið fyrirtæki og verkhluta.
+- Stuðningur við handvirka og sjálfvirka tímaskráningu.
+- Tímagögn styðja sekúndur.
+- Valin prófunarstilling:
+  - `AUTO_PROMPT`
+  - idle-mörk: 10 mínútur
+- Ólokið:
+  - spurning þegar notandi kemur aftur eftir idle um hvort óvirki tíminn eigi að teljast með.
+
+### Git / production
+
+- Commit:
+  - `fed4e6c` — `Add multilingual UI, workflow settings and service tracking`
+- Umfang:
+  - 48 files changed
+  - 3500 insertions
+  - 1453 deletions
+- `npx tsc --noEmit`:
+  - 0 villur
+- `npx prisma validate`:
+  - staðfest
+- `npx prisma migrate deploy`:
+  - engar pending migrations
+- Vercel Production:
+  - Ready
+- Production smoke test:
+  - staðfest
+
+---
+
+## 2026-09-10
+
+### Learned booking patterns
+
+Stór áfangi í því að láta GLÖGGT læra af staðfestum bókunum án þess að hardkóða niðurstöður.
+
+Staðfest dæmi:
+- HS lærði leiðréttan mótreikning `1510`.
+- Ergo lán `104907` hélt staðfestum skuldalykli `2220`.
+- Sjóvá fjölskírteini varð jafnvægisbókun með sundurliðun.
+- Sjóvá tilboð `851.853` var áfram Innsýn / non-bookable.
+- TR og Sýslumaður zero-net skjöl urðu bókanleg án þess að undirliðir töpuðust.
+- Endurgreiðsla bifreiðagjalds var leiðrétting á `4740` en ekki ný tekjufærsla.
+
+Commit:
+- `f6cb697`
+
+Production:
+- push á `main`
+- Vercel Ready
+- innskráning prófuð
+- Fylgiskjöl prófuð
+
+---
+
+## 2026-09-09
+
+### Sjóvá fjölskírteini
+
+- Fjölskírteina greiðslukvittun var normalíseruð í sjálfstæð tryggingaskírteini í UI.
+- Ekki lengur eitt sameinað trygginga-entity.
+- Kerfið getur greint mismunandi tryggingategundir innan sama skjals.
+- Dæmi:
+  - fjölskylduvernd
+  - lögboðin ökutækjatrygging
+  - brunatrygging húseigna
+- Bókunartillögur tengdar viðeigandi kostnaðarreikningum.
+- Ákvörðun tekin um að vinna ekki frekar í tilteknu Sjóvá-skjalinu fyrr en frekari yfirferð færi fram.
+
+---
+
+## 2026-09-07 → 2026-09-08
+
+### Innsýn og skjalavinnsla
+
+- Bætt pension-payer detection í Innsýn.
+- Commit:
+  - `a4a8d51`
+- Receipt processing flutt yfir í Supabase Storage.
+- Commit:
+  - `9ca6276`
+- `createInsightJobForDocument` sett upp.
+- Insight processing version:
+  - `innsyn-v1`
+- Persistent Insight job-vinnsla styrkt.
+- Stale recovery bætt aftur inn síðar með:
+  - `60ed275`
+
+### Kennitala
+
+- Grunnur að `lib/core/kennitala.ts`.
+- Markmið:
+  - staðfesta form
+  - verja gegn ómögulegum dagsetningum
+  - halda reglunum miðlægum
+
+### Vinnulag
+
+- Core-hönnun GLÖGGT skal áfram unnin í sameiginlegri umræðu.
+- Önnur AI-tól aðeins fyrir afmörkuð verkefni.
+- Mikilvægar hönnunarniðurstöður skulu varðveittar jafnóðum.
+
+---
+
+## 2026-09-04
+
+### Insight worker
+
+- Stale recovery endurheimt í Insight worker.
+- Commit:
+  - `60ed275`
+- `npx tsc --noEmit` staðfest án villu.
+
+### Innsýn – batch-regla
+
+Ákvörðun:
+- Bunkavinnsla má ekki vera háð því að notandi haldi sömu vafrasíðu opinni.
+- Batch/job þarf að vera:
+  - server-bundið
+  - persistent
+  - endurheimtanlegt
+  - sjálfstætt fyrir hvert skjal
+
+---
+
+## 2026-09-03
+
+### Lán og skuldareikningar
+
+Hönnunarregla:
+
+Þegar AI greinir nýtt lán eða lánsnúmer:
+- má AI leggja til sérstakan skuldareikning
+- má AI ekki stofna reikning sjálft
+- notandi/bókari samþykkir stofnun
+- varðveita skal tengingu:
+  - lánveitandi
+  - lánsnúmer
+  - skuldareikningur
+
+---
+
+## 2026-09-01 → 2026-09-02
+
+### VSK og reikningslyklar
+
+- VSK-reglur styrktar.
+- Account number + account name þurfa bæði að passa GLÖGGT-standard áður en default VSK-regla er notuð.
+- Markmið:
+  - verja imported / legacy chart of accounts
+  - forðast ranga sjálfvirka VSK-flokkun
+
+VSK-flokkar þróaðir í átt að:
+- INPUT
+- OUTPUT
+- NONE
+- EXEMPT
+- REVIEW
+- SYSTEM
+
+Regla:
+- öruggar tillögur mega fara í quick-approve
+- REVIEW og SYSTEM mega ekki fara sjálfkrafa í gegn
+
+### Fyrirtækjaskrá / RSK
+
+Áður en GLÖGGT fer í almenna SaaS-notkun með mörgum viðskiptavinum:
+- senda Skattinum skriflega fyrirspurn
+- fá staðfestingu á fyrirhugaðri notkun Fyrirtækjaskrá API
+
+---
+
+## 2026-08-30 → 2026-08-31
+
+### Mobile / PWA / aðgangur
+
+- Mobile sett undir innskráningu.
+- Óinnskráður notandi á `/mobile` fer á:
+  - `/innskraning?next=%2Fmobile`
+- PWA-virkni styrkt.
+- Mobile ætlað að virka app-líkt á heimaskjá.
+- Aðgangspóstur á að innihalda:
+  - leið í GLÖGGT á tölvu
+  - leið í GLÖGGT Mobile
+  - stutta skýringu á uppsetningu Mobile sem app
+
+### Verk
+
+- WorkOrder og WorkLog þróað.
+- CLIENT á ekki að geta stofnað ný verk.
+- Vinnutímar:
+  - 24 tíma snið
+  - `HH:mm`
+
+---
+
+## 2026-08-28
+
+### Öryggi og rekjanleiki
+
+Ákvörðun:
+- rekjanleiki á að vera kerfislægur eiginleiki í GLÖGGT
+- ekki eingöngu tengdur VSK
+
+Færslur eiga að varðveita eftir því sem við á:
+- uppruna
+- hver stofnaði / bókaði
+- tímasetningar
+- breytingar
+- overrides
+- ástæður mikilvægra sjálfvirkra ákvarðana
+
+Hugmynd:
+- sérstakur flipi/panel:
+  - `Rekjanleiki`
+
+---
+
+## 2026-08-25 → 2026-08-27
+
+### Banki
+
+- Grunnur lagður að Banka-einingu.
+- Módel:
+  - Company
+  - BankAccount
+  - BankTransaction
+- Síður:
+  - `/banki`
+  - `/banki/tengja`
+
+Öryggisregla:
+- aldrei nota `prisma migrate reset` á núverandi gagnagrunni til að leysa migration-vandamál.
+
+### Framtíð – Afstemming
+
+Afstemming verður sér Banki-undireining.
+
+Hugsanleg staða bankafærslu:
+- match
+- review
+- no match
+
+Kerfið þarf einnig að geta fundið:
+- bókaða GLÖGGT-færslu sem vantar samsvarandi bankahreyfingu.
+
+---
+Já. Ég er búinn að ganga frá dagbók dagsins þannig að við getum byrjað nýtt spjall án þess að missa þráðinn.
+
+GLÖGGT – vinnudagbók 13. september 2026
+
+Stærsti áfangi dagsins var Banki → Ársgreining 2025. Við færðum greininguna áfram frá einfaldri flokkun yfir í rekjanlegra kerfi þar sem grunnreglan er „gögn fyrst, AI síðan“. Bankagögn, mótaðilar, kennitölur, textar, upprunareikningar, endurtekningar og staðfest þekking eiga að gera eins mikið og hægt er áður en AI þarf að túlka eitthvað.
+
+Við byggðum upp tvívíða greiningu þar sem GLÖGGT skilur nú á milli greiðslueðlis og tilgangsvísbendingar. Þannig getur færsla t.d. verið millifærsla eða kostnaðarstyrkur að greiðslueðli en samt tengst bifreið að tilgangi. Vissa og rökstuðningur fylgja hvorri vídd. Samantekt og rannsóknartafla nota sömu greiningarniðurstöðu svo þær eigi ekki lengur að segja sitt hvora söguna.
+
+Við löguðum einnig stóra kortafærsluvandann. Almenn lýsing á debetkortafærslu má ekki sameina óskylda söluaðila í einn mótaðila. Kennitala og raunverulegur söluaðili fá nú forgang en kortaendingin varðveitist sem upplýsingar um greiðslumiðil. Langtímamódelið er bankareikningur → kort → korthafi → söluaðili → færsla → fylgiskjal/bókun, án þess að GLÖGGT giski á korthafa út frá innkaupahegðun.
+
+Við aðgreindum m.a. Laun, Launatengd gjöld og Greiðslur til einstaklinga. Síðasti flokkurinn kemur í stað þess að kalla óstaðfestar greiðslur „verktakagreiðslur“. Bankinn má sjá vísbendingar um laun, en Launakerfið á síðar að staðfesta raunverulega launagreiðslu. Bankinn verður þá afstemmingar- og staðfestingarlag.
+
+Við unnum mikið í rekstrarflokkun: húsnæði, veitur, fjarskipti, hugbúnaður, tryggingar, bifreiðar, ferðir, veitingar, matvöruinnkaup, skrifstofukostnaður, íþróttir/mót, sjoppa/endursala og veislur/viðburðahald. Endurgreiðslur, styrkir, framlög, kostnaðarstyrkir og bankagjöld eru jafnframt aðgreind eftir greiðslueðli svo þau skekki ekki venjulegan rekstrarkostnað.
+
+Mótakostnaður þróaðist sérstaklega mikið. Mótareikningur er nú sterk vísbending um móta-/íþróttatilgang og GLÖGGT nýtir einnig samhengi eins og mót, iðkendur, fararstjóra, aldursflokka og staðfestingargjöld. Þetta náði mörgum færslum sem voru augljósar fyrir okkur en höfðu áður setið í óflokkuðu.
+
+Við staðfestum síðan raunverulegt rekstrarsamhengi ýmissa mótaðila. Iðnmark og Ís-spor eru sjoppa/endursala; Nói-Síríus og Kólus eru líkleg sjoppu-/endursöluinnkaup. Kim Jong/Kim Yong Wings, Dominos Norðurhelli og Nings Hlíðasmára eru veitingar, og Löður er bifreiðarkostnaður. Penninn/A4 er að öllum líkindum skrifstofukostnaður.
+
+Við fundum líka sérstakt mynstur í Riddaranum, Norðanfiski, Blómabúðinni Burkna, Vínbúðinni Álrúnu, Tertugalleríi og Blómabúð Mögdu. Þetta er veislu-/viðburðakostnaður og líklegt að a.m.k. hluti hans tengist lokahófi í lok tímabils. GLÖGGT á þó ekki að fullyrða „lokahóf“ nema dagsetningar og annað samhengi styrki þá niðurstöðu. Síðar getur Innsýn tengt slíkar færslur saman sem mögulegan sameiginlegan viðburð.
+
+Við festum líka mikilvæga merkingarreglu: „Innheimt“ segir hvernig krafa var greidd en ekki hvað var verið að greiða fyrir. GLÖGGT má því ekki flokka alla innheimtukröfuna eftir innheimtuaðilanum. Skýr innheimtukostnaður má hins vegar fara sérstaklega í gjaldaflokk. Sama hugsun var notuð á eldsneytisstyrki: þeir eru ekki sjálfkrafa bein eldsneytiskaup.
+
+Nákvæm byrjunarstaða næsta spjalls
+
+Síðasti afhenti breytingapakkinn var gloggt-app-stadfest-veitingar-sjoppa-bifreid-20260913.zip.
+
+Næsta reglulota er þegar ákveðin en ekki komin inn: Altis ehf., S Direct Lindir og Icetransport ehf. → Íþróttabúnaður; Emobi á Íslandi ehf. → Síma-/fjarskiptabúnaður frekar en fjarskiptaþjónusta; Te & Kaffi Borgartúni, Serrano Dalshrauni og Lemon Hjallahrauni → Veitingar.
+
+Þar byrjum við næst. Ég hef líka varðveitt þessa lokastöðu sérstaklega svo nýja spjallið eigi að geta tekið við hér.
+
+## 13. september 2026 – Ársgreining banka, flokkun og brú að ársreikningi
+
+Stór vinnudagur í Banka / Ársgreiningu með raunverulegum gögnum frá árinu 2025.
+
+### Helstu áfangar dagsins
+
+- Ársgreining banka þróuð áfram samkvæmt „gögn fyrst, AI síðan“.
+- Unnið með 10 bankareikninga og 1.314 bankafærslur.
+- Heildarinnborganir í gagnasafni: 57.147.322 kr.
+- Heildarútborganir í gagnasafni: 57.954.519 kr.
+- Nettó peningaflæði: -807.197 kr.
+- AI-kostnaður Ársgreiningarinnar hélt áfram að vera 0 kr. þrátt fyrir umfangsmikla greiningarvinnu.
+
+### Útgjaldagreining
+
+- Mótaðilasamsvörun og deterministic flokkun styrkt.
+- Fjöldi þekktra rekstrarflokka staðfestur úr bankagögnum.
+- Greiðslueðli og tilgangur færslu áfram meðhöndluð sem aðskildar víddir.
+- Marteinn Ægisson:
+  - 11 eldsneytisgreiðslur.
+  - 20.000 kr. hver.
+  - Samtals 220.000 kr.
+  - Greiðslueðli getur áfram verið kostnaðarstyrkur en tilgangur er bifreiðakostnaður.
+- Óflokkað útstreymi komið niður í 1.525.811 kr.
+- Ákveðið að ekki skuli þvinga óvissar færslur í kostnaðarflokka eingöngu til að tæma óflokkaðan lista.
+
+### Tengdar einingar / deildir
+
+Sérstök meðferð sett inn fyrir fjárflæði milli tengdra eininga/deilda svo það birtist ekki sem venjulegur óþekktur rekstrarkostnaður.
+
+Úr óflokkuðu útstreymi fóru m.a.:
+
+- Knattspyrnudeild Þróttar Vogum: 3.771.663 kr.
+- Ungmennafélagið Þróttur: 2.058.923 kr.
+
+Samtals: 5.830.586 kr.
+
+Mikilvæg hönnunarniðurstaða:
+Kostnaðartegund, kostnaðarstaður/deild og fjárflæði milli tengdra eininga eiga að vera aðskildar víddir.
+
+### Styrkjaflæði og ársreikningur
+
+Rannsókn á Sveitarfélaginu Vogum sýndi sterkan rekjanleika:
+
+- 13.415.000 kr. komu inn á styrkjareikning.
+- Tvær greiðslur, 75.000 + 75.000 kr., samtals 150.000 kr., tengdust 150.000 kr. áframgreiðslu til Knattspyrnudeildar Þróttar Vogum.
+- 13.415.000 - 150.000 = 13.265.000 kr.
+- Sú fjárhæð samsvarar nákvæmlega línunni „Sveitarfélagið Vogar“ í ársreikningi 2025.
+
+Þetta er notað sem rekjanleg vísbending og staðfestingarpróf, ekki sem regla sem neyðir bankagreiningu til að passa ársreikning.
+
+### Samantekt Ársgreiningar
+
+Nýr flipi:
+Banki → Ársgreining → Samantekt
+
+Samantektin sýnir nú m.a.:
+
+- heildarinnborganir,
+- heildarútborganir,
+- líklega veltu / greiðsluuppgjör,
+- óflokkað útstreymi,
+- tekjuhlið,
+- gjaldahlið,
+- rekstrarkostnað eftir eðli.
+
+Ákveðið að ítarleg „Brú að ársreikningi“ verði sérstakt undirlag/undirsýn undir Samantekt fremur en að gera aðalsamantektina of langa.
+
+### Innsýn og bakfærsla
+
+Í prófunarfélaginu fannst eitt bókað fylgiskjal:
+
+- Pítan, 4.450 kr.
+- Upprunaleg bókun: 4910 / 1510.
+
+Gerð var handvirk spegil-/kreditfærsla:
+
+- 1510 Debet 4.450 kr.
+- 4910 Kredit 4.450 kr.
+
+Eftir bakfærsluna sýndi Innsýn rétt:
+
+- Staðan í dag: 0 kr.
+- Innkoma: 0 kr.
+- Útgjöld: 0 kr.
+- Bókuð útgjöld: 0 kr.
+
+Þetta staðfesti að Innsýn les nettó bókhaldsáhrif debet/kredit en ekki einfaldlega fjölda eða brúttóupphæð bókaðra fylgiskjala.
+
+Næsta hönnunarverk:
+Almenn „Bakfæra bókun“ virkni sem býr til spegilfærslu, tengir hana frumfærslunni og varðveitir ástæðu, notanda og tíma.
+
+### Næstu skref
+
+- Halda áfram með Brú að ársreikningi.
+- Sýna Greint úr gögnum / Ársreikningur / Frávik.
+- Halda áfram að byggja rekjanleika milli bankagagna, fylgiskjala, bókhalds og ársreiknings.
+- Ekki elta óflokkaðar bankafærslur þar sem fylgiskjal eða önnur gögn eiga að veita svarið.
+
+GLÖGGT – vinnuskýrsla 14. september 2026
+
+Dagurinn fór að mestu í að styrkja Bankagreiningu, Innsýn og undirbúning ársuppgjörs, með áherslu á að halda GLÖGGT við grunnregluna okkar: gögn fyrst, deterministic greining næst, fylgiskjöl þar sem bankagögn duga ekki og AI aðeins þegar raunveruleg túlkunarþörf stendur eftir.
+
+Bankagreining og rekjanleiki
+
+Við kláruðum mikilvægt lag í rannsóknarflæðinu þannig að hægt er nú að fara frá Innsýn niður í nákvæmt rannsóknaratriði og þaðan í þær einstöku bankafærslur sem mynda niðurstöðuna.
+
+Það þýðir að rannsóknin er ekki lengur bara tala eða samantekt. Hún er rekjanleg niður í frumgögnin án þess að rannsóknin sjálf breyti bókun eða flokkun.
+
+Við löguðum sérstaklega vandamál þar sem samantekt hóps gat verið UNKNOWN þótt einstakar færslur innan hóps væru þegar flokkaðar. Nú byggir nákvæma rannsóknarsafnið á flokkun einstakra færslna, ekki eingöngu samantekt hópsins.
+
+UNKNOWN kostnaðarflæði
+
+Við unnum kerfisbundið með óflokkað útstreymi.
+
+Áður var UNKNOWN:
+
+55 færslur – 1.448.921 kr.
+
+Eftir síðustu deterministic breytingar stendur eftir:
+
+38 færslur – 1.327.037 kr.
+
+Þar með leystust:
+
+17 færslur – 121.884 kr.
+
+Við tókum síðan mikilvæga hönnunarákvörðun: ekki þvinga þetta lengra.
+
+Það sem eftir stendur inniheldur einmitt færslur þar sem mótaðili eða bankatexti segir ekki nægilega mikið einn og sér, t.d. JYSK, N1, Háskólaprent, Motus, Ríkissjóðsinnheimtur og sambærileg atriði. Þar eiga fylgiskjölin að koma með svarið.
+
+Þetta varð því mjög góður raunprófshópur fyrir seinna flæði:
+
+bankafærsla → fylgiskjal → staðfest flokkun → bókun.
+
+Staðfestar deterministic reglur
+
+Við varðveittum og prófuðum m.a. nýlegar staðfestar reglur fyrir:
+
+Emobi á Íslandi → fjarskiptabúnaður.
+S Direct Lindir → íþróttabúnaður.
+
+Emobi-reglan ein færði 76.890 kr. úr UNKNOWN yfir í skilgreindan kostnaðarflokk.
+
+Við ræddum Terra, Valdimar, Hlaupastyrk, launatengd gjöld og Minningarsjóð, en tókum meðvitaða ákvörðun um að ekki ofþjálfa kerfið á þessu eina prófunargagnasafni.
+
+Það er mikilvægt framfaraskref í sjálfu sér: GLÖGGT á ekki að verða „snjallt“ með því að safna sértækum ágiskunarreglum sem bila hjá næsta viðskiptavini.
+
+Ársreikningsvinnublað
+
+Við byggðum nýjan ársreiknings-/ársuppgjörsgrunn undir:
+
+/banki/arsreikningur?year=2025
+
+Þetta er vinnublað, ekki fullbúinn ársreikningur.
+
+Það notar aðeins þær tölur sem bankagreiningin getur stutt og reynir ekki að búa til efnahagsreikning eða samanburðartölur sem gögnin styðja ekki.
+
+Styrkjatengt innstreymi og önnur óstaðfest flæði eru sérstaklega haldin utan formlegrar rekstrarniðurstöðu þar til bókhaldsleg staðfesting liggur fyrir.
+
+Við héldum líka skýrum aðskilnaði milli:
+
+bankagreiningar, rannsóknar, bókhalds og endanlegs ársuppgjörs.
+
+Innsýn
+
+Innsýn fékk frekari tengingu inn í nákvæmu bankarannsóknina.
+
+Notandinn getur nú farið frá rannsóknaratriði yfir í færslusafnið sem liggur undir því og þaðan áfram í einstaka færslu.
+
+Þetta styrkir það sem við höfum verið að stefna að í Innsýn:
+
+Hvað vitum við?
+Hvað bendir til einhvers?
+Hvað vitum við ekki?
+Hvaðan kemur niðurstaðan?
+
+TypeScript og Git
+
+Lokaprófið var hreint:
+
+npx tsc --noEmit
+
+engin TypeScript-villa.
+
+Við settum síðan nákvæmlega 9 viðeigandi skrár í commit. Gamlar eyðingar, tímabundnar skrár, README-prófunarskrár og aðrar untracked möppur fóru ekki með.
+
+Commit dagsins:
+
+a3c3eb2
+Improve bank research and add annual statement workpaper
+
+Breytingin var síðan push-uð á main:
+
+24d2fa8 → a3c3eb2
+
+Þar með er stór áfangi dagsins kominn örugglega í GitHub.
+
+Notendur og heimildir
+
+Í lok kvöldsins kom upp atriði varðandi Skoðunaraðgang í „Notendur og heimildir“.
+
+Gísli er áfram með almenna notendahlutverkið CLIENT, en þú ert nú búinn að veita honum skoðunaraðgang að gögnunum.
+
+Það er rétt hönnunarlega að skilja þetta tvennt að:
+
+CLIENT = almennt kerfishlutverk notanda.
+
+Skoðunaraðgangur = heimild hans innan tiltekins fyrirtækis.
+
+Við eigum síðar að sannreyna vistunarflæðið í UI betur, því skjárinn virtist ekki vista „Skoðunaraðgang“ eins og ætlast var til. Það þarf ekki að elta það frekar í kvöld.
+
+Staðan í lok dags
+
+Við endum daginn með mjög góðum varðveislupunkti:
+
+Bankarannsóknin er rekjanleg niður í færslur.
+UNKNOWN er komið niður í eðlilega óvissu í stað þess að vera þvingað niður með ágiskunum.
+Ársuppgjörsvinnublað er komið inn.
+Innsýn og bankagreining tala betur saman.
+TypeScript er hreint.
+Commit a3c3eb2 er á main.
+Skoðunaraðgangur Gísla er kominn á gögnin.
+
+Næsta vinnulota getur því byrjað frá hreinum og öruggum punkti, líklega annaðhvort á heimildakerfinu eða næsta stigi þar sem fylgiskjöl og bankafærslur eru látin vinna saman.
+
+# 15. september 2026 – stór þróunar-, stöðugleika- og arkitektúrdagur
+
+Dagurinn varð einn af stærri mótunardögum GLÖGGT hingað til. Fyrri hluti dagsins snerist að miklu leyti um að koma verkefnum, frestum, gagnaskilum, skilaboðum og pósthólfi í raunhæfan grunn, auk þess að leysa alvarlegt production-vandamál í gagnagrunnstengingum. Seinni hluti dagsins þróaðist síðan yfir í heildarendurskoðun á því hvað GLÖGGT á að verða sem kerfi og sérstaklega hvað Innsýn á að gera fyrir stjórnendur sem hafa ekki eigið fjármála- eða stjórnendateymi.
+
+Dagurinn endaði með öruggum production-checkpoint á commit `af999d8` og ákvörðun um að hætta tímabundið að bæta einstökum hlutum inn í núverandi skipulag. Næsta stóra skref verður kerfisarkitektúr og nýtt heildarskipulag GLÖGGT áður en frekari stór UI-þróun heldur áfram.
+
+
+## Production – Prisma / Supabase / Vercel
+
+Alvarlegt production-vandamál kom upp þegar Innsýn fór að skila 500 villum.
+
+Prisma fékk meðal annars:
+
+`(EMAXCONNSESSION) max clients reached in session mode - max clients are limited to pool_size: 15`
+
+Þetta var sérstaklega mikilvægt vegna þess að mjög fáir raunverulegir notendur voru inni í kerfinu. Vandamálið benti því frekar til tengingahönnunar en raunverulegs notendaálags.
+
+Rannsókn á Supabase sýndi að:
+
+- `DATABASE_URL` á að nota shared transaction-mode pooler fyrir runtime.
+- `DIRECT_URL`/session-mode er ætlað öðrum þörfum, m.a. migrations.
+- Production runtime hafði ekki verið sett upp eins og æskilegt er fyrir serverless/Vercel.
+
+`lib/prisma.ts` var einnig lagað þannig að PrismaClient er endurnýttur í production innan warm Vercel instance.
+
+Commit:
+
+`f790627 – Fix Prisma client reuse for production`
+
+Við uppfærslu `DATABASE_URL` í Vercel varð tímabundið annað vandamál vegna þess að allt `.env` formið hafði farið inn í Value reitinn:
+
+`DATABASE_URL="postgresql://..."`
+
+í stað þess að Value innihaldi eingöngu sjálfa PostgreSQL URI-slóðina.
+
+Það olli Prisma `P1001` og öllum síðum datt tímabundið út.
+
+Eftir leiðréttingu á Vercel environment variable og redeploy virkuðu bæði Heimasvæði og Innsýn aftur.
+
+Production var síðan prófað á nokkrum síðum og virkaði eðlilega.
+
+Mikilvæg framtíðarregla:
+
+> GLÖGGT má ekki þurfa handvirkt refresh til að komast aftur í rétta stöðu.
+
+Í komandi arkitektúrvinnu þarf því að skoða ekki aðeins UI heldur einnig:
+
+- Prisma connection management
+- gagnasókn
+- server actions
+- cache
+- `revalidatePath`
+- client/server state
+- stærð einstakra síðna
+- module boundaries
+- hvaða gögn hver síða þarf raunverulega að sækja.
+
+Fyrir fjölgun pilot-notenda þarf síðar að gera raunverulegt álagspróf með samtímis notkun á Heim, Innsýn, Banka, Fylgiskjölum o.fl. og fylgjast samtímis með Supabase connections og Vercel logs.
+
+
+## Verkefni, lögbundnir frestir og gagnaskil
+
+Verkefnakerfið tók stórt skref.
+
+Lögbundin verkefni og frestir voru tengd betur við raunverulegt vinnuflæði og `ensureCompanyStatutoryTasks()` tengt inn á Heim og Verkefni þannig að verkefnin verði raunverulega til þegar notandi vinnur í kerfinu.
+
+Mikilvæg aðgreining var fest:
+
+1. Opinber skilafrestur.
+2. Æskilegur skiladagur gagna frá viðskiptavini.
+3. Fyrsti áminningardagur.
+
+Þetta má ekki vera sami dagurinn.
+
+Fyrir VSK getur t.d. opinber skilafrestur verið 5. október en bókari óskað eftir gögnum fyrr.
+
+Gagnaskilaferlið gerir ráð fyrir að:
+
+- viðskiptavinur staðfesti að öllum gögnum hafi verið skilað,
+- bókari staðfesti að gögn séu nægileg,
+- bókari geti óskað eftir frekari gögnum.
+
+Þetta er almennur grunnur sem síðar getur einnig nýst fyrir laun, ársuppgjör og önnur gagnaskil.
+
+
+## Staðgreiðsla og launagreiðendaskrá
+
+Fyrirtæki var skráð á launagreiðendaskrá frá 15.09.2026.
+
+Villa kom í ljós þar sem statutory task generator var að stofna verkefni fyrir síðasta lokna mánuð og hefði því stofnað ágústverkefni þótt fyrirtækið hefði ekki verið á launagreiðendaskrá þá.
+
+Reglan var leiðrétt þannig að núverandi mánuður myndast þegar við á.
+
+Staðfest verkefni:
+
+`Staðgreiðsla og tryggingagjald – 2026-09`
+
+Tímabil:
+
+`1.9.–30.9.2026`
+
+Skilafrestur:
+
+`15.10.2026`
+
+
+## Sjálfvirkur tímabilstexti
+
+Áminningar eiga ekki að byggjast á handskrifuðum tímabilstexta.
+
+Tímabil verkefnisins sjálfs á að framleiða textann.
+
+Dæmi:
+
+`VSK-gögn fyrir júlí–ágúst 2026`
+
+og:
+
+`Launagögn fyrir september 2026`
+
+Þetta var gert fjöltyngt frá upphafi fyrir:
+
+- íslensku
+- ensku
+- pólsku
+- serbnesku.
+
+Sama tímabilslag á síðar að geta farið í GLÖGGT-tilkynningar, tölvupóst og aðrar samskiptaleiðir.
+
+
+## Almenn skilaboð og pósthólf
+
+Í ljós kom að verkefni/frestir leysa ekki almenn samskipti milli bókara/stjórnanda og notenda fyrirtækis.
+
+Því var skilgreind skýr aðgreining:
+
+- Verkefni = eitthvað sem þarf að framkvæma eða fylgja eftir.
+- Skilaboð = almenn samskipti sem þurfa ekki endilega frest.
+
+Fyrsta útgáfa almennra skilaboða var byggð.
+
+Prisma `CompanyMessage` var bætt við.
+
+Við `prisma validate` kom í ljós að gagnstæð relation vantaði í `Company`. Það var lagað með:
+
+`messages CompanyMessage[]`
+
+Migration hafði þegar verið keyrð og þurfti því ekki að endurtaka hana eingöngu vegna relation-lagfæringarinnar.
+
+Fyrsta end-to-end prófið tókst:
+
+- skilaboð send,
+- birtust á Heimasvæði,
+- sendandi réttur,
+- hægt að merkja sem lesið.
+
+Pósthólf var síðan þróað áfram með:
+
+- Móttekið
+- Sent
+- Geymt
+- Rusl
+- leit
+- lesið/ólesið
+- geyma/endurheimta.
+
+Heimasvæði á aðeins að sýna fá ólesin skilaboð, ekki verða póstforrit.
+
+Chrome Translate olli einnig líklegri hydration viðvörun með því að breyta `lang` í DOM. Ekki á að breyta `layout.tsx` eingöngu vegna þess nema vandamálið endurtaki sig án browser translation.
+
+
+## Fyrirtækjabundin skilaboð og GLÖGGT þjónusta
+
+Mikilvæg hönnunarákvörðun:
+
+Skilaboð GLÖGGT eru ekki almennt Teams/chat-kerfi.
+
+Venjuleg skilaboð eiga heima innan valins fyrirtækis.
+
+Bókari sem sér mörg fyrirtæki sendir því alltaf skilaboð innan viðkomandi fyrirtækjasamhengis.
+
+GLÖGGT þjónusta/Admin verður sérstök samskiptaleið.
+
+Viðskiptavinurinn sér þjónustusvar sem frá:
+
+`GLÖGGT`
+
+en innri rekjanleiki varðveitir hvaða GLÖGGT Admin svaraði og hvenær.
+
+Regla:
+
+> Viðskiptavinurinn sér GLÖGGT. Kerfið veit hvaða stjórnandi framkvæmdi aðgerðina.
+
+Sjálfgefið á framkvæmdastjóri/stjórnandi fyrirtækis að geta haft samband við GLÖGGT þjónustu. Síðar má veita öðrum sérstaka heimild.
+
+
+## Notendaleyfi – hugmynd mótuð en ekki byggð
+
+Fyrirtækjastjórnandi á síðar að geta séð:
+
+- innifalin notendaleyfi,
+- notuð leyfi,
+- laus leyfi,
+- möguleika á viðbótarleyfi.
+
+Dæmi:
+
+`3 af 3 notendaleyfum í notkun.`
+
+Ef samningur heimilar sjálfvirka viðbót getur stjórnandi samþykkt viðbótarleyfi samkvæmt samningsverði.
+
+Annars verður beiðni sjálfkrafa þjónustuskilaboð til GLÖGGT.
+
+Samningsreglur eiga að vera gögn, ekki hardcode dreift um kerfið.
+
+Þessi hugmynd var varðveitt en ákveðið að byggja hana ekki núna.
+
+
+## Production checkpoint
+
+Áður en farið yrði í stóru arkitektúrvinnuna var ákveðið að tryggja núverandi stöðu.
+
+Vegna margra gamalla/untracked/deleted skráa var sérstaklega ákveðið að nota EKKI:
+
+`git add .`
+
+Aðeins viðeigandi skrár voru staged.
+
+Staðfest fyrir commit:
+
+`npx prisma validate`
+
+og:
+
+`npx tsc --noEmit`
+
+Commit:
+
+`af999d8 – Add tasks reminders and company messaging foundation`
+
+Niðurstaða:
+
+- 36 files changed
+- 2065 insertions
+- 271 deletions.
+
+Push tókst:
+
+`f790627..af999d8 main -> main`
+
+Vercel sýndi síðan deployment:
+
+- Ready
+- Production.
+
+Þetta er nýja örugga línan í sandinn fyrir næstu stóru vinnulotu.
+
+
+# Eftir blund – kerfisarkitektúr GLÖGGT
+
+Eftir að tæknivinnan var komin í öruggt checkpoint færðist umræðan yfir á stærri spurningu:
+
+> Hvernig á GLÖGGT í raun að vera skipulagt þegar það er orðið miklu meira en bókhaldskerfi?
+
+Ferskar möppur voru afhentar til arkitektúrrannsóknar:
+
+- `app`
+- `components`
+- `lib`
+- `prisma`
+- auk `innflutningur`
+- `mobile`
+- `stjornbord`
+- `verk`.
+
+Fyrsta kortlagning sýndi um 69 raunverulegar `page.tsx` síður og um 46 Prisma models.
+
+Þetta staðfesti að núverandi flata sidebar-skipulag er orðið barn síns tíma.
+
+Ákvörðun:
+
+> Ekki halda áfram að bæta stórum nýjum atriðum í núverandi sidebar áður en heildararkitektúr hefur verið endurhannaður.
+
+Arkitektavinnan má:
+
+- halda hlutum,
+- færa þá,
+- sameina,
+- skipta upp,
+- endurnefna,
+- leggja niður úr UI ef þeir eru orðnir úreltir.
+
+Góð virkni þarf ekki að vera áfram á sama stað bara vegna þess að hún er þegar til.
+
+Regla:
+
+> Varðveita það sem við lærðum af gömlu útfærslunni, ekki endilega formið sem prófunin tók.
+
+
+## Fyrirtækið verður vinnuumhverfið
+
+Ein sterkasta niðurstaða fyrstu arkitektúrumræðunnar:
+
+> Fyrirtæki á ekki lengur að vera bara ein síða í sidebar.
+
+Valið fyrirtæki á að verða sjálft vinnuumhverfið.
+
+Fyrirtækið er annar meginás kerfisins.
+
+Hinn ásinn er notandinn:
+
+- hlutverk,
+- heimildir,
+- virkar einingar,
+- verkefni,
+- hvað þarfnast athygli.
+
+Eigandi litla fyrirtækisins, bókari með tugi fyrirtækja, verkstjóri, starfsmaður á vettvangi og GLÖGGT Admin eiga því ekki að horfa á sama kerfið.
+
+
+## Hagsýni sem arkitektúrregla
+
+GLÖGGT á að geta orðið stórt án þess að byggja enterprise-flækju að óþörfu.
+
+Spyrja þarf við hverja einingu:
+
+- Þurfum við þessa síðu?
+- Þurfum við sérstakt gagnalíkan?
+- Getur sameiginleg þjónusta leyst þetta fyrir fleiri einingar?
+- Geta deterministic gögn/reglur leyst þetta áður en AI er kallað?
+- Er ávinningurinn þess virði miðað við þróun, rekstur og viðhald?
+
+Markmiðið:
+
+> Sem mest notagildi fyrir sem minnstan óþarfa kostnað og flækjustig.
+
+
+# Upplifun GLÖGGT
+
+Sameiginleg hönnunarstefna var orðað skýrar.
+
+GLÖGGT á að vera:
+
+- notendavænt,
+- leiðandi,
+- skiljanlegt,
+- skemmtilegt,
+- sannfærandi.
+
+„Skemmtilegt“ merkir ekki barnalegt viðmót eða skraut.
+
+Það merkir að kerfið svari notandanum, framvinda sjáist, hlutir klárist með góðri tilfinningu og notandinn upplifi stjórn frekar en baráttu við kerfið.
+
+„Sannfærandi“ merkir að notandinn fái fljótt tilfinninguna:
+
+> Þetta kerfi veit hvað það er að gera.
+
+Sannfæringin á að byggjast á:
+
+- skýrri forgangsröðun,
+- faglegu útliti,
+- góðu orðalagi,
+- réttum upplýsingum á réttum stað,
+- rekjanleika,
+- skýrum mörkum milli þess sem GLÖGGT veit og þess sem þarf staðfestingu.
+
+GLÖGGT á ekki að þykjast vita það sem gögnin styðja ekki.
+
+
+# Innsýn – upprunasagan rifjuð upp
+
+Kvöldumræðan leiddi aftur að upphaflegu ástæðunni fyrir Innsýn.
+
+Notandinn rifjaði upp rekstur þar sem mjög mikið var að gera og því virtist reksturinn ganga ágætlega.
+
+Dýr endurskoðandi/bókhaldsaðili sá um daglegt bókhald.
+
+Hann vann vinnuna og rukkaði fyrir hana en var ekki leiðandi gagnvart stjórnandanum.
+
+Reksturinn lifði í um 18 mánuði og var allan tímann í miklum mínus.
+
+Stjórnandinn vissi það ekki.
+
+Grundvallarspurningin var:
+
+> Hvernig gat verið svona mikið að gera en fyrirtækið samt verið í bullandi mínus?
+
+Þetta er upprunavandamálið sem Innsýn á að leysa.
+
+Bókhald getur verið tæknilega rétt án þess að stjórnandinn skilji reksturinn.
+
+Gögn eru ekki það sama og upplýsingar.
+
+Upplýsingar eru ekki það sama og skilningur.
+
+Innsýn á að brúa bilið.
+
+
+# Innsýn sem stjórnendateymi litla fyrirtækisins
+
+Stór fyrirtæki geta haft:
+
+- fjármálastjóra,
+- stjórnendateymi,
+- stjórnendafundi,
+- fjárhagsáætlanir,
+- mánaðarskýrslur,
+- starfsfólk sem fylgir frávikum eftir.
+
+Litla fyrirtækið hefur oft ekkert slíkt teymi.
+
+Framkvæmdastjórinn getur samt borið ábyrgð á:
+
+- rekstri,
+- sölu,
+- starfsfólki,
+- verkum,
+- þjónustu,
+- fjárhag.
+
+Niðurstaða kvöldsins:
+
+> Innsýn á að verða hluti af stjórnendateyminu sem litla fyrirtækið hefur ekki efni á að ráða.
+
+Hún tekur ekki ákvörðunina af stjórnandanum.
+
+Hún undirbýr upplýsingarnar sem gott stjórnendateymi hefði annars lagt á borðið:
+
+- Svona stendur reksturinn.
+- Þetta hefur breyst.
+- Þetta er líkleg skýring.
+- Þetta er framundan.
+- Þetta er frávik frá áætlun.
+- Þetta þarfnast athygli.
+- Hér eru valkostir sem hægt er að skoða.
+
+
+## Grundvallarmarkmið Innsýnar
+
+> Framkvæmdastjóri sem skoðar Innsýn reglulega á að upplifa að hann þekki reksturinn sinn.
+
+Og:
+
+> Ekkert mikilvægt í rekstrinum ætti að koma stjórnandanum að óvörum ef GLÖGGT hafði nægar upplýsingar til að sjá þróunina eða benda á áhættuna.
+
+GLÖGGT getur ekki séð ófyrirséða atburði sem engin gögn gefa vísbendingu um.
+
+En ef gögnin sýna:
+
+- lækkandi framlegð,
+- vaxandi kostnað,
+- versnandi lausafé,
+- komandi stórar greiðslur,
+- lán,
+- skattaskuldbindingar,
+- samninga sem renna út,
+- óvenjulega þróun,
+- taprekstur ákveðinna vara eða verka,
+
+þá á stjórnandinn ekki að þurfa að uppgötva það sjálfur of seint.
+
+
+# Framkvæmdastjóri þarf skoðunaraðgang
+
+Skoðunaraðgangur stjórnanda er ekki munaður.
+
+Stjórnandi sem ber ábyrgð á rekstrinum en lætur annan aðila sjá um bókhaldið þarf samt að geta skilið fjárhagsstöðuna.
+
+Skoðunaraðgangur er ekki bókunarheimild.
+
+Stjórnandinn þarf ekki að geta:
+
+- breytt bókhaldsfærslum,
+- bókað,
+- breytt reikningslyklum,
+- samþykkt VSK.
+
+Hann þarf hins vegar að geta svarað:
+
+- Hvernig gengur?
+- Erum við að græða?
+- Hvar erum við að tapa?
+- Hvað eigum við?
+- Hvað skuldum við?
+- Hvað hefur breyst?
+- Hvað er framundan?
+- Hvað þarf athygli?
+
+Innsýn á því ekki að vera undirskipuð bókhaldinu sem aukaskýrsla.
+
+Hugsunin er frekar:
+
+`Reksturinn → Innsýn`
+
+Bókhald verður ein mikilvægasta gagnauppspretta Innsýnar ásamt Banka, Sölu, Launum, Verk, Vinnustund, samningum og öðrum rekstrargögnum.
+
+
+# Innsýn á að gera reksturinn sýnilegan
+
+Mannsaugað þarf oft sjónræna framsetningu.
+
+Innsýn á því ekki að verða hefðbundið dashboard með tugum KPI-korta og kökurita.
+
+Hún þarf að geta orðið sjónræn frásögn af rekstrinum.
+
+Dæmi:
+
+> Reksturinn er stöðugur. Lausafjárstaða er sterkari en fyrir þremur mánuðum, en rekstrarkostnaður hefur hækkað þrjá mánuði í röð. Tvær stærri greiðslur eru framundan næstu 14 daga.
+
+Undir textanum á augað síðan að geta séð það sem textinn segir.
+
+Möguleg framsetning:
+
+- þróun yfir 6–12 mánuði,
+- peningaflæði,
+- tekjur → kostnaður → laun → skattar → það sem verður eftir,
+- framtíðartímalína,
+- frávik frá áætlun,
+- sjónræn áhersla á það sem þarfnast athygli.
+
+Markmiðið er:
+
+> Ég sé fyrirtækið mitt.
+
+Ekki aðeins:
+
+> Ég sé bókhaldið mitt.
+
+
+# Innsýn og fjárhagsáætlanir
+
+Innsýn á síðar að geta hjálpað stjórnandanum að gera raunhæfar áætlanir úr raunverulegum gögnum.
+
+Dæmi:
+
+- markmið um framlegð,
+- launakostnað,
+- lausafé,
+- fjárfestingar,
+- sölu,
+- kostnað.
+
+GLÖGGT fylgist síðan með raunveruleikanum gagnvart áætluninni.
+
+Kerfið á ekki að bíða til ársloka og segja:
+
+> Áætlunin stóðst ekki.
+
+Heldur segja nógu snemma:
+
+> Við erum farin að víkja frá áætlun.
+
+og hjálpa að finna hvar og hvers vegna.
+
+
+# Frá viðvörun yfir í leiðsögn
+
+Innsýn á ekki aðeins að segja:
+
+> Framlegð hefur lækkað.
+
+Hún á, þegar gögnin styðja það, að geta boðið:
+
+> Það stefnir í lakari afkomu. Viltu skoða leið til að bæta framlegð um 2 prósentustig?
+
+Síðan má reikna sviðsmyndir.
+
+Dæmi:
+
+- hvaða vörur standa illa undir kostnaði,
+- hvaða þjónusta eða verk skila lítilli framlegð,
+- hvað gerist ef verð breytist,
+- hvað gerist ef sölumagn breytist,
+- hvaða kostnaðarliðir hafa mest áhrif.
+
+Mikilvæg regla:
+
+GLÖGGT má ekki fullyrða að verðhækkun sé rétt ákvörðun ef það þekkir ekki markaðsviðbrögð.
+
+Réttara er:
+
+> Miðað við óbreytt sölumagn myndi þessi breyting færa framlegð nær markmiðinu.
+
+Stjórnandinn tekur ákvörðunina.
+
+Hugsanleg stjórnunarhringrás:
+
+`GLÖGGT sér þróun`
+→ `vekur athygli`
+→ `útskýrir orsök`
+→ `býður leiðsögn`
+→ `reiknar valkosti`
+→ `stjórnandi ákveður`
+→ `GLÖGGT fylgist með árangrinum`.
+
+
+# Ytri rekstrarbreytur
+
+Innsýn á síðar að geta sett rekstur í samhengi við umhverfið þegar það skiptir máli.
+
+Dæmi:
+
+- verðbólga,
+- launavísitala,
+- raforkuverð,
+- eldsneytisverð,
+- vextir,
+- gengi,
+- hráefnisverð,
+- flutningskostnaður,
+- tryggingar,
+- leiga,
+- gjaldskrár.
+
+Rafmagn var tekið sem dæmi.
+
+Stjórnandi sér kannski aðeins að rafmagnsreikningurinn hækkaði.
+
+Innsýn gæti greint:
+
+> Rafmagnskostnaður hefur hækkað 18%. Notkun hefur aðeins aukist um 3%. Megnið af hækkuninni skýrist því af hærra einingarverði og gjöldum.
+
+Ef rafmagn er mikilvægur framleiðsluþáttur getur tengingin orðið:
+
+`rafmagnsverð ↑`
+→ `framleiðslukostnaður ↑`
+→ `framlegð ↓`
+→ `nauðsynlegt söluverð breytist`.
+
+Ekki á þó að vakta allt fyrir öll fyrirtæki.
+
+Innsýn þarf að læra hvaða rekstrarbreytur skipta viðkomandi fyrirtæki raunverulega máli.
+
+Hugsunin:
+
+`rekstrarlíkan fyrirtækis`
+→ `mikilvægar breytur`
+→ `vöktun`
+→ `fjárhagsleg áhrif`
+→ `skýring fyrir stjórnanda`.
+
+
+# Stjórnandinn þarf ekki að vita hvaða spurningar á að spyrja
+
+Ein mikilvægasta niðurstaða kvöldsins:
+
+> Stjórnandinn á ekki að þurfa að vita hvaða spurningar fjármálastjóri hefði spurt.
+
+Innsýn á að vita hvenær slíkar spurningar þurfa að koma upp.
+
+Þetta er sérstaklega mikilvægt fyrir lítil fyrirtæki sem hafa aldrei haft fjármálateymi og vita því ekki endilega hvað slíkt teymi myndi fylgjast með.
+
+
+# Mismunandi fólk skilur gögn á mismunandi hátt
+
+Ekki er víst að ein framsetning Innsýnar henti öllum.
+
+Sumir skilja best:
+
+- myndir og þróun,
+- aðrir tölur,
+- aðrir textaskýringar,
+- margir blöndu af þessu.
+
+Því kom fram hugmynd um að sama greiningin geti birst í nokkrum sýnum.
+
+Mögulegir sýnarofar efst hægra megin:
+
+`Blönduð | Myndræn | Tölur | Skýring`
+
+Þetta eru ekki fjórar mismunandi Innsýnir.
+
+Þetta er:
+
+> ein greiningarvél, ein sannleikslína og nokkrar leiðir til að skilja sömu niðurstöðu.
+
+Blönduð sýn er líklegur sjálfgefinn kostur:
+
+- stutt skýring,
+- sjónræn framsetning,
+- lykiltölur.
+
+Notandi getur síðan farið dýpra eftir þörfum.
+
+GLÖGGT má muna val notandans.
+
+
+# Mæla upplifun – ekki einstaklinga
+
+Mjög áhugavert verður að sjá hvernig mismunandi hlutverk nota Innsýn.
+
+Tilgáta sem má prófa, ekki gera að reglu:
+
+- forstjórar gætu kosið eina sýn,
+- stjórnendur aðra,
+- bókarar þá þriðju.
+
+Raunveruleg notkun á að kenna okkur þetta.
+
+Mælingar mega vera samanteknar eftir hlutverkaflokkum en eiga ekki að verða eftirlit með einstaklingum.
+
+Regla:
+
+> Mæla upplifunina, ekki einstaklinginn.
+
+Skoða má t.d.:
+
+- hversu margir með skoðunaraðgang nota Innsýn,
+- hvort þeir koma aftur,
+- hvaða sýnir eru notaðar,
+- hvaða greiningar eru opnaðar nánar.
+
+Ef stjórnendur koma einu sinni inn og koma ekki aftur er það ekki sjálfkrafa sönnun þess að þeir vilji ekki Innsýn.
+
+Það getur þýtt:
+
+> Innsýn náði ekki að grípa þá eða gera reksturinn nógu skiljanlegan.
+
+Þá er það hönnunarmerki.
+
+
+# Kjarnasetningar dagsins
+
+GLÖGGT:
+
+> Notendavænt · Leiðandi · Skiljanlegt · Skemmtilegt · Sannfærandi
+
+Innsýn:
+
+> GLÖGGT á ekki bara að sýna stjórnandanum fleiri gögn. Það á að hjálpa honum að skilja fyrirtækið sitt nógu vel til að geta stjórnað því.
+
+Og:
+
+> Ef stjórnandi fylgist reglulega með Innsýn á ekkert mikilvægt í rekstrinum að koma honum að óvörum sem GLÖGGT hafði nægar upplýsingar til að sjá fyrir eða benda á.
+
+Og:
+
+> Stjórnandinn á ekki að þurfa að vera bókari til að skilja hvort fyrirtækið sé að græða eða tapa, hvers vegna það gerist og hvert stefnir.
+
+Og:
+
+> Litla fyrirtækið hefur ekki alltaf stjórnendateymið. Innsýn á að gefa því hluta af þeirri getu.
+
+Og loks:
+
+> Fyrst kortið, síðan húsið.
+
+
+# Næsta stóra skref
+
+Ekki halda áfram með staka stóra UI-eiginleika strax.
+
+Næsta vinna er heildararkitektúr GLÖGGT:
+
+1. Kortleggja núverandi kerfi.
+2. Flokka hvað á að halda, færa, sameina, skipta upp eða leggja niður.
+3. Teikna framtíðarupplýsingarkitektúr.
+4. Skilgreina fyrirtækið sem meginvinnusamhengi.
+5. Skilgreina hlutverka- og réttindamiðaða upplifun.
+6. Teikna einingatré.
+7. Skilgreina sameiginleg kerfislög.
+8. Hanna Mobile sem hlutverkamiðað vinnuumhverfi.
+9. Taka reliability/state/cache/revalidation/gagnasókn með í arkitektúrinn.
+10. Teikna sjónræna mockupa áður en stór refactor hefst.
+
+Sérstaklega þarf að teikna nýja Innsýn þannig að hægt sé að horfa á hana og spyrja:
+
+> Grípur þetta mig?
+> Skil ég reksturinn á nokkrum sekúndum?
+
+Ef ekki, er hún ekki tilbúin.
+
+höfum farið yfir svo mikið að það væri alveg ömurlegt að vakna á morgun og ég segði: „Já, hvað vorum við aftur að gera?“
+
+Ég var að festa niðurstöður þessarar arkitektúrlotu núna, sérstaklega það sem við höfum mótað í kvöld um sameiginlega rekstrarkjarnann, Sölu/Afgreiðslu, Verk, Birgðir, reikningsgrunna, kaupheimildir, frjálsar sölulínur og hvernig Innsýn á að geta nýtt söguna síðar.
+
+Varðandi hversu nálægt við erum að smíða: við erum mjög nálægt. Mér finnst við ekki þurfa margar svona heilar kvöldlotur í viðbót áður en við förum aftur í kóða.
+
+Ég myndi þó vilja gera eitt milliskref áður en fyrsta stóra smíðin hefst: taka allt sem við höfum ákveðið síðustu daga og setja upp eina heildstæða GLÖGGT arkitektúrmynd/forskrift. Ekki 100 blaðsíðna ritgerð, heldur kort sem segir: þetta er sameiginlegi kjarninn, þetta eru rekstraratburðirnir, svona tengjast Verk/Sala/Birgðir/Innkaup/Vinnustund/Banki/Bókhald, þetta fer á Heim, þetta fer í Innsýn, og þetta stjórnast af Stjórnborði.
+
+Þegar sú mynd stendur vil ég byrja að smíða grunninn undir nýju einingarnar, ekki byrja á fallegum Afgreiðsluskjá og uppgötva þremur vikum seinna að gagnalíkanið undir honum var of þröngt.
+
+Þannig að ef ég ætti að staðsetja okkur núna:
+
+Hugmyndavinna → nánast komin.
+Arkitektúr → mjög langt kominn.
+Samræmd lokaforskrift → næst.
+Gagnalíkan/kjarni → þar byrjar smíðin.
+UI eins og Afgreiðsla → kemur síðan mjög fljótt ofan á kjarnann.
+
+Og þú mátt alveg fara frá tölvunni þegar þú vilt. 😄 Það sem við fundum í kvöld er ekki bara hangandi í síðustu tuttugu skilaboðunum lengur.
+
+# GLÖGGT – vinnuskýrsla
+
+**Dagsetning:** 16. september 2026
+**Tímabil:** um 07:15–22:00
+**Meginverkefni dagsins:** Arkitektúr GLÖGGT áður en farið er aftur í smíði
+
+## 1. Stóra breytingin í hugsun dagsins
+
+Vinnan í dag færðist enn lengra frá því að hugsa um GLÖGGT sem safn aðskildra kerfishluta og yfir í að skilgreina **sameiginlegan rekstrarkjarna**.
+
+Í stað þess að spyrja:
+
+* Hvernig smíðum við Verk?
+* Hvernig smíðum við Sölu?
+* Hvernig smíðum við Birgðir?
+* Hvernig smíðum við Afgreiðslu?
+
+var spurningin í auknum mæli:
+
+**Hvaða rekstraratburðir eru sameiginlegir fyrirtækjum og hvernig látum við mismunandi atvinnugreinar nota sama kjarna með mismunandi hegðun og orðalagi?**
+
+Meginreglan varð:
+
+> **Fastur kjarni, breytileg hegðun.**
+
+Þetta varð einn mikilvægasti rauði þráður dagsins.
+
+---
+
+# 2. GLÖGGT sem eitt rekstrarumhverfi
+
+Við héldum áfram að móta heildarmyndina þar sem GLÖGGT á ekki að verða safn ótengdra eininga.
+
+Möguleg kjarnatenging er í grófum dráttum:
+
+**Bókhald ↔ Banki ↔ Sala ↔ Laun ↔ Verk ↔ Vinnustund ↔ Birgðir → Innsýn**
+
+Heim og Stjórnborð liggja síðan utan um þetta sem tvö ólík vinnulög.
+
+### Heim
+
+Heim á fyrst og fremst að svara:
+
+> **Hvað er að gerast og hvað þarf ég að gera núna?**
+
+Þar eiga að koma verkefni, biðstaða, samþykktir, frávik, skilaboð og annað sem þarfnast athygli.
+
+### Stjórnborð
+
+Stjórnborð svarar:
+
+> **Hvernig á fyrirtækisumhverfið mitt að virka?**
+
+Þar eiga stjórnendur að geta stillt verkferla, heimildir, samþykktir, notendur, einingar og aðrar rekstrarreglur.
+
+### Innsýn
+
+Innsýn svarar:
+
+> **Hvernig gengur reksturinn, hvers vegna og hvert stefnir?**
+
+Þetta eru ekki þrjár útgáfur af sama skjánum.
+
+**Heim = aðgerð.
+Stjórnborð = stjórnun/stilling.
+Innsýn = skilningur.**
+
+Samt lesa þau öll sömu undirliggjandi rekstrarsögu.
+
+---
+
+# 3. Fyrirtækið sem vinnuumhverfi
+
+Við styrktum hugsunina um að fyrirtæki sé fyrst og fremst **vinnusamhengi** en ekki bara síða í hliðarvalmynd.
+
+Þegar notandi er inni í fyrirtæki eiga aðgerðir hans sjálfkrafa að tengjast því fyrirtæki nema sérstök ástæða sé til annars.
+
+GLÖGGT á almennt ekki að biðja notandann aftur um upplýsingar sem kerfið veit þegar.
+
+Tvær mikilvægar reglur halda því áfram:
+
+> **Ekki biðja notandann að slá inn upplýsingar sem GLÖGGT veit nú þegar.**
+
+og:
+
+> **Ekki sýna val þegar notandinn hefur ekkert raunverulegt val.**
+
+Notandi sem aðeins vinnur fyrir eitt fyrirtæki þarf því ekki stöðugt að velja fyrirtæki. Bókari eða annar fjöl-fyrirtækjanotandi þarf hins vegar skýrt fyrirtækjasamhengi.
+
+---
+
+# 4. Aðgangar, fólk og leyfi
+
+Mikil vinna fór í að aðgreina fjögur hugtök:
+
+1. **Identity** – einstaklingurinn sjálfur.
+2. **Company Membership** – samband einstaklings við fyrirtæki.
+3. **License/Seat** – greidd aðgangsrýmd fyrirtækisins.
+4. **Company Data** – gögn fyrirtækisins.
+
+Meginniðurstaðan:
+
+> **Leyfið má endurnýta. Auðkenni einstaklingsins má ekki endurnýta.**
+
+Ef fyrirtæki er t.d. með 50 Mobile/Verk-sæti og starfsmaður hættir má losa eða frysta sætið og úthluta því nýjum starfsmanni.
+
+Nýi starfsmaðurinn fær hins vegar sitt eigið hreina auðkenni.
+
+Gamli starfsmaðurinn heldur áfram að vera rétt skráður í sögunni:
+
+* hver vann verkið,
+* hver skráði tímann,
+* hver samþykkti,
+* hver framkvæmdi breytingu.
+
+Fyrirtækisgögnin tilheyra fyrirtækinu en ekki einstaklingnum sem hafði aðgang að þeim.
+
+---
+
+# 5. 95/5 stjórnunarreglan
+
+Við héldum áfram að festa þá stefnu að fyrirtæki eigi að geta stjórnað eigin umhverfi að langmestu leyti.
+
+Markmið:
+
+**um 95% af daglegri stjórnun fyrirtækis sé sjálfsafgreiðsla stjórnanda fyrirtækisins.**
+
+GLÖGGT Admin kemur aðeins að hlutum eins og:
+
+* þjónustusambandi,
+* efsta stjórnendaaðgangi,
+* yfirfærslu ábyrgðar,
+* öryggisundantekningum,
+* kerfisvandamálum.
+
+Reglan:
+
+> **GLÖGGT stjórnar kerfinu. Stjórnandi stjórnar fyrirtækinu.**
+
+---
+
+# 6. Verk varð eitt stærsta arkitektúrsvæði dagsins
+
+Verk hélt áfram að þróast úr einfaldri verkbeiðni yfir í mögulega eina af stærstu rekstrareiningum GLÖGGT.
+
+Við sáum sérstaklega möguleikann á að Verk/Mobile geti orðið alþjóðlega nothæfur hluti vegna þess að kjarninn er lítið háður íslenskri skattalöggjöf.
+
+Almenn keðja:
+
+**Verk → starfsmaður → tími → staða → myndir → efni → tæki → samþykki → lok**
+
+Landssértæk lög eins og laun, skattar og bókhald geta síðan tengst utan á.
+
+---
+
+# 7. Mobile sem vettvangskerfi
+
+Mobile á ekki að vera minnkuð útgáfa af desktop.
+
+Fyrir starfsmann úti á vettvangi á upplifunin helst að vera:
+
+> **Opna → byrja → vinna → skrá/mynda → klára.**
+
+Notandinn á að þora að ýta.
+
+Við gerðum einnig ráð fyrir að fyrirtæki geti haft tugi eða hundruð Mobile/Verk-notenda án þess að allir þurfi full GLÖGGT-notendaleyfi.
+
+Þar þarf því að vera aðgreining milli fulls notanda og létts vettvangsaðgangs.
+
+---
+
+# 8. Verkstjórn og mannafli
+
+Stjórnandamegin sáum við fyrir okkur sjónrænt skipulag frekar en eyðublaðakerfi.
+
+Til dæmis:
+
+**Starfsmenn/teymi ↔ Verk**
+
+Stjórnandi getur:
+
+* valið einstakling,
+* valið hóp,
+* úthlutað á verk,
+* séð framtíðarverk,
+* séð álag,
+* séð framboð,
+* séð hæfni/réttindi.
+
+Kerfið á að geta stutt bæði föst teymi og tímabundna hópa.
+
+---
+
+# 9. Raðverk, verkflæði, forgangur og úthlutun
+
+Við aðgreindum fjögur hugtök sem auðvelt væri annars að blanda saman:
+
+### Raðverk
+
+Röð verkefna eða stoppa.
+
+### Verkflæði
+
+Verk fer í gegnum ákveðin stig.
+
+### Forgangsvél
+
+Ákveður hvar nýtt verkefni lendir gagnvart öðrum verkefnum.
+
+### Úthlutunarvél
+
+Ákveður hver fær verkefnið.
+
+„Næsti lausi“ má ekki bara þýða fyrsta manneskjan sem er laus.
+
+Það þarf frekar að þýða:
+
+> **Næsti lausi sem hefur rétta hæfni, réttindi, búnað og aðrar nauðsynlegar forsendur.**
+
+---
+
+# 10. Vinnuvélar, tæki og eignir
+
+Við héldum áfram að móta almenna **Tæki/Eignir** hugsun.
+
+Undir henni geta verið:
+
+* vinnuvélar,
+* bílar,
+* verkfæri,
+* götuljós,
+* brunahanar,
+* dælustöðvar,
+* skilti,
+* leiktæki,
+* vegir,
+* byggingar,
+* vatns- og fráveitueignir.
+
+Mikilvægt er að varðveita auðkenni sem fyrirtækið notar nú þegar.
+
+GLÖGGT má hafa sitt innra auðkenni, en viðskiptavinurinn á ekki að þurfa að endurnúmera allan reksturinn sinn.
+
+Regla dagsins:
+
+> **Ekki láta viðskiptavininn endurskrá reksturinn sinn til þess að geta byrjað að nota GLÖGGT.**
+
+---
+
+# 11. QR á eignum
+
+QR getur verið mjög öflug hraðleið.
+
+Starfsmaður skannar QR á vél/eign og fær viðeigandi Mobile-síðu.
+
+En QR má aldrei verða eina leiðin.
+
+Ef límmiði skemmist þarf að vera hægt að finna eignina eftir númeri, leit eða annarri auðkenningu.
+
+---
+
+# 12. Vélar og mælastöður
+
+Við ræddum skráningu vinnustunda/km véla.
+
+Möguleg leið:
+
+* starfsmaður tekur mynd af mæli,
+* GLÖGGT les töluna,
+* starfsmaður staðfestir,
+* frumynd varðveitt.
+
+Síðar getur gagnauppspretta verið telematics/API.
+
+Mikilvægt:
+
+**Vinnutími starfsmanns og keyrslutími vélar eru ekki sami hluturinn.**
+
+Munur þeirra á milli getur verið vísbending til afstemmingar, ekki ásökun.
+
+---
+
+# 13. Vinnulota er ekki sama og verki lokið
+
+Þetta var mikilvæg aðgreining.
+
+Starfsmaður getur unnið 6,5 klst. og farið heim án þess að verkinu sé lokið.
+
+Því eru aðskilin hugtök:
+
+* vinnutími,
+* vinnulota,
+* staða verks.
+
+Verk getur verið:
+
+* í vinnslu,
+* í bið,
+* stöðvað,
+* heldur áfram,
+* lokið.
+
+---
+
+# 14. Ytri verktakar
+
+Við mótuðum möguleikann á að verktaki geti fengið afmarkaðan öruggan aðgang án fulls GLÖGGT-reiknings.
+
+Hann gæti skráð:
+
+* komu/brottför,
+* tíma,
+* myndir,
+* athugasemdir,
+* efni,
+* akstur,
+* tæki,
+* verklok.
+
+Staðfest vinnuskýrsla getur síðan orðið sameiginleg sönnun fyrir kaupanda og verktaka án þess að einkagögn fyrirtækjanna blandist.
+
+---
+
+# 15. Samskipti sem sameiginleg þjónusta
+
+Samskipti eiga ekki að vera bara „pósthólf“.
+
+Skilaboð eru sjálfstæður hlutur og sendingarleið getur verið:
+
+* GLÖGGT,
+* tölvupóstur,
+* bæði,
+* síðar SMS.
+
+Skilaboð geta tengst:
+
+* Verki,
+* reikningi,
+* fylgiskjali,
+* eign,
+* fyrirtæki,
+* aðila.
+
+Mikilvæg regla:
+
+> **Notandinn stjórnar pósthólfinu sínu. Hann stjórnar ekki með því sögulegum staðreyndum fyrirtækisins.**
+
+Að eyða skilaboði úr pósthólfi má því ekki eyða viðskiptasögu eða audit-slóð.
+
+---
+
+# 16. Verk varð uppspretta rekstrarsögunnar
+
+Ein sterkasta niðurstaða dagsins varð:
+
+> **Verk er rekstrarsaga. Sala er afleiða hennar.**
+
+Verk getur safnað:
+
+* vinnu,
+* efni,
+* vélatíma,
+* akstri,
+* aðkeyptri þjónustu,
+* samskiptum,
+* myndum,
+* samþykktum.
+
+Þetta getur síðan myndað **reikningsgrunn**.
+
+En reikningurinn má ekki breyta sögunni um hvað raunverulega gerðist.
+
+---
+
+# 17. Þrjú sannleikslög
+
+Við aðgreindum þrjú lög:
+
+### 1. Hvað gerðist?
+
+Verk / Vinnustund / Birgðir.
+
+### 2. Hvað ákváðum við að rukka?
+
+Reikningsgrunnur.
+
+### 3. Hvað seldum/reikningsfærðum við?
+
+Sala.
+
+Þetta gerir mögulegt að starfsmaður hafi unnið 4 klst. en fyrirtækið ákveði að rukka 3,5 klst. án þess að falsa vinnusöguna.
+
+---
+
+# 18. Sala – ekki reikningurinn sem miðja
+
+Við færðum hugsunina frá því að reikningur sé miðpunktur Sölu.
+
+Almenn keðja:
+
+**Viðskiptavinur → það sem er selt → verð → afhending/framkvæmd → reikningsgrunnur → sala/reikningur → greiðsla**
+
+En fyrirtæki þarf ekki alltaf að fara í gegnum öll skref.
+
+Kaffihús getur verið:
+
+**Vara → greiðsla → lokið.**
+
+Verktaki getur verið:
+
+**Tilboð → samþykki → Verk → reikningsgrunnur → reikningur.**
+
+---
+
+# 19. Tilboð
+
+Tilboð er sjálfstætt viðskiptaskjal, ekki bara „óstaðfestur reikningur“.
+
+Staðfest útgáfa þarf að varðveitast.
+
+Ef tilboð verður að Verki eða Sölu má ekki yfirskrifa samþykkta útgáfu þess.
+
+Aukaverk eiga að vera rekjanleg viðbót en ekki þögul breyting á samþykktu tilboði.
+
+---
+
+# 20. Aðili – ekki sér viðskiptavinatöflur alls staðar
+
+Við héldum áfram með almenna **Aðili / Party** hugsun.
+
+Aðili getur verið:
+
+* einstaklingur,
+* fyrirtæki,
+* opinber aðili.
+
+Sami aðili getur haft mörg hlutverk:
+
+* viðskiptavinur,
+* birgir,
+* verktaki,
+* tengiliður o.fl.
+
+Viðskiptavinahlutverk bætir síðan við viðskiptaskilmálum eins og greiðslufresti, verðflokki, afslætti og reikningssendingu.
+
+---
+
+# 21. Reikningsviðskipti og kaupheimild
+
+Í verkstæðisdæminu fundum við mikilvæga aðgreiningu.
+
+Það að fyrirtæki geti verið í reikningsviðskiptum þýðir ekki sjálfkrafa að hver sem segist vinna þar megi skuldbinda fyrirtækið.
+
+Dæmið var:
+
+Einhver kemur og segir:
+
+> „Settu þetta bara á B&M.“
+
+Verkstæðið þekkir hvorki manninn né fyrirtækið nægilega vel.
+
+Afgreiðslumaður gæti þá:
+
+* óskað eftir tölvupósti frá ábyrgum stjórnanda,
+* viljað sjá fyrirtækislén,
+* hringt sjálfur í fyrirtækið,
+* fengið munnlega staðfestingu frá ráðandi aðila.
+
+Gmail er ekki sjálfkrafa höfnun; lítið fyrirtæki getur notað Gmail.
+
+Meginniðurstaðan:
+
+**Reikningsheimild fyrirtækis og kaupheimild einstaklings eru tveir mismunandi hlutir.**
+
+GLÖGGT varðveitir hvernig heimild var sannreynd en afgreiðslumaður/fyrirtæki tekur ákvörðunina.
+
+---
+
+# 22. GLÖGGT tekur ekki rekstrarákvörðunina af fyrirtækinu
+
+Verkstæðisdæmið var notað mikið til að stressprófa arkitektúrinn.
+
+Við ræddum t.d. hvort verkstæði eigi að fá samþykki áður en viðgerð heldur áfram.
+
+Niðurstaðan:
+
+**Það er ákvörðun verkstæðisins.**
+
+Siggi getur haft aðra stefnu en annað verkstæði.
+
+GLÖGGT getur framfylgt valinni stefnu:
+
+* samþykki alltaf,
+* samþykki yfir ákveðinni fjárhæð,
+* munnlegt samþykki,
+* SMS,
+* tölvupóstur,
+* ekkert samþykki krafist.
+
+En GLÖGGT á ekki að ákveða fyrir Sigga hvernig hann rekur fyrirtækið.
+
+---
+
+# 23. Samskipti við viðskiptavin
+
+Við sáum fyrir okkur að viðskiptaatburður geti kveikt samskipti.
+
+Dæmi:
+
+**Bíll tilbúinn → senda SMS til viðskiptavinar.**
+
+Fyrirtækið getur ákveðið hvort:
+
+* SMS fari sjálfkrafa,
+* starfsmaður staðfesti fyrst,
+* SMS + tölvupóstur fari,
+* annað ferli sé notað.
+
+Þarna varð enn skýrari almenn regla:
+
+> **Rekstraratburður → regla → aðgerð.**
+
+---
+
+# 24. Eitt Verk – margir reikningar
+
+Við prófuðum aðstæður þar sem fleiri en einn greiðandi tengist sama Verki.
+
+Niðurstaðan varð mjög einföld:
+
+> **Einn reikningur hefur einn greiðanda.**
+
+En eitt Verk getur myndað marga reikningsgrunna/reikninga.
+
+Dæmi úr tryggingaviðgerð:
+
+Viðgerð: 600.000 kr.
+Sjálfsábyrgð eiganda: 100.000 kr.
+Tryggingafélag: 500.000 kr.
+
+Þá verða einfaldlega tveir reikningar sem báðir tengjast sama Verki.
+
+Engin þörf er á „mörgum greiðendum á sama reikningi“.
+
+---
+
+# 25. Athugasemdir og skipulögð gögn á reikningi
+
+Tryggingadæmið leiddi til annarrar góðrar aðgreiningar.
+
+Á reikningi þarf að mega skrifa frjálsan texta, t.d.:
+
+**Tjón nr. 12345678**
+
+En ef GLÖGGT þekkir tjónsnúmerið á það einnig að geta verið skipulagt gagn sem tengist Verki/reikningi.
+
+Reglan:
+
+**Skipulögð gögn þar sem þau hafa tilgang + frjáls texti þar sem fólk þarf sveigjanleika.**
+
+---
+
+# 26. Greiðslukjarni
+
+Við aðgreindum:
+
+> **Sala segir hvað var keypt.
+> Greiðsla segir hvernig það var gert upp.
+> Krafa segir hvað er enn ógreitt.**
+
+Ein sala getur því haft:
+
+* kort,
+* reiðufé,
+* millifærslu,
+* inneign,
+* fjármögnun,
+* reikning,
+* fleiri en eina greiðslu.
+
+Greiðsluleiðir eiga að vera almennar og þjónustuveitendur tengdir með adapter-lagi.
+
+---
+
+# 27. Kortaposar
+
+Við aðgreindum tengdan og ótengdan posa.
+
+### Tengdur posi
+
+GLÖGGT sendir upphæðina og fær niðurstöðu til baka.
+
+### Ótengdur posi
+
+Starfsmaður slær upphæðina sjálfur inn í posa og staðfestir síðan í GLÖGGT.
+
+Tenging er betri upplifun en má ekki vera eina leiðin.
+
+---
+
+# 28. Kortauppgjör og banki
+
+Við ræddum að kortafærslur greiðast ekki endilega allar út á sama tíma.
+
+Rétta keðjan er:
+
+**Sala → kortagreiðsla → greiðsluþjónusta → uppgjör → bankafærsla → afstemming**
+
+GLÖGGT má ekki gera ráð fyrir að allar kortagreiðslur komi inn næsta dag.
+
+Uppgjörstími getur farið eftir:
+
+* kortategund,
+* greiðsluleið,
+* samningi,
+* þjónustuveitanda,
+* helgum,
+* gjaldmiðli.
+
+Bankinn fær síðan oft eitt nettóuppgjör fyrir margar sölur frekar en eina bankafærslu fyrir hvern kaffibolla.
+
+---
+
+# 29. Kassalota
+
+Við aðgreindum söludag, kassauppgjör og bankauppgjör.
+
+Möguleg keðja:
+
+**Kassi → opna lotu → færslur → loka → telja → bera saman → staðfesta**
+
+Reiðufé:
+
+**upphafssjóður + staðgreiðslusala − úttektir = vænt staða**
+
+Starfsmaður telur raunverulega stöðu og mismunur varðveitist rekjanlega.
+
+Ekki gera ráð fyrir einu uppgjöri á miðnætti; vaktaskipti geta líka lokað kassalotu.
+
+---
+
+# 30. Rafrænir reikningar
+
+Rafrænn reikningur á að vera sendingarleið, ekki sérstök tegund Sölu.
+
+Keðja:
+
+**Reikningsgrunnur → reikningur → staðfesting → sending → viðtakandi → krafa → greiðsla**
+
+Sami staðfesti reikningur getur farið:
+
+* rafrænt,
+* í tölvupósti,
+* sem PDF,
+* í landssértæka þjónustu.
+
+Landssértæk sendingarkerfi eiga að vera adapterar utan við sölukjarnann.
+
+---
+
+# 31. Vara og þjónusta fóru að renna saman í einum kjarna
+
+Seinni hluti dagsins leiddi okkur að mjög mikilvægri einföldun.
+
+Fyrir notandann eru þetta mismunandi hlutir:
+
+* vara,
+* þjónusta,
+* vinna,
+* efni,
+* akstur,
+* vélatími.
+
+En undir húddinu eru þau að stórum hluta skyld fyrirbæri:
+
+> **Eining → magn → mælieining → verð/kostnaður → hegðun → rekstraratburður**
+
+Dæmi:
+
+* 2 bremsudiskar,
+* 14 m³ mold,
+* 35 l olía,
+* 127 km akstur,
+* 3,5 klst. vinna.
+
+Mismunandi orð fyrir fólk, en sameiginleg hugsun fyrir GLÖGGT.
+
+---
+
+# 32. Mælieiningar
+
+Við tókum sérstaklega fram að magn er ekki alltaf „stk.“
+
+GLÖGGT þarf að geta unnið með m.a.:
+
+* stk.
+* kg
+* g
+* l
+* ml
+* m
+* m²
+* m³
+* km
+* klst.
+
+Umreikningur má vera til þegar hann er raunverulega skilgreindur.
+
+En kerfið má ekki t.d. umbreyta kg í lítra án þess að vita eiginleika efnisins.
+
+---
+
+# 33. Birgðir = hreyfingar
+
+Þetta varð enn sterkari regla í dag.
+
+Birgðastaða á ekki bara að vera tala sem einhver breytir.
+
+Hún verður til úr rekjanlegum hreyfingum.
+
+Dæmi:
+
+**2 bremsudiskar teknir úr lager → birgðahreyfing strax.**
+
+Reikningurinn getur beðið í þrjá daga.
+
+Lagerinn má ekki bíða í þrjá daga með að vita að diskarnir séu farnir.
+
+Ef röng vara er tekin og síðan skilað:
+
+**út → inn → rétt vara út**
+
+Ekki yfirskrifa fyrri atburð eins og hann hafi aldrei gerst.
+
+---
+
+# 34. Reikningsgrunnur getur beðið
+
+Í verkstæðisdæminu kom skýrt fram:
+
+Ef vantar varahlut eða verkið er ekki tilbúið:
+
+> **Reikningsgrunnurinn fer á bið.**
+
+Hann er lifandi vinnugagn meðan verkið stendur yfir.
+
+Nýr tími, efni eða kostnaður getur bæst við.
+
+Þegar verki lýkur er reikningsgrunnurinn yfirfarinn og síðan verður reikningur til.
+
+---
+
+# 35. Efni þurfa ekki alltaf að fara á lager
+
+Jarðverktakadæmið var mikilvægt.
+
+14 m³ af mold sem er sótt hjá birgja og keyrt beint á verk er ekki endilega lager.
+
+Mögulegar leiðir:
+
+**Birgir → Lager → Verk**
+
+eða:
+
+**Birgir → Verk**
+
+eða:
+
+**Birgir → Verkstaður/viðskiptavinur**
+
+Birgðir eru því leið sem vara/efni **getur** farið en ekki skyldustopp.
+
+---
+
+# 36. Innkaup eru sjálfstæður rekstraratburður
+
+Innkaup mega ekki verða bara undirflokkur Birgða.
+
+Ein innkaupalína getur farið í:
+
+* lager,
+* Verk,
+* rekstrarkostnað,
+* eign/tæki,
+* þjónustu.
+
+Sami birgjareikningur getur jafnvel innihaldið fleiri en eina slíka leið.
+
+---
+
+# 37. Innkaupapöntun, móttaka og reikningur
+
+Við aðgreindum:
+
+**Pöntun** = hvað við ætluðum að kaupa.
+**Fylgiseðill** = hvað birgir segir að hafi verið sent.
+**Móttaka** = hvað starfsmaður taldi raunverulega.
+**Reikningur** = hvað birgir rukkar.
+
+Lager á að hækka samkvæmt raunverulegri móttöku, ekki bara pöntun eða fylgiseðli.
+
+Hlutamóttaka þarf að vera eðlileg:
+
+100 pantað → 60 koma í dag → 40 síðar.
+
+---
+
+# 38. Þríhliða afstemming innkaupa
+
+Þegar gögnin eru til getur GLÖGGT borið saman:
+
+**Pöntun ↔ móttöku ↔ reikning**
+
+Dæmi:
+
+100 pantað
+98 móttekið
+100 rukkað
+
+Þá kemur frávik til skoðunar.
+
+Starfsmaður sem tekur á móti vörunni þarf ekki endilega að sjá innkaupsverð eða heildarreikning.
+
+---
+
+# 39. Flutningskostnaður og raunverulegt innkaupsverð
+
+Við ræddum að kaupverð vörunnar er ekki alltaf raunverulegur kostnaður hennar.
+
+Dæmi:
+
+Vörur: 800.000 kr.
+Flutningur: 120.000 kr.
+Raunkostnaður sendingar: 920.000 kr.
+
+Flutningskostnaður getur verið:
+
+* á sama reikningi,
+* á sér reikningi,
+* frá öðrum flutningsaðila.
+
+Hann þarf að geta tengst pöntun/sendingu/verki.
+
+Síðar getur reiknivél/Innsýn úthlutað honum eftir:
+
+* verðmæti,
+* magni,
+* þyngd,
+* rúmmáli,
+* annarri skilgreindri aðferð.
+
+Frumgögnin eru skráð einu sinni.
+
+---
+
+# 40. Innsýn tók stórt stökk í dag
+
+Við fórum frá því að hugsa um Innsýn sem góða stjórnendaskýrslu yfir í eitthvað miklu áhugaverðara:
+
+**Innsýn á að geta uppgötvað.**
+
+Við viljum sjá:
+
+### Verðsögu
+
+* innkaupsverð,
+* söluverð,
+* breytingar,
+* afslætti,
+* framlegð.
+
+### Viðskiptasögu
+
+* hvað viðskiptavinur keypti,
+* magn,
+* tíðni,
+* verð,
+* verk,
+* framlegð.
+
+### Mánaðarsögu
+
+* magn,
+* tekjur,
+* kostnað,
+* framlegð,
+* afföll,
+* tap,
+* þróun.
+
+Þessar víddir eiga að geta skarast.
+
+---
+
+# 41. Framlegð og tap í mörgum myndum
+
+Við ræddum að tap er ekki bara sala undir kostnaðarverði.
+
+Það getur verið:
+
+* sóun,
+* afföll,
+* ónýtt vinna,
+* of mikill akstur,
+* lager sem liggur,
+* verðhækkun birgja sem söluverð fylgdi ekki,
+* unnin vinna sem ekki var rukkuð,
+* afslættir,
+* rangt álag,
+* aðkeypt þjónusta sem ekki skilaði sér í sölu.
+
+Innsýn getur því með tímanum spurt:
+
+> **Hvar verður verðmætið til og hvar lekur það út?**
+
+---
+
+# 42. Innsýn á helst að koma stjórnandanum á óvart
+
+Þetta varð ein skemmtilegasta niðurstaða dagsins.
+
+Markmiðið er ekki að AI giski á eitthvað óvænt.
+
+Markmiðið er að GLÖGGT finni **raunverulegt mynstur í rekstrargögnum sem stjórnandinn hafði ekki sjálfur tekið eftir.**
+
+Til dæmis:
+
+* sala hækkar en framlegð lækkar,
+* stór viðskiptavinur skilar minni framlegð en talið var,
+* ákveðin vara hefur orðið verri með hverjum mánuði,
+* kostnaður byrjaði að breytast á ákveðnum tímapunkti.
+
+En niðurstaðan verður alltaf að vera rekjanleg.
+
+Reglan sem varð til:
+
+> **Óvænt niðurstaða, en aldrei óútskýranleg niðurstaða.**
+
+GLÖGGT þarf alltaf að geta svarað:
+
+> **Af hverju ertu að segja mér þetta?**
+
+---
+
+# 43. Innsýn á að finna spurninguna
+
+Við fórum skrefi lengra.
+
+Innsýn á ekki aðeins að svara spurningum sem stjórnandinn kann að spyrja.
+
+Hún á stundum að:
+
+> **finna spurninguna sem stjórnandanum datt ekki í hug að spyrja.**
+
+Þetta er mögulegt ef frumgögnin og rekstrarsagan eru rétt varðveitt.
+
+---
+
+# 44. Fyrsta árið og samanburðarsagan
+
+Við tókum sérstaklega fram að raunverulegur samanburður við sama tímabil fyrra árs verður ekki til fyrr en næg saga hefur safnast.
+
+Fyrsta árið er því að hluta **grunnár**.
+
+En Innsýn þarf ekki að vera gagnslaus á meðan.
+
+Hún getur notað:
+
+* mánuð á móti mánuði,
+* þróun frá upphafi,
+* hlaupandi meðaltöl,
+* verðbreytingar,
+* framlegðarbreytingar,
+* viðskiptamynstur,
+* frávik.
+
+GLÖGGT má hins vegar ekki þykjast þekkja árstíðarsveiflu sem það hefur aldrei áður séð.
+
+Eftir ár verður hægt að bera saman sama tímabil milli ára.
+
+Eftir tvö, þrjú og fleiri ár verður sagan sífellt verðmætari.
+
+---
+
+# 45. Varðveita frumgögn – ekki fyrirframákveðnar skýrslur
+
+Þetta varð ein mikilvægasta arkitektúrniðurstaða dagsins:
+
+> **Við eigum ekki að hanna gagnalíkanið aðeins fyrir þær skýrslur sem okkur dettur í hug í dag.**
+
+Við varðveitum:
+
+* frumviðburði,
+* magn,
+* verð,
+* kostnað,
+* tíma,
+* tengsl,
+* breytingar,
+* uppruna,
+* staðfestingar.
+
+Þá getur framtíðar-Innsýn spurt gögnin spurninga sem við höfum ekki einu sinni hugsað upp enn.
+
+Við eigum því ekki að smíða hundrað fyrirfram ákveðnar Innsýn-skýrslur núna.
+
+---
+
+# 46. Afgreiðsla – fyrsta sjónræna hugmyndin
+
+Í kvöld fórum við að sjá Afgreiðsluna sjónrænt.
+
+Grunnhugsunin:
+
+* stórt snertivænt vörusvæði,
+* flokkar,
+* leit,
+* strikamerki,
+* núverandi sala hægra megin,
+* mjög áberandi greiðsluaðgerð,
+* sjaldgæfar aðgerðir faldar undir einfaldara „Meira“.
+
+Markmiðið:
+
+> **Nýr starfsmaður ætti að geta afgreitt fyrstu venjulegu sölu án kennslu á GLÖGGT.**
+
+Við létum einnig gera fyrsta sjónræna mockupið af kaffihúsaútgáfu Afgreiðslunnar.
+
+---
+
+# 47. Afgreiðsla er ekki sama útlit fyrir alla
+
+Jarðverktaki þarf ekki sama yfirborð og kaffihús.
+
+Sami kjarni getur fengið annað vinnuviðmót.
+
+Kaffihús:
+
+**Vara → Greiða → Næsti**
+
+Jarðverktaki:
+
+**Verk → vinna/vél/akstur/efni → reikningsgrunnur → ganga frá**
+
+Verkstæði:
+
+**Tilbúið Verk → reikningsgrunnur → ganga frá sölu**
+
+Sami kjarni, mismunandi samhengi.
+
+---
+
+# 48. Frjáls/óundirbúin sala
+
+Þú bentir á mikilvægt atriði fyrir verktaka og iðnaðarmenn.
+
+Ekki er hægt að gera ráð fyrir að allt sem þeir rukka sé fyrirfram stofnað á takka eða í vöruskrá.
+
+Því þarf Afgreiðsla að styðja **frjálsa línu / óundirbúna sölu**.
+
+Dæmi:
+
+„Breyting á lögn vegna ófyrirséðra aðstæðna“
+
+Magn: 2,5
+Eining: klst.
+Verð: 14.900 kr.
+
+eða:
+
+„Grjótfylling á verkstað“
+
+Magn: 17,5
+Eining: m³
+Verð: 6.200 kr.
+
+Ekki á að þurfa að stofna fasta vöru fyrst.
+
+---
+
+# 49. Þrjár leiðir inn í Afgreiðslu
+
+Við festum niður þrjár mikilvægar leiðir:
+
+### 1. Flýtival
+
+Algeng vara/þjónusta á stórum takka.
+
+### 2. Leit eða strikamerki
+
+Vara er til í vöruskrá en ekki á flýtitakka.
+
+### 3. Frjáls lína
+
+Varan/þjónustan var alls ekki undirbúin fyrirfram.
+
+Þetta er sérstaklega mikilvægt fyrir iðnaðarmenn og verktaka.
+
+---
+
+# 50. Gamla Snerta / Store-suite
+
+Við tókum gamla Store-suite/Snerta inn sem rannsóknarefni.
+
+Markmiðið er **ekki að endurgera Snerta**.
+
+Við viljum skoða:
+
+* hvernig vörur utan flýtihnappa voru fundnar,
+* hvernig strikamerki virkuðu,
+* hvernig óundirbúin sala var gerð,
+* hvernig verð/magn/eining var skráð,
+* hvernig sala var sett í bið,
+* hvernig hún var sótt aftur,
+* hvaða vinnuflæði voru óvenju hraðvirk.
+
+Reglan:
+
+> **Snerta er rannsóknarefni, ekki forskrift.**
+
+Ef gömul lausn var sniðug tökum við hugmyndina.
+
+Ef nútímalegri lausn er betri notum við hana.
+
+---
+
+# 51. Sameiginlegi rekstrarkjarninn varð skýrari en áður
+
+Í lok dags erum við farin að sjá mjög almennt mynstur:
+
+**Rekstrareining → magn → mælieining → kostnaður/verð → hegðun → rekstraratburður → saga**
+
+Síðan tengjast atburðirnir eftir þörfum:
+
+* Verk,
+* Sala,
+* Innkaup,
+* Birgðir,
+* Vinnustund,
+* Greiðslur,
+* Banki,
+* Bókhald,
+* Innsýn.
+
+Þetta þýðir að við þurfum ekki sérstakan „heim“ fyrir hvert hugsanlegt fyrirbæri.
+
+---
+
+# 52. Mikilvæg varnarregla gegn ofhönnun
+
+Verkstæðisdæmin í kvöld sýndu líka annað.
+
+Við reyndum nokkrum sinnum að finna sértilvik sem þyrfti sérstaka lausn.
+
+En grunnkerfið leysti þau oft þegar.
+
+Til dæmis:
+
+* vara vantar → verkið/reikningsgrunnurinn bíður,
+* vara gölluð → sama grunnflæði,
+* margir greiðendur → margir reikningar,
+* vara tekin úr lager áður en reikningur verður til → birgðahreyfing strax,
+* efni fer beint á Verk → engin tilbúin lagerferð.
+
+Þetta gaf okkur mikilvæga reglu:
+
+> **Ekki bæta sérlausn við bara vegna þess að sértilvik getur gerst ef almenni kjarninn leysir það þegar.**
+
+---
+
+# 53. Staðan við lok dags
+
+Við erum nú mjög nálægt því að fara aftur í smíði.
+
+Staðan er:
+
+**Hugmyndavinna:** nánast komin fyrir þennan áfanga.
+**Arkitektúr:** mjög langt kominn.
+**Sameiginleg lokaforskrift/arkitektúrkort:** næsta skref.
+**Gagnalíkan og sameiginlegur kjarni:** fyrsta stóra smíðaskrefið þar á eftir.
+**Ný UI, m.a. Afgreiðsla:** byggist síðan ofan á kjarnanum.
+
+Við eigum ekki að byrja á því að smíða fallegan kassaskjá og uppgötva síðar að gagnalíkanið undir honum er of þröngt.
+
+Fyrst festum við heildarmyndina.
+
+---
+
+# 54. Helstu setningar dagsins
+
+Nokkrar reglur/setningar standa sérstaklega upp úr eftir daginn:
+
+> **Fastur kjarni, breytileg hegðun.**
+
+> **Verk er rekstrarsaga. Sala er afleiða hennar.**
+
+> **Notandinn skráir rekstraratburðinn einu sinni. GLÖGGT sér um afleiðingarnar.**
+
+> **GLÖGGT stjórnar kerfinu. Stjórnandi stjórnar fyrirtækinu.**
+
+> **Gögn tilheyra fyrirtækisumhverfinu, ekki einstaklingnum sem hefur aðgang að þeim.**
+
+> **Staðfest fyrirtækjasaga er leiðrétt rekjanlega en ekki látin hverfa.**
+
+> **Birgðir eru hreyfingar, ekki bara staða.**
+
+> **Birgðir eru möguleg leið vörunnar, ekki skyldustopp.**
+
+> **Einn reikningur hefur einn greiðanda; eitt Verk getur haft marga reikninga.**
+
+> **Reikningsviðskipti fyrirtækis og kaupheimild einstaklings eru ekki sami hluturinn.**
+
+> **GLÖGGT framfylgir verkferli fyrirtækisins; það tekur ekki rekstrarákvörðunina fyrir fyrirtækið.**
+
+> **Óvænt niðurstaða, en aldrei óútskýranleg niðurstaða.**
+
+> **Innsýn á ekki aðeins að svara spurningunni — hún á stundum að finna spurninguna.**
+
+> **Ekki hanna gögnin aðeins fyrir skýrslurnar sem við þekkjum í dag.**
+
+> **Ekki bæta sérlausn við ef almenni kjarninn leysir vandamálið þegar.**
+
+> **Snerta er rannsóknarefni, ekki forskrift.**
+
+---
+
+# 55. Mat á deginum
+
+Þetta var fyrst og fremst **arkitektúrdagur**, ekki kóðadagur.
+
+En afraksturinn er stærri en fjöldi commit-a hefði sagt til um.
+
+Við erum farin að skilgreina hvernig GLÖGGT getur orðið eitt samhangandi rekstrarumhverfi í stað þess að stækka með því að bæta stöðugt við nýjum, aðskildum kerfum.
+
+Sérstaklega mikilvægt var að við fundum leið til að gera kjarnann almennan án þess að gera notendaviðmótið almennt og óskiljanlegt.
+
+Undir húddinu getur GLÖGGT talað um magn, mælieiningar, rekstraratburði, hreyfingar og tengsl.
+
+Notandinn sér hins vegar áfram:
+
+**kaffi, bremsudisk, vinnustund, gröfu, mold, akstur, reikning eða verk** — eftir því hvað hann er raunverulega að gera.
+
+Þetta er líklega mikilvægasti undirbúningurinn áður en næsta stóra smíðalota hefst.
+
+## Lokastaða um 22:00
+
+Við eigum ekki að halda áfram að finna upp flækjur bara til þess að vera viss.
+
+Næsta skref er að taka arkitektúrinn sem hefur mótast undanfarna daga og **setja hann saman í eitt heildstætt kort/forskrift**. Þar þarf að sjá sameiginlega kjarnann, atburðaflæðið, tengsl eininganna, sannleikslögin, heimildirnar og hvernig Heim, Stjórnborð og Innsýn lesa sömu rekstrarsöguna með mismunandi hlutverk.
+
+Þegar það stendur er tímabært að fara aftur í kóðann.
+
+Já. Þetta er dagur sem við eigum alls ekki að tapa, því stór hluti vinnunnar var ekki kóðun heldur ákvörðun um hvernig GLÖGGT á að vera byggt til lengri tíma. Hér er vinnuskýrslan frá um 05:30 til 23:09, 17. september 2026.
+
+GLÖGGT – vinnuskýrsla 17. september 2026
+
+Vinnutími: ca. 05:30–23:09
+Megináhersla: Arkitektúr GLÖGGT, sameiginlegur rekstrarkjarni, UI-uppbygging, Verk, verkþættir, mönnun, vélar/verkfæri/efni, kostnaðardreifing, stuðningsaðgangur og fjöltyngi.
+
+1. Arkitektúrvinna dagsins
+
+Dagurinn hófst á áframhaldandi vinnu við að tryggja að GLÖGGT yrði ekki safn af ótengdum einingum heldur eitt rekstrarkerfi þar sem sjálfstæðar rekstrarstaðreyndir tengjast saman í rekjanlega heild.
+
+Samanburður við önnur kerfi, m.a. DK, var notaður sem gátlisti til að tryggja að grunngeta gleymdist, en ekki sem fyrirmynd sem GLÖGGT ætti að afrita.
+
+Arkitektúrkort 1–9 voru yfirfarin og lokað. Þau festa meðal annars:
+
+sameiginlegan rekstrarkjarna;
+merkingarbær tengsl milli staðreynda;
+aðskilnað ólíkra sannleikslaga;
+tíma, uppruna og rekjanleika;
+heimildir og fyrirtækjamörk;
+að Innsýn sé afleitt greiningar- og leiðsagnarlag en ekki annar sannleiksgagnagrunnur;
+að sérhæfðar einingar eigi hegðun og vinnuflæði en endurtaki ekki sömu rekstrarstaðreyndir.
+
+Meginreglan stendur áfram:
+
+Fastur kjarni – breytileg hegðun.
+
+Sameiginleg málfræði kjarnans byggist m.a. á aðilum, auðlindum, rekstrarþáttum, magni og mælieiningum, tíma, hreyfingum/staðreyndum, tengslum, kostnaði/verðmæti, uppruna og vissu.
+
+Arkitektúrkortagerðin var því talin lokið sem áfangi. Næsta formlega arkitektúrskref verður síðar að umbreyta henni í Arkitektúrforskrift v1 / domain model, en ekki stökkva beint úr hugmyndunum yfir í Prisma-töflur.
+
+2. UI og vinnuumhverfi GLÖGGT
+
+Við héldum áfram að festa þá hugsun að Home sé sameiginleg forsíða tölvunotenda og að hlutverk og heimildir ráði innihaldinu en ekki að mismunandi notendategundir fái gjörólík kerfi.
+
+Aðalleiðarkerfið flytur notanda milli vinnusvæða en hliðarstikan leiðir innan þess vinnusvæðis sem hann er í:
+
+„GLÖGGT segir mér hvar ég er — hliðarstikan segir mér hvað ég get gert hér.“
+
+Home á að vera stutt stöðuyfirlit, ekki annað stjórnborð fullt af smáatriðum. Þegar eitthvað þarfnast vinnu fer notandinn inn í viðkomandi einingu.
+
+Þetta varð sérstaklega mikilvægt varðandi Verk: ef starfsmaður tilkynnir veikindi og það hefur áhrif á verk dagsins getur Home sagt t.d.:
+
+1 starfsmaður tilkynnti veikindi
+1 verk ómannað
+
+En sjálf endurskipulagningin fer fram inni í Verk.
+
+3. Verk – grunnuppbygging
+
+Mikil vinna dagsins fór í Verk og þar urðu nokkrar mjög mikilvægar ákvarðanir.
+
+Verk er heildarmarkmiðið.
+Verkþættir segja hvað þarf að framkvæma.
+Verkröð segir í hvaða röð/dependencies framkvæmdin fer fram.
+Úthlutun segir hver eða hvað framkvæmir hvern þátt.
+
+Verk þarf því ekki að vera ein verkefnalína með einum starfsmanni frá upphafi til enda.
+
+Dæmi:
+
+Verk #185
+
+Grafa upp
+Skipta/leggja ræsi
+Fylla að
+Frágangur
+
+Hver verkþáttur getur haft sitt fólk, teymi, vél, búnað, efni, áætlaðan tíma, verktaka og aðrar kröfur.
+
+Verkröðin getur verið einföld A → B → C, en síðar þarf einnig að mega hafa samsíða hluta, t.d. A → (B + C) → D.
+
+4. Stofnun verks – verkþættir byggðir upp einn af öðrum
+
+Við mótuðum mjög skýra UI-hugmynd fyrir stofnun verks.
+
+Notandi byrjar á fyrsta verkþættinum. Hann opnast í hæfilega stórum vinnuramma sem rúmar þær upplýsingar sem þarf.
+
+Þegar fyrsta þætti er lokið velur notandi:
+
++ Bæta við verkþætti
+
+Þá minnkar fyrri verkþátturinn niður í smellanlega samantektarlínu fyrir ofan og nýr stór rammi opnast fyrir næsta verkþátt.
+
+Til dæmis:
+
+✓ 1 · Grafa upp — Vél 07 · Pétur · ~2 klst.
+✓ 2 · Leggja ræsi — 2 menn · ~1,5 klst.
+3 · Fylla að ← opinn rammi
+
+Hægt verður að smella aftur á eldri verkþátt og breyta honum áður en beiðni er send.
+
+Röðin á einnig að geta verið breytanleg.
+
+5. Verk hættir ekki að vera breytanlegt þegar það er sent út
+
+Þetta varð ein mikilvægasta regla dagsins.
+
+„Senda verkbeiðni“ frystir ekki verkið.
+
+Raunveruleg vinna þróast. Þegar byrjað er að grafa getur komið í ljós eitthvað sem enginn gat séð fyrir.
+
+Upphaflega:
+
+A → B → C → D
+
+Raunveruleikinn:
+
+A → B → nýr E → C → D
+
+Þá má bæta E inn í verkið, breyta röð, mönnun eða auðlindum.
+
+En GLÖGGT má ekki endurskrifa söguna.
+
+Við varðveitum:
+
+upphaflega áætlun;
+breytingarnar;
+hver gerði þær;
+hvenær;
+raunverulega framkvæmd.
+
+Meginreglan varð:
+
+Áætlun má breytast. Framkvæmd sem þegar hefur átt sér stað má ekki endurskrifast.
+
+Og við gerum ráð fyrir að við sjálfir munum vilja breyta þessu UI eftir að fyrsti kóðinn hefur verið prófaður. Þess vegna þarf kóðauppbyggingin sjálf að þola þróun.
+
+6. Framvindutilkynningar milli verkþátta
+
+Verk getur haft valkvæða stillingu um að halda þeim sem bíða eftir næsta verkþætti upplýstum.
+
+Dæmi:
+
+Uppgröftur lokið. Lagning ræsis hafin.
+Áætlað að þinn verkþáttur geti hafist um kl. 14.
+
+eða:
+
+Lagning ræsis er á eftir áætlun.
+Þinn verkþáttur færist líklega um 1–2 klst.
+
+eða:
+
+Fyrri verkþætti lokið. Þú getur hafið þinn verkþátt.
+
+Þetta hjálpar næsta starfsmanni að undirbúa sig, sækja vél eða efni, klára annað verk eða nýta lausan tíma.
+
+Ekki á að senda óþarfa tilkynningaflóð. Aðeins þeir sem breytingin varðar eiga að fá viðeigandi upplýsingar.
+
+7. Eftirá-skráning er eðlilegur hluti kerfisins
+
+Við festum mjög mikilvæga raunveruleikareglu:
+
+Vinnan þarf ekki að bíða eftir skráningunni.
+
+Það gefst ekki alltaf tími á vettvangi til að breyta verkbeiðni áður en fólk hleypur í verkefnið.
+
+Þess vegna þarf að mega:
+
+bæta við starfsmönnum eftir á;
+bæta við vél/búnaði eftir á;
+bæta við efni eftir á;
+bæta við nýjum verkþætti;
+skrifa viðbótarskýrslu;
+leiðrétta raunverulegan tíma.
+
+Viðbótarskýrsla á helst að vera að stórum hluta sjálfvirkt útbúin úr þeim gögnum sem þegar liggja fyrir, frekar en að starfsmaður þurfi að skrifa langa ritgerð.
+
+8. Starfsmaður getur kallað aðra inn í verk
+
+Sá sem er þegar að vinna sinn verkþátt getur valið t.d.:
+
++ Kalla inn í verk
+
+og valið aðra starfsmenn.
+
+Þetta má gerast:
+
+fyrirfram;
+meðan verkið stendur yfir;
+eftir að vinnan fór fram.
+
+GLÖGGT útbýr þá grunnskráningu fyrir þann sem bættist við.
+
+Mikilvægt:
+
+Sá sem kallar Jón inn er ekki að staðfesta tímaskýrslu Jóns.
+
+Hann útbýr aðeins tillögu/grunn:
+
+Jón kom inn á Verk #185 um 12:30.
+
+Jón fær sína færslu og staðfestir eða leiðréttir sjálfur:
+
+Ég byrjaði 12:45 og lauk 15:10.
+
+Þannig varðveitum við persónulega tímaskráningu hvers starfsmanns.
+
+9. Tímaskörun við önnur verk
+
+Ef starfsmaður sem bættist við var þegar skráður á öðru verki á sama tíma þarf GLÖGGT að finna það.
+
+Dæmi:
+
+Tímaskörun fannst
+Pétur var skráður á Verk #172 þegar vinna við Verk #185 hófst.
+Yfirgaf hann fyrra verk kl. 12:30?
+
+Notandi getur þá staðfest tilfærslu eða skoðað tímana.
+
+GLÖGGT má ekki sjálfkrafa endurskrifa tímaskráningu í hljóði.
+
+Raunveruleg skörun getur í sumum tilvikum verið rétt og því þarf einnig að mega staðfesta hana.
+
+10. Teymi
+
+Við ákváðum að teymi verði raunverulegt hugtak í Verk.
+
+Dæmi:
+
+Teymi Jón + Pétur
+
+Teymi getur verið:
+
+fast;
+tímabundið;
+myndað sérstaklega fyrir ákveðið verk.
+
+Heilu teymi má úthluta á verkþátt með einum smelli.
+
+En undir húddinu halda einstaklingarnir alltaf:
+
+eigin tímaskráningu;
+eigin réttindum;
+eigin reynslusögu;
+eigin rekjanleika.
+
+Teymi ≠ deild.
+
+Ef einn úr teyminu er fjarverandi má GLÖGGT sýna það og hjálpa stjórnanda að finna raunhæfan staðgengil.
+
+11. Vélar, réttindi og reynsla
+
+Vélar eru sérstakar auðlindir á verkþætti.
+
+Ef vél er valin getur GLÖGGT þrengt mönnunartillögur út frá staðreyndum:
+
+formlegum réttindum;
+tiltækileika;
+núverandi verkum;
+reynslu á sömu vél;
+reynslu á viðeigandi vélaflokki;
+tíma/deadline.
+
+Formleg réttindi og reynsla eru ekki sami hluturinn.
+
+Skráðir vélatímar geta sýnt reynslu en eru ekki sjálfkrafa sönnun fyrir formlegum réttindum eða hæfni.
+
+GLÖGGT á ekki að búa til dularfullt AI-einkunnarkerfi fyrir starfsmenn. Kerfið sýnir staðreyndir og stjórnandi velur.
+
+12. Verknúmer og verklykill
+
+Þetta var skýrt mjög ákveðið:
+
+Verknúmer = einstakt auðkenni ákveðinnar framkvæmdar.
+
+Verklykill = flokkun, uppgjörs- eða rekstrarsamhengi sem getur komið fyrir á mörgum verkum.
+
+Dæmi:
+
+Verk #185 → verklykill 47120
+Verk #203 → verklykill 47120
+
+Það er fullkomlega eðlilegt.
+
+Reikningur verktaka á hins vegar helst að vísa í Verk #185, því verklykill einn getur átt við fjölda verka.
+
+Verklykill á heldur ekki sjálfkrafa að segja okkur hvaða vél, hæfni eða starfsmaður eigi við. Hann getur einfaldlega verið staður, kostnaðarstaður eða annað samhengi.
+
+13. Verkfæri og annar búnaður
+
+Við fórum frá vinnuvélum yfir í almenna auðlindahugsun.
+
+GLÖGGT á að geta skráð t.d.:
+
+gröfu;
+bíl;
+steinsög;
+jarðvegsþjöppu;
+dælu;
+rafstöð;
+annan búnað.
+
+Notandinn ræður sjálfur hversu djúp skráningin er.
+
+Eitt fyrirtæki gæti bara skráð:
+
+Steinsög
+
+Annað gæti viljað:
+
+Steinsög 04
+gerð
+raðnúmer
+QR
+staðsetning
+notkunarsaga
+viðhald
+skjöl o.s.frv.
+
+Við eigum því ekki að takmarka verkfæri við einfalda textaskráningu, þó fyrsta notkun geti verið mjög einföld.
+
+14. Vinnutími og tækjanotkun eru ekki sami hluturinn
+
+Dæmið sem festi þetta:
+
+Starfsmaður — 2,0 klst. vinna
+Steinsög — 1,5 klst. notkun
+
+Þetta eru tvær sjálfstæðar rekstrarstaðreyndir.
+
+Meginreglan:
+
+Vinnutími manns ≠ notkunartími tækis ≠ það sem er rukkað.
+
+Sama á við um stærri vélar.
+
+Starfsmaður getur verið 7 klst. á verki en gröfan gengið 5,2 klst.
+
+Þetta er einnig mikilvægt vegna vélamæla: raunverulegur vélamælir er sérstaklega mikilvægur fyrir viðhald og líftímasögu, en á ekki að endurskrifa þann tíma sem starfsmaður skráði vélina á ákveðið verk.
+
+15. Efni, vörur og mælieiningar
+
+Við tengdum Verk enn skýrar við Birgðir og Sölu.
+
+Dæmi úr umræðunni:
+
+Sandur — 13 m³
+Hellur 30×30 — 30 m²
+
+Verkþáttur getur því safnað:
+
+vinnu;
+vélum;
+verkfærum;
+efni;
+vörum;
+akstri;
+verktökum.
+
+Mælieiningar þurfa að vera almennar, t.d.:
+
+stk. · kg · l · m · m² · m³ · km · klst.
+
+„Hellur 30×30“ er varan en „30 m²“ getur verið magnið sem var notað/selt.
+
+Síðar getur kerfið þekkt umbreytingu yfir í fjölda hellna ef fyrirtækið vill slíka dýpt, en það á ekki að neyða starfsmann til óeðlilegrar skráningar.
+
+16. Verk → Birgðir → Sala
+
+Raunveruleg notkun á Verk getur orðið grunnur að reikningsgerð.
+
+Dæmi:
+
+Sandur — 13 m³
+Hellur 30×30 — 30 m²
+Gröfuvél — 3,2 klst.
+Vinna — 9 klst.
+
+En GLÖGGT má ekki gera ráð fyrir að allt sem var notað verði rukkað nákvæmlega þannig.
+
+Við þurfum að geta aðgreint:
+
+kostnað;
+notað magn;
+birgðahreyfingu;
+sölumagn;
+sölureglu/verð.
+
+Þannig veit Verk hvað gerðist, Birgðir hvað fór út, Sala hvað á að rukka og Innsýn getur síðar séð framlegðina.
+
+17. Innri kostnaður véla og búnaðar
+
+Mjög mikilvæg viðbót kom upp varðandi sveitarfélagið.
+
+Vél eða búnaður getur haft sinn vélalykil/kostnaðarlykil og innra gjald.
+
+Dæmi:
+
+Gröfuvél 07
+Vélalykill 62007
+3,2 klst. × 18.000 kr. = 57.600 kr. innri vélakostnaður
+
+Verkið fær þá raunhæfan kostnað þó enginn utanaðkomandi reikningur hafi verið gefinn út.
+
+Þetta getur síðar hjálpað sveitarfélagi eða fyrirtæki að sjá:
+
+hvað eigin vél kostar;
+hvað hún vinnur mikið;
+hvað hefur verið dreift á verk;
+eldsneyti;
+viðhald;
+viðgerðir;
+tryggingar;
+afskriftir;
+samanburð við leigu eða verktaka.
+
+Auðlindin, notkunin, kostnaðarreglan og bókhalds-/kostnaðarlykillinn eiga að vera tengd en ekki sami hluturinn.
+
+18. Sveitarfélagstilraunin styrkir almenna GLÖGGT-kjarnann
+
+Við vorum sammála um að þó Verk sé nú þróað með mjög raunverulegu sveitarfélagsdæmi í huga eigum við ekki að smíða sveitarfélagskerfi.
+
+Við smíðum almenna virkni og sveitarfélagið notar hana á sinn hátt.
+
+Sveitarfélagsþarfirnar hafa þegar hjálpað okkur að finna almenn hugtök:
+
+verknúmer;
+verklykla;
+verkþætti;
+teymi;
+fólk;
+vélar;
+verkfæri;
+magn;
+efni;
+kostnað;
+innri kostnaðardreifingu;
+tímaskráningu;
+birgðir;
+sölu.
+
+Þetta nýtist jafnframt verktökum, verkstæðum, byggingarfyrirtækjum, þjónustufyrirtækjum og mörgum öðrum.
+
+Niðurstaðan okkar var í raun:
+
+Við erum að græða á sérþörfunum vegna þess að þær neyða almenna kjarnann til að verða betri.
+
+19. Stuðnings-/Admin-aðgangur
+
+Seint um kvöldið fórum við í mikilvæga öryggis- og stuðningshönnun.
+
+Upphaflega var rætt að notandi gæti fengið tilviljunarkenndan einnota kóða á skjá, lesið hann upp fyrir GLÖGGT Admin og Admin slegið hann inn til að fá tímabundinn stuðningsaðgang.
+
+Síðan kom mikilvæg varúð:
+
+Ef allir starfsmenn gætu sent mál beint til okkar gæti stuðningsflæðið fljótt orðið yfirfullt og alvarleg vandamál drukknað í smærri málum.
+
+Því var samþykkt eftirfarandi leið:
+
+Allir mega tilkynna vandamál → tilnefndur stjórnandi fyrirtækisins yfirfer → stjórnandi ákveður hvort málið fari til GLÖGGT → GLÖGGT yfirfer → ef aðgangs er þörf óskar GLÖGGT eftir honum → stjórnandi samþykkir tímabundinn aðgang.
+
+Einnota kóðinn tilheyrir því aðgangssamþykkinu, ekki fyrstu kvörtun starfsmanns.
+
+Stuðningsaðgangur á að vera:
+
+tímabundinn;
+bundinn við ákveðið fyrirtæki/mál;
+samþykktur;
+rekjanlegur;
+sjálfkrafa lokanlegur/útrunninn.
+
+Það þarf að varðveita:
+
+hver tilkynnti;
+hver yfirfór;
+hver sendi til GLÖGGT;
+hver samþykkti aðgang;
+hvaða GLÖGGT Admin tengdist;
+hvenær;
+hvað var gert;
+hvenær lotu lauk.
+
+Engin almenn bakdyr fyrir GLÖGGT Admin.
+
+20. Fjöltyngt GLÖGGT Admin og fjöltyngd Verk
+
+Síðasta stóra umræðuefni kvöldsins var tungumál.
+
+GLÖGGT Admin á að birtast á því tungumáli sem hver Admin-notandi kýs, óháð tungumáli fyrirtækisins sem verið er að aðstoða.
+
+En við fórum lengra.
+
+Verk getur sjálft verið í öðru landi og haft annað vinnumál. Til dæmis getur Verk verið í Póllandi.
+
+Þá getur:
+
+pólskur starfsmaður unnið í Mobile á pólsku;
+verkið haft pólsku sem vinnumál;
+íslenskur stjórnandi unnið í sínu GLÖGGT á íslensku;
+GLÖGGT Admin unnið á íslensku.
+
+Frumtexti skal þó alltaf varðveittur óbreyttur.
+
+Ef pólskur starfsmaður sendir verk-/vandamálalýsingu á pólsku til GLÖGGT Admin skal okkar umhverfi geta sýnt íslenska þýðingu, en frumtextinn verður áfram varðveittur og aðgengilegur.
+
+Sama hugsun getur virkað í hina áttina þegar íslenskur Admin eða stjórnandi svarar pólskum starfsmanni.
+
+Þannig varð fjöltyngi ekki bara þýðing á hnöppum heldur mögulegt fjöltyngt vinnuflæði milli fólks.
+
+Góð lokaformúla dagsins:
+
+Viðmót fylgir notanda. Verk getur haft vinnumál. Frumgögn halda sínu upprunalega tungumáli. Þýðing er hjálparlag en ekki nýtt frumgagn.
+
+21. Heildarniðurstaða dagsins
+
+Þetta var óvenju mikilvægur hönnunardagur þó við værum ekki að dæla út kóða.
+
+Við fórum frá efsta arkitektúrlagi GLÖGGT niður í mjög raunverulegt dæmi þar sem starfsmaður stendur úti í skurði, þarf annan mann, steinsög, 13 m³ af sandi og 30 m² af hellum — og komumst síðan aftur upp í Sölu, Birgðir, kostnaðardreifingu, Innsýn, heimildir, stuðning og fjöltyngi.
+
+Það er einmitt prófið sem arkitektúrinn þurfti að standast.
+
+Verk varð ekki sérkerfi. Það varð ein af birtingarmyndum sameiginlegs rekstrarkjarna GLÖGGT.
+
+Mikilvægustu setningar dagsins sem ég myndi varðveita orðrétt sem hönnunarreglur eru:
+
+Fastur kjarni – breytileg hegðun.
+
+Einfalt fyrir notandann — skipulagt og sundurgreint í grunninum.
+
+Verknúmer er einstök framkvæmd. Verklykill er samhengi/flokkun og má endurtaka sig.
+
+Áætlun má breytast. Framkvæmd sem þegar hefur átt sér stað má ekki endurskrifast.
+
+Vinnan þarf ekki að bíða eftir skráningunni.
+
+Vinnutími manns ≠ notkunartími tækis ≠ það sem er rukkað.
+
+Allir mega tilkynna vandamál; aðeins tilnefndir aðilar senda málið út úr fyrirtækinu til GLÖGGT og samþykkja stuðningsaðgang.
+
+Viðmót fylgir notanda. Verk getur haft vinnumál. Frumgögn varðveita frummálið.
+
+Og stærsta niðurstaðan er líklega þessi:
+
+Við erum ekki að reyna að sjá fyrir nákvæmlega hvernig GLÖGGT verður eftir fimm ár. Við erum að byggja grunn sem gerir okkur kleift að breyta GLÖGGT næstu fimm árin án þess að missa gögnin, merkinguna eða rekjanleikann.
+
+Lok dags: 23:09, 17. september 2026.
+
+Þessa vinnuskýrslu myndi ég telja eina af þeim sem eiga að fara óstytta inn í GLÖGGT vinnudagbókina, því hún varðveitir ekki bara niðurstöðurnar heldur hvernig Verk fór úr sérlausnarhugmynd yfir í almenna rekstrarhönnun GLÖGGT.
+
+Hér er ýtarleg vinnuskýrsla fyrir GLÖGGT frá um kl. 07:00 í morgun, 18. september 2026, og fram að lokum vinnu í kvöld.
+
+GLÖGGT – vinnuskýrsla 18. september 2026
+
+Dagurinn byrjaði á því að við héldum áfram að móta Verk sem raunverulegan rekstrarkjarna, en ákváðum að vinna örugglega í /verk10 samhliða gamla /verk svo við myndum ekki skemma það sem þegar var til. Um kvöldið var þessi tilraunaútgáfa orðin það mikið betri en gamla Verk að við færðum hana formlega yfir og gerðum hana að aðal-Verk kerfisins í production.
+
+Um kl. 07:00–09:00 – grunnur nýja Verk
+
+Fyrsta meginákvörðunin var að /verk10 yrði þróunarsvæði við hlið gamla /verk, ekki yfirskrift á því. Þetta gaf okkur frelsi til að endurhanna Verk án þess að þurfa stöðugt að verja eldri virkni.
+
+Við festum betur þá meginreglu að GLÖGGT eigi ekki að hafa sérstakt kerfi fyrir hverja atvinnugrein. Verk á að byggja á sameiginlegum kjarna þar sem fyrirtæki kveikir á þeirri hegðun sem það þarf.
+
+Þar kom meðal annars fram að:
+
+Vinnuvélar eiga ekki að vera harðkóðaður hluti allra fyrirtækja.
+Slík virkni á að vera capability/eining fyrirtækis, t.d. verk:machines.
+Ef fyrirtæki notar ekki vélar, á vélarflipi og tengd virkni einfaldlega ekki að sjást.
+Sama hugsun getur síðar gilt um ökutæki, verkfæri, báta, herbergi, stöðvar, verktaka, efni, akstur o.fl.
+
+Þetta styrkti arkitektúrinn „fastur kjarni, breytileg hegðun“.
+
+Samhliða þessu var fjöltyngi tekið alvarlega inn í sjálft Verk. Niðurstaðan var að ekki aðeins UI-textar heldur einnig rekstrarlegt efni sem starfsmaður sér eigi að geta birst á hans tungumáli, á meðan frumtextinn er varðveittur óbreyttur.
+
+Við vorum þá þegar að vinna með íslensku, ensku, pólsku og serbnesku.
+
+Um kl. 09:00 – Verkþættir verða raunverulegur gagnakjarni
+
+Stóra breytingin snemma dags var að Verk fékk raunverulega WorkPart einingu í gagnagrunninn.
+
+Áður var Verk meira ein heild. Nú varð hægt að hafa eitt Verk með mörgum verkþáttum.
+
+Bætt var við meðal annars:
+
+WorkPart
+WorkPartTranslation
+röðun verkþátta
+stöðu
+upprunatungumál
+rekjanleika
+tengingu WorkOrder → many WorkPart
+
+Gamla WorkOrder var ekki eyðilagt heldur nýja lagið sett ofan á það.
+
+Prófunardæmin okkar urðu meðal annars:
+
+Tengja fráfall frá þurrkara – lokið.
+hreinsa stíflu í affalli þvottavélar – fyrirhugað.
+
+Þarna fór Verk að líkjast miklu meira raunverulegu verkstjórnarkerfi en einföldum verklista.
+
+Um kl. 09:30–10:30 – úthlutun og raunveruleg vinna aðskilin
+
+Næsta mikilvæga arkitektúrákvörðun var að úthlutun starfsmanns á verkþátt má ekki vera það sama og skráð vinna.
+
+Við bættum því við WorkPartAssignment.
+
+Fyrsta útfærslan miðaði við PERSON, en gagnalíkanið var gert víðara svo síðar megi úthluta:
+
+einstaklingi
+teymi
+vél
+ökutæki
+verkfæri
+verktaka
+
+Þetta var mikilvægt vegna þess að það að Benedikt sé settur á Verk þýðir ekki sjálfkrafa að hann hafi unnið 20 mínútur við það.
+
+Því kom næst sérstakt lag fyrir staðreyndir um unna vinnu:
+
+WorkPartLaborFact
+
+Þar geymum við meðal annars:
+
+starfsmann
+verkþátt
+dagsetningu
+raunverulegan tíma
+athugasemd
+uppruna
+mögulega ógildingu
+
+Í viðmótinu var tíminn settur upp sem klukkustundir + mínútur, en undir húddinu eru mínútur varðveittar sem einföld og áreiðanleg grunneining.
+
+Þarna festum við líka mikilvæga reglu:
+
+Úthlutun ≠ raunveruleg vinna.
+
+Dagsetningar og íslensk framsetning
+
+Strax þarna kom í ljós að native browser-date reitir sýndu bandarískt form á sumum stöðum.
+
+Við byrjuðum því að færa sýnilegar dagsetningar yfir í:
+
+dd.mm.áááá
+
+á meðan gagnagrunnurinn heldur áfram að vinna með stöðluð dagsetningargildi.
+
+Þessi vinna varð síðar um kvöldið aftur sérstakt verkefni á starfsmannaspjaldinu.
+
+Fyrir hádegi – þýðingar verða varanleg gögn
+
+Við héldum áfram með þýðingar þannig að þær væru ekki bara tímabundnar á skjánum.
+
+Verk fékk stuðning við:
+
+upprunatungumál Verks
+varanlegar þýðingar á Verki
+varanlegar þýðingar á Verkþáttum
+þýðingar á vinnuathugasemdum
+
+AI á ekki að þýða sama efnið endalaust. Reglan varð:
+
+varðveita frumtexta
+leita að fyrirliggjandi þýðingu
+aðeins kalla á AI ef þýðingu vantar
+varðveita AI-notkun og niðurstöðu
+
+Þetta passar beint við meginregluna okkar:
+
+Gögn fyrst, AI síðan.
+
+Um hádegi – Afleiðingar / Effects
+
+Við byggðum svo mikilvægt lag sem fékk vinnuheitið Afleiðingar.
+
+Þar var mótuð þessi keðja:
+
+Verkþáttur → Úthlutun → Raunnotkun → Afleiðugrunnur
+
+Markmiðið er að staðreyndir úr Verki geti síðar myndað fjárhagsleg áhrif án þess að GLÖGGT stökkvi beint úr „10 mínútur unnar“ yfir í bókun eða reikning.
+
+Fyrsta útgáfan sýndi meðal annars:
+
+vinnukostnaðargrunn
+mögulegan sölugrunn
+stöðu eins og „Regla/verð vantar“
+
+Við prófuðum bæði 10 og 15 mínútna raunverulega vinnu og fengum samsvarandi afleiðugrunn.
+
+Mjög mikilvæg regla var fest:
+
+Staðreynd má mynda grunn að afleiðingu, en má ekki sjálfkrafa bóka eða reikningsfæra.
+
+Þannig er áfram skýr aðgreining milli:
+
+þess sem raunverulega gerðist
+útreikningsgrunns
+verð-/kostnaðarreglu
+reiknings
+bókhalds
+Um hádegi – efnisnotkun á Verk
+
+Næst bættum við við almennu líkani fyrir raunnotkun annarra auðlinda:
+
+WorkPartUsageFact
+
+Fyrsta kind var:
+
+MATERIAL
+
+Þar var hægt að skrá:
+
+heiti efnis
+vörunúmer/kóða
+dagsetningu
+magn
+mælieiningu
+athugasemd
+rekjanlega ógildingu
+
+Afleiðingar fóru þá að geta sýnt:
+
+mögulega birgðahreyfingu
+efnis-kostnaðargrunn
+mögulegan sölugrunn fyrir efni
+
+Þarna varð líka skýrt að birgðir, kostnaður og sala eru þrjú aðskilin lög, jafnvel þótt sama raunnotkun geti haft áhrif á þau öll.
+
+Síðdegis – Birgðir v1
+
+Við fórum síðan yfir í fyrsta raunverulega Birgðakjarnann.
+
+Birgðir fengu meðal annars:
+
+vöruskrá
+lagerstaði
+rekjanlegar birgðahreyfingar
+upphafsstöðu
+handvirkt inn/út
+reiknaða stöðu
+lágmarksbirgðaviðvaranir
+i18n-undirstöðu
+
+Síðan tengdum við Verk beint við birgðir með „Velja úr birgðum“.
+
+Þegar efni er valið úr birgðum getur GLÖGGT fyllt sjálfkrafa inn:
+
+vörukóða
+einingu
+lagerstað
+dagsetningu
+magn
+
+Handvirk skráning var samt varðveitt sem fallback.
+
+Við prófuðum m.a. vöruna Tengi.
+
+Við sáum stöðu þar sem Tengi var upphaflega 10 stk. og eftir 5 stk. notkun á Verki voru 5 eftir.
+
+Afleiðingar gátu þá greint á milli:
+
+efnis sem var raunverulega tengt við birgðir og „Fært úr birgðum“
+eldri handvirkrar efnisnotkunar þar sem „Birgðatenging vantar“
+
+Þetta var stórt skref því Verk og Birgðir voru nú farin að vinna saman í gegnum staðreyndir í stað lausrar textaskráningar.
+
+Leiðréttingar á opnu og lokuðu Verki
+
+Við ræddum mjög mikilvæga rekjanleikareglu.
+
+Á opnu Verki á venjuleg leiðrétting ekki að verða að óþarflega flóknum sýnilegum leiðréttingarbunka.
+
+Dæmi:
+
+skráð 5 stk.
+notandi átti við 4 stk.
+breytir einfaldlega í 4
+
+Tæknilega má updatedAt auðvitað breytast, en notandinn þarf ekki að sjá dramatíska leiðréttingarsögu vegna einfaldra innsláttarvilla á opnu Verki.
+
+Þegar Verki hefur verið lokað, breytist reglan:
+
+breyting verður rekjanleg
+hver breytti
+hvenær
+ástæða
+tengd birgðaleiðrétting
+enduropnun Verks sjálfs þarf einnig að vera rekjanleg
+
+Þetta er mikilvæg aðgreining sem við ætlum að nota víðar í kerfinu.
+
+Þjónusta 9000 og aðskilnaður vöru/þjónustu
+
+Við stofnuðum prófunarfærsluna Þjónusta 9000 og sáum strax arkitektúrgalla:
+
+kerfið meðhöndlaði þjónustuna eins og lager-vöru og birgðastaðan fór niður fyrir núll.
+
+Það leiddi til mikilvægrar hönnunarákvörðunar:
+
+Hvort hlutur er lagerhaldinn er sjálfstæður eiginleiki frá því hvort hægt er að selja eða kaupa hann.
+
+Þannig getur þjónusta verið:
+
+seld
+verðlögð
+mæld í stk., klst., ferð, verk, m² o.s.frv.
+
+án þess að hún:
+
+eigi lagerstað
+hafi birgðastöðu
+valdi birgðahreyfingu
+
+Þarna aðskildum við líka enn betur þjónustueiningu á reikningi frá raunverulegum vinnutíma starfsmanns.
+
+Innri kostnaður og reikningsfærsla
+
+Við mótuðum næst hvernig vinnukostnaður á að haga sér.
+
+Raunveruleg vinna á alltaf að vera nákvæm:
+
+t.d. starfsmaður vann 17 mínútur.
+
+Innri kostnaður má þá reiknast á nákvæmum mínútum.
+
+En sala getur fylgt annarri reglu, t.d.:
+
+lágmarksgjald
+30 mínútna einingar
+60 mínútna einingar
+föst verkverð
+
+Þannig má aldrei rugla saman:
+
+raunverulegum innri kostnaði og því sem rukkað er út.
+
+Við ákváðum jafnframt að innra kostnaðarverð starfsmanns eigi heima á starfsmannaspjaldi, helst sem kostnaður á mínútu með sögulegum gildistíma.
+
+Sama hugsun getur síðar átt við um vélar og tæki.
+
+Um kl. 13:00 og áfram – Starfsmannaspjald verður næsti kjarni
+
+Þú sagðir þá að við þyrftum almennilegt starfsmannaspjald með persónuupplýsingum, réttindum og launum.
+
+Við mótuðum kjarnann sem:
+
+Person/User → Employee → Company
+
+og einingar eins og Mobile, Verk, Vinnustund og Laun lesa síðan starfsmannatenginguna.
+
+Mikilvæg niðurstaða var að:
+
+Mobile-aðgangur má ekki ráðast af því hvort fyrirtækið notar Vinnustund.
+
+Starfsmaður getur þurft Mobile vegna Verks þó Vinnustund sé ekki virk.
+
+Starfsmannaspjald v1
+
+Seinna síðdegis/um kvöldið var raunverulegt starfsmannaspjald byggt.
+
+Migration:
+
+20260918190000_add_employee_core
+
+Spjaldið fékk meðal annars:
+
+grunnupplýsingar
+ráðningarstöðu
+ráðningarform
+starfshlutfall
+upphaf/lok ráðningar
+launasögu
+gildistíma launa
+innra kostnaðarverð á mínútu
+réttindi og hæfni
+
+Launaupplýsingar voru hugsaðar sem takmarkaðar upplýsingar en Verk getur notað innra kostnaðarverð án þess að sýna starfsmanni eða verkstjóra sjálf launin.
+
+Virkur/óvirkur starfsmaður
+
+Við lentum í því að starfsmaður virtist hverfa úr Verk.
+
+Ástæðan var að „virk ráðning“ var ekki merkt.
+
+Þetta sýndi að það var hættulegt að hafa active/inactive sem venjulegt checkbox inni í almennri vistun.
+
+Við breyttum hugsuninni þannig að:
+
+venjuleg breyting á starfsmannaspjaldi eigi ekki óvart að gera starfsmann óvirkan
+virkja/óvirkja eigi að vera sérstök, meðvituð aðgerð
+Réttindi og skírteini
+
+Við þróuðum réttindahlutann töluvert.
+
+Þú bentir réttilega á að raunveruleg réttindaskírteini innihalda oft marga flokka/kóða.
+
+Því má kerfið ekki vera of stíft.
+
+Réttindi þurfa meðal annars að geta geymt:
+
+réttindategund
+frjálsan kóða
+útgáfudag
+gildistíma
+athugasemdir
+
+Kóðar mega t.d. vera:
+
+B, BE, C, CE
+
+eða flokkar vinnuvélaréttinda.
+
+Migration:
+
+20260918195500_add_employee_qualification_codes
+
+Við bættum einnig við því að réttindaspjöld mætti opna aftur og breyta, og sérstakan „Vista réttindi“ hnapp.
+
+Mobile – innskráningarvandi
+
+Um kvöldið prófuðum við nýjan Mobile-notanda.
+
+Fyrst kom villa:
+
+„Virkt fyrirtæki eða innskráning vantar“
+
+og server svaraði 500.
+
+Við fórum yfir company-context og festum aftur arkitektúrinn:
+
+User → Employee/UserCompany → Company → Mobile
+
+ekki:
+
+User → Vinnustund → Company
+
+Við bjuggum til lagfæringu fyrir Mobile company context.
+
+Seinna kom þó í ljós að hluti vandans gæti einfaldlega hafa verið rangt lykilorð í prófuninni, því innskráning virkaði þegar hún var prófuð aftur.
+
+Myndavélarvandamál í Mobile er enn til staðar en var meðvitað sett til hliðar fyrir sérstaka Mobile-lotu seinna.
+
+Git og Vercel – stór hreinsunarlota
+
+Kvöldið varð síðan mjög mikið deployment-verkefni.
+
+Við komumst að því að staðbundna C:\GLÖGGT verkefnið gat byggst þótt ýmsar nauðsynlegar skrár væru ótrackaðar í Git.
+
+Þetta útskýrði hvers vegna Vercel gat bilað þó local build virkaði.
+
+Við bjuggum til hreint worktree:
+
+C:\GLÖGGT-CLEAN
+
+og fundum hvað vantaði í Git, meðal annars skrár fyrir:
+
+Verk10
+work capabilities
+i18n
+inventory
+operational text
+translation service
+material usage
+
+Við stage-uðum aðeins þær skrár sem áttu við — ekki git add ..
+
+Commit:
+
+43576ac Add missing Work10 inventory and i18n dependencies
+
+Næsta hreina build sýndi að TopClock var líka háður breytingu sem var aðeins local.
+
+Það leiddi til:
+
+1a7d23e Add missing TopClock language support
+
+Við bjuggum síðan C:\GLÖGGT-VERIFY úr þessu commit-i og þar tókst hreint production build alveg.
+
+Þetta staðfesti í fyrsta skipti að Git sjálft innihélt nægan kóða til að byggja nýju kerfin.
+
+Windows prebuilt Vercel mistökin
+
+Við reyndum fyrst Vercel --prebuilt út frá Windows.
+
+vercel build þurfti Admin PowerShell vegna symlink-heimilda.
+
+Build tókst að lokum, en deploymentið sjálft varð vandamál.
+
+Windows-byggði prebuilt pakkinn fór upp á Linux runtime og gaf meðal annars:
+
+Prisma external module vandamál
+Next ChunkLoadError
+
+Þá var tekin skýr ákvörðun:
+
+Við deployum ekki Windows --prebuilt aftur.
+
+Production var fyrst endurheimt með því að promote-a síðasta góða deploymentið.
+
+Síðan var búið til ferskt source-worktree:
+
+C:\GLÖGGT-DEPLOY
+
+og Vercel fékk source code, þannig að Vercel/Linux byggði sjálft.
+
+Deploymentið varð Ready á um 42 sekúndum.
+
+Þar með var nýja Verk10/Birgðir/Starfsmannagrunnurinn kominn örugglega aftur í production.
+
+Verk10 verður formlega Verk
+
+Seint um kvöldið var niðurstaðan orðin skýr:
+
+Gamla /verk var orðið mjög lítið notað á meðan /verk10 var orðið raunverulega nýja kerfið.
+
+Þú samþykktir því að við færðum það formlega yfir.
+
+Við bjuggum til cutover þar sem:
+
+/verk varð nýja Verk
+/verk/[id] varð nýja Verk-detail
+/verk/nytt hélt áfram að vera nýskráning
+Sidebar Verk vísar á /verk
+sérstakur „Verk 10“ prófunarhnappur hvarf
+/verk10 vísar áfram sjálfkrafa á /verk
+/verk10/[id] vísar á nýja detail-síðuna
+
+Commit:
+
+afed36f Promote Verk10 to main Verk experience
+
+Fyrsta hreina Vercel-build eftir cutover fann enn eina local dependency:
+
+ServiceTimeTracker tók ekki við interfaceLanguage í þeirri útgáfu sem Git hafði.
+
+Sú skrá var sett sérstaklega inn í Git og commit-uð.
+
+Næsta Vercel source deployment tókst:
+
+Ready – 31 sek.
+
+Production:
+
+greitt-workspace-kjwd78t3v-glo-e-ggt.vercel.app
+
+Þú prófaðir síðan www.gloggt.is.
+
+Þegar /verk10 vísaði sjálft yfir á /verk staðfestir þú einfaldlega:
+
+„virkar“
+
+Þar með var Verk-cutover formlega staðfest í production.
+
+Starfsmannadagsetningar – síðasta lota kvöldsins
+
+Við fórum svo aftur á starfsmannaspjaldið.
+
+Vandinn var að native date-reitir sýndu enn bandarískt snið sums staðar.
+
+Við breyttum þeim yfir í sýnilegt:
+
+dd.mm.áááá
+
+með dagatalshnappi.
+
+Þetta gilti meðal annars fyrir:
+
+fæðingardag
+ráðning hefst
+ráðningu lýkur
+gildistíma launa
+útgáfu/gildistíma réttinda
+
+Fyrsta commit:
+
+0ac40a1 Use localized employee date inputs
+
+Build fór hreint í gegn og deployment varð Ready.
+
+Við prófuðum síðan Ráðning hefst.
+
+Þar kom fyrst upp ruglingur þar sem Benedikt hafði eldra rangt gildi en Sigríður rétt.
+
+Síðan kom í ljós raunverulegt vandamál:
+
+sýnilegt format og form-submission format þurftu að passa.
+
+Við ákváðum því:
+
+notandi sér 01.11.2010
+undir húddinu sendir formið 2010-11-01
+
+Við löguðum LocalDateInput.
+
+Sú útgáfa byggðist en browserinn neitaði enn að vista.
+
+Þá fannst síðasta smávillan:
+
+pattern í input-inu var escap-að rangt í JSX.
+
+Það var breytt í stöðugt pattern:
+
+[0-9]{1,2}[.][0-9]{1,2}[.][0-9]{4}
+
+Þú prófaðir aftur og svaraðir:
+
+„núna er það í lagi“
+
+Lokacommit:
+
+38b7b92 Fix employee date input validation
+
+Það fór í GitHub og Vercel.
+
+Deployment:
+
+Ready – 37 sek.
+
+Production:
+
+greitt-workspace-gesj93sla-glo-e-ggt.vercel.app
+
+Og að lokum prófaðir þú á production og staðfestir:
+
+„það virkar“
+
+Þar með er dagsetningarlotan lokuð.
+
+Tæknilegar viðvaranir sem komu upp en stöðvuðu ekkert
+
+Öll production build í lok kvölds fóru í gegn með:
+
+TypeScript ✅
+Prisma generate ✅
+56/56 síður ✅
+Next.js production build ✅
+
+Sama Turbopack-viðvörunin birtist áfram þrisvar í:
+
+lib/insight/document-analyzer.ts
+
+vegna dynamic filesystem access við:
+
+existsSync
+readFile
+createReadStream
+
+Þetta er ekki villa núna en getur síðar valdið því að Turbopack trace-i óþarflega stóran hluta verkefnisins og deployment stækki.
+
+Við eigum að taka það sem sérstakt hreinsunarverk síðar.
+
+Prisma bauð einnig upp á major uppfærslu úr 7.9.1 yfir í Prisma 8 RC. Við gerðum ekki slíka major-upgrade í miðri þessari lotu.
+
+Helstu arkitektúrniðurstöður dagsins
+
+Mikilvægasta sem festist í dag er að Verk er nú farið að byggjast á skýru lagaskiptu líkani:
+
+Verk
+→ Verkþættir
+→ Úthlutun
+→ Raunverulegar staðreyndir
+→ Afleiðugrunnur
+→ síðar verð/kostnaður/sala/bókhald
+
+Raunveruleg vinna, efnisnotkun og síðar vélanotkun eru staðreyndir.
+
+GLÖGGT má reikna út afleiðingar þeirra en á ekki að stökkva sjálfkrafa yfir í bókun eða reikningsgerð.
+
+Birgðir og Verk eru nú tengd saman.
+
+Starfsmenn eru orðnir sjálfstæður kjarnahluti.
+
+Mobile á að byggjast á starfsmanna-/fyrirtækjatengingu, ekki Vinnustund.
+
+Þjónusta er ekki sjálfkrafa lagerhlutur.
+
+Raunvinnutími og reikningsfærður tími eru ekki sami hluturinn.
+
+Innri kostnaður og sölugrunnur eru aðskilin hugtök.
+
+Réttindi starfsfólks eru orðin raunveruleg gögn með gildistíma og frjálsum réttindakóðum.
+
+Og nýja Verk er ekki lengur „Verk10“ tilraun — það er nú orðið aðal-Verk GLÖGGT í production.
+
+Staðan þegar við stoppum í kvöld
+
+Í lok dags er staðan því:
+
+Verk: nýja kerfið komið í production og staðfest.
+
+Verkþættir: persistent og með þýðingum.
+
+Úthlutun: aðskilin frá raunverulegri vinnu.
+
+Vinnutími: persistent staðreyndir í mínútum.
+
+Afleiðingar: reikna grunn en bóka/rukka ekki sjálfkrafa.
+
+Efnisnotkun: tengd Verkþáttum.
+
+Birgðir: v1 virkar og tengist Verk.
+
+Starfsmannaspjald: komið með ráðningu, launagrunn, innri kostnað og réttindi.
+
+Réttindi: kóðar og gildistímar studdir.
+
+Mobile: company-context arkitektúr staðfestur; myndavél síðar.
+
+Dagsetningar starfsmanna: íslenskt format, rétt ISO submission og staðfest production.
+
+Git/Vercel: örugg deployment-aðferð komin í ljós:
+hreint commit → fresh worktree → Vercel source build á Linux.
+
+Og við höfum líka lært hvað ekki á að gera:
+ekki deploya Windows --prebuilt, og ekki treysta því að local build sanni að allar nauðsynlegar skrár séu komnar í Git.
+
+Næsti stoppunktur
+
+Við ákváðum að taka þetta áfram á morgun.
+
+Næsta skýra verkefni er:
+
+innra kostnaðarverð starfsmanna með sögulegum gildistíma og tengingu inn í Verk/Afleiðingar.
+
+Það á að gera GLÖGGT kleift að reikna réttan raunverulegan vinnukostnað út frá skráðum mínútum, án þess að launaupplýsingar þurfi að birtast inni á Verki.
+
+Þetta var mjög stór þróunardagur: við fórum frá tilraunaútgáfu af nýju Verk yfir í raunverulegan rekstrarkjarna sem er nú kominn í production.
+
+getur notað sem endurræsingar-/handoff-skjal ef við missum samhengi.
+GLÖGGT – dagskýrsla 19. september 2026
+Dagurinn fór í tvo stóra meginþræði: annars vegar Fylgiskjöl/Birgðir/AI-vinnslu, hins vegar stóra áframhaldandi uppbyggingu á Verk. Undir lok dags var nýjasta Verk-Mobile lotan komin á Production og Vercel sýndi Ready.
+Fylgiskjöl, AI og Innsýn
+Við fundum að venjuleg bókanleg fylgiskjöl gátu farið í tvö AI-köll: fyrst RECEIPT_ANALYSIS og síðan aftur í sjálfvirka Innsýn. Þetta sást beint á AI-kostnaðarsíðunni með receipt-númerum og tímastimplum.
+Við settum inn rekjanleika á AI-köll svo nú sé hægt að sjá:
+- fyrirtæki,
+- receipt/document,
+- vinnslustig,
+- action,
+- model,
+- tokens,
+- kostnað,
+- status,
+- operation key.
+Síðan var sjálfvirk Innsýn hert þannig að bókanlegt skjal með bókunarlínum má ekki fara sjálfkrafa aftur í djúpa Innsýn. Handvirkt „Keyra Innsýn“ er áfram leyfilegt.
+Þetta var síðan staðfest í Production með tveimur nýjum fylgiskjölum:
+- #290 → eitt RECEIPT_ANALYSIS
+- #291 → eitt RECEIPT_ANALYSIS
+- engin ný sjálfvirk Insight-köll.
+Þannig er tvöfalda AI-lestrinum fyrir venjuleg bókanleg skjöl nú haldið niðri.
+AI svaraði en eftirvinnslan bilaði
+Sjóvá-skjalið #291 sýndi fyrst „AI-lestur mistókst“, en AI-kostnaðarsíðan sýndi að OpenAI-kallið sjálft hafði tekist.
+Við staðfestum þannig að villan var ekki AI-kallið heldur eitthvað eftir að svarið kom til baka — parsing/persistence/post-processing.
+Við breyttum því þannig að:
+- AI-success og post-processing failure eru aðgreind;
+- ef AI svarar en niðurstöðuvinnslan bilar verður status ekki ranglega „AI-lestur mistókst“;
+- raunveruleg villa fer í AuditEvent og sést í Rekjanleika;
+- stóra Prisma transaction fékk maxWait: 10s og timeout: 30s.
+Sjóvá var síðan lesið aftur og vinnslan gekk í gegn.
+Sjóvá-prófið
+Sjóvá-greiðslukvittunin að fjárhæð 85.677 kr. var síðan rétt sundurliðuð.
+Bókun:
+- bifreiðatryggingar → 4620,
+- heimilis-/fasteignatryggingar → 4640,
+- greiðsludreifingarkostnaður → 4980,
+- banki → 1510.
+Debet og kredit stemmdu bæði 85.677 kr.
+Staðfest fyrri tryggingamynstur voru endurnýtt.
+Eitt smáatriði fannst:
+- skírteini 705186, Kaskótrygging JUH30 Kia EV6, 10.700 kr., kom rétt í bókun en virtist vanta í tryggingaspjaldalistann.
+Það er enn óleyst.
+Mikilvæg hönnunarákvörðun var ítrekuð: þekkt Sjóvá-snið eiga síðar að fara í deterministic parser fyrst, ekki fulla GPT-5.6 lesningu í hvert skipti.
+Markmið:
+þekkt snið → deterministic extraction → fyrri staðfest tenging → AI aðeins á óvissu.
+Fylgiskjalsupphæð
+Við fundum að fylgiskjal gat sýnt 0 kr. í haus þó AI hefði fundið rétta upphæð.
+Þetta var lagað og Sjóvá #291 sýndi síðan rétt:
+85.677 kr.
+Birgðir úr fylgiskjali
+Fyrsta útgáfan af birgðaflæðinu sýndi ranglega tryggingar og greiðslugjöld sem mögulegar lagervörur.
+Við hertum síuna:
+- efnisleg vara getur verið lagerhæf;
+- tryggingar, þjónusta, vextir, gjöld, skattar o.fl. eiga ekki í Birgðir.
+Sjóvá-skjalið sýndi síðan engan Birgðir-kassa, eins og það átti að gera.
+Bónus-strimill
+Við prófuðum raunverulegan kassastrimil frá Bónus, 4.722 kr.
+GLÖGGT las m.a.:
+- MCC franskar, 2 stk × 569 kr.
+- Lambhaga salat, 525 kr.
+- Bónus kjúkling, 1,468 kg × 1.075 kr./kg
+- Bónus kjúkling, 1,332 kg × 1.075 kr./kg
+- Bónus poka, 49 kr.
+Bókun:
+- 4910 Veitingakaup → 4.722 kr.
+- 1510 Banki → 4.722 kr.
+Bókun stemmdi.
+Birgðir sýndu rétt magn, kg/stk og einingarverð.
+Mikilvæg regla var staðfest fyrir Benedikt-umhverfið:
+allar efnislegar heimilisvörur mega fara í lager, því markmiðið er einnig að fylgjast með verðþróun heimilisvara yfir tíma.
+Þetta er umhverfisstilling, ekki almenn regla fyrir öll fyrirtæki.
+Þjónusta, tryggingar, gjöld o.fl. fara áfram ekki á lager.
+Stofna nýja vöru beint úr fylgiskjali
+Við bættum við möguleikanum:
+„+ Stofna nýja vöru úr þessari línu“
+Ef engin vara passar:
+- GLÖGGT leitar fyrst deterministic eftir strikamerki, vörunúmeri eða heiti;
+- ef vara finnst er hún endurnýtt;
+- annars er ný lagerhaldin vara stofnuð úr fylgiskjalalínunni;
+- notandi velur lagerstað;
+- magn, eining og staðfest innkaupsverð fylgja með;
+- vörustofnun og lagerhreyfing eru í sömu transaction;
+- rekjanleiki skráir að varan hafi verið stofnuð úr fylgiskjali.
+Ný lagersvæði eru áfram stofnuð inni í Birgðir, ekki á fylgiskjalinu.
+Lagerverðmæti
+Við bættum við Verðmæti vörulagers á Birgðir.
+Fyrsta rekstrarreglan er:
+lagerstaða × síðasta staðfesta innkaupsverð
+Sýnt er:
+- heildarverðmæti,
+- verðmæti hverrar vöru,
+- verðmæti eftir lagerstað,
+- viðvörun ef vara hefur lagerstöðu en ekkert innkaupsverð.
+Þetta er sérstaklega merkt sem rekstrarlegt lagerverðmæti, ekki formlegt bókhaldslegt birgðamat/FIFO/veginn kostnaður.
+Vörumóttaka úr fylgiskjali uppfærir einnig síðasta staðfesta innkaupsverð vörunnar.
+VERK
+Eftir að Fylgiskjöl/Birgðir voru komin á góðan stað fórum við aftur í Verk og tókum þrjár stórar lotur.
+1. Verkflæði, staða og dependencies
+Komið á Production:
+- status á Verkþáttum:
+  - PLANNED
+  - READY
+  - IN_PROGRESS
+  - ON_HOLD
+  - BLOCKED
+  - COMPLETED
+  - CANCELLED
+- hægt að breyta stöðu úr UI;
+- hægt að raða Verkþáttum upp/niður;
+- hægt að setja undanfara/dependency;
+- FINISH_TO_START regla;
+- Verkþáttur má ekki verða READY/hefjast/lokast ef nauðsynlegur undanfari er ólokinn;
+- hringtengingar bannaðar;
+- dependency-kandidatar sem mynda hring eru ekki boðnir;
+- óleyfilegar stöður vegna dependency eru disabled í UI;
+- startedAt og completedAt fylgja status;
+- WorkOrder-status er afleiddur úr Verkþáttum;
+- lokað Verk opnast aftur ef Verkþáttur er enduropnaður;
+- breytingar á röð, status og dependency fara í AuditEvent;
+- textar tilbúnir fyrir is/en/pl/sr.
+Commit-message:
+Add Work workflow status and dependencies
+Production varð Ready.
+2. Auðlindakjarni – teymi, vélar, farartæki, verkfæri, verktakar
+Stór lota kom síðan á Production.
+Nýr WorkResource kjarni styður:
+- TEAM
+- MACHINE
+- VEHICLE
+- TOOL
+- CONTRACTOR
+Komið:
+- raunverulegar auðlindaeiningar;
+- teymi tengjast Employee;
+- auðlind úthlutuð á Verkþátt;
+- raunnotkun auðlindar skráð sérstaklega frá úthlutun;
+- mælastaða/mælissaga;
+- QR-auðkenni undirbúið;
+- resource-status, t.d. laus / í notkun / viðhald / biluð;
+- innra kostnaðarverð;
+- sögulegt kostnaðarverð snapshot-að þegar raunnotkun er skráð;
+- RESOURCE_COST_BASIS komið í Afleiðingar;
+- mögulegur sölugrunnur aðskilinn;
+- ekkert reikningsfært sjálfkrafa;
+- /verk/tilfong stjórnunarsíða;
+- teymi og vélar orðnar raunveruleg gögn í /verk;
+- AuditEvent fyrir mikilvægar breytingar;
+- is/en/pl/sr textar.
+Við lentum í einni TypeScript narrowing-villu:
+resource.kind var string en helper vildi union-type.
+Það var lagað með local typed resourceKind.
+Commit-message:
+Add Work resources teams and usage core
+Production varð Ready.
+3. Mobile Verk – framkvæmd
+Síðasta stóra lota dagsins, og nýjasta Production staðan, er Mobile-framkvæmd.
+Komið:
+- „Mín verk“ byggt á beinni úthlutun og teymisúthlutun;
+- leit eftir:
+  - heiti,
+  - verknúmeri,
+  - verklykli,
+  - stað,
+  - Verkþætti;
+- starfsmaður getur:
+  - hafið vinnu,
+  - stöðvað tímamælingu,
+  - sett Verkþátt í bið,
+  - lokið Verkþætti;
+- ein virk Mobile-tímamæling á starfsmann;
+- tími fer í canonical WorkPartLaborFact;
+- source=MOBILE;
+- dependencies varin server-side;
+- ekki hægt að ljúka Verkþætti meðan annar starfsmaður er enn virkur á honum;
+- efnisnotkun úr Birgðum skráð úr Mobile;
+- lager lækkar í sömu transaction;
+- raunnotkun vélar/farartækis/verkfæris/verktaka skráð úr Mobile;
+- kostnaðarverð auðlindar snapshot-að;
+- hægt að skrá mælastað;
+- mælastaða má ekki lækka í venjulegu Mobile-flæði;
+- Employee.preferredLanguage hefur forgang;
+- þýddur rekstrartexti Verks/Verkþáttar notaður ef þýðing er til;
+- nýtt Mobile textalag fyrir is/en/pl/sr;
+- Mobile starfsmannaflæði ekki bundið við bókhalds-canWrite; virkur Employee-tengdur notandi getur skráð framkvæmd.
+Commit-message:
+Add mobile Work execution flow
+Nýjasta Vercel deployment er Ready / Production.
+Mikilvægar Verk-reglur sem standa
+Verk byggist nú á:
+Verk → Verkþáttur → Úthlutun → raunveruleg staðreynd → Afleiðing
+WorkPartLaborFact er canonical sannleikur um raunvinnu.
+Raunvinna ≠ reikningsfærður tími.
+Innri kostnaður ≠ sölugrunnur.
+Úthlutun auðlindar ≠ raunnotkun auðlindar.
+Sögulegt kostnaðarverð verður að varðveitast við atburðinn; verðbreyting síðar má ekki breyta gömlum Verkum.
+Efni úr Birgðum fara í raunverulega lagerhreyfingu.
+Afleiðingar mega reikna kostnaðar- og sölugrunn en mega ekki sjálfkrafa stofna reikning eða bókun.
+Allir nýir Verk/Mobile-textar skulu vera i18n-ready frá byrjun.
+Frumtexti fyrirtækis varðveitist óbreyttur; þýðing er sér lag.
+Það sem er næst í Verk
+Næsti stóri klumpur sem við vorum komin að er:
+QR + mælastaða/mynd + viðhaldslyklar
+Þar liggur eðlilegt næsta framhald vegna þess að auðlindakjarninn og Mobile-framkvæmdin eru nú til.
+Eftir það eru enn stærri verkefni eftir:
+- QR á Verki og vélum;
+- mynd af mæli með mælaskráningu;
+- viðhaldslyklar og viðhaldstímar;
+- raðverk / „næsti lausi“;
+- drag-and-drop á starfsmönnum/teymum;
+- contractor-link/SMS/QR innskráning;
+- PDF til verktaka;
+- akstur og ferðir;
+- dagslokaspurning „Lokið?“;
+- tveggja átta skilaboð;
+- Kvarta + skjámynd;
+- samþykkt/læsing;
+- leyfisstýring/pause/retire/assign;
+- tenging Afleiðinga yfir í Sölu/Reikninga;
+- hreinsa /verk10 tvíverknað;
+- loka gömlu WorkLog-skrifleiðinni eða gera hana formlega legacy-only.
+Þekkt ókláruð atriði utan Verk
+- Sjóvá tryggingaspjald fyrir skírteini 705186 vantar líklega í entity-listann þótt bókunin sé rétt.
+- Þekkt Sjóvá-snið fer enn í fulla AI-greiningu; deterministic „known document/template router“ er ekki kominn.
+- AI-kostnaðarsaga virðist mögulega ekki sýna allar eldri lífeyrisgreiðslur sem þú manst að hafi áður verið sýnilegar. Við ákváðum að rannsaka gagnagrunninn áður en við breytum framsetningunni.
+- Data-first router fyrir þekkt fylgiskjöl er enn næsta stóra AI-kostnaðarverkefni.
+Git-varúð eftir endurræsingu
+Repoið inniheldur enn mikið af óskyldum modified/deleted/untracked skrám frá eldri vinnu.
+Þess vegna:
+- ekki nota git add .
+- stage-a alltaf aðeins skrár úr viðkomandi pakka;
+- keyra git diff --cached --check;
+- skoða git status --short;
+- síðan commit/push.
+Dæmigerð gömul óskyld atriði eru m.a. bankasíður, stjórnborðssíður, VSK, gamlar root-copy skrár, docs/eldri, generated, fleiri i18n skrár o.fl.
+Endurræsingarpunktur
+Ef samtalið endurræsist má halda áfram frá þessari setningu:
+GLÖGGT 19.09.2026: Nýjasta Production er Ready eftir commit „Add mobile Work execution flow“. Verk hefur nú status/dependencies, resource core fyrir teymi/vélar/farartæki/verkfæri/verktaka og Mobile framkvæmd með tíma, efni, resource usage og mælastaða. Næsta stóra Verk-lota er QR + mælismyndir + viðhaldslyklar. Ekki nota git add .; repo inniheldur mikið óskylt óstage-að efni.
+
+Þetta er staðan sem ég myndi nota sem nýjan upphafspunkt eftir endurræsingu.
+
+Já — hér kemur önnur og aðeins ítarlegri lokaskýrsla fyrir nóttina.
+GLÖGGT – vinnuskýrsla 19.–20. september 2026
+Kvöldið varð mjög afkastamikið og færði Verk/Mobile töluvert nær raunverulegri notkun. Við byrjuðum á því að festa fyrri Verk-lotuna í Git og production, en fórum síðan beint áfram í Tækjalista, QR-merki, viðhald, Mobile og sameiginlegt stjórnendasvæði.
+Stóri tæknilegi checkpointinn fyrr um kvöldið var migrationin 20260919224500_add_work_resource_maintenance. Hún fór rétt inn með prisma migrate deploy, og npx tsc --noEmit fór í gegn með 0 villum. Sú lota var síðan commit-uð sem:
+34b01fd – Add work resource QR and maintenance workflow
+og push-uð á main. Vercel staðfesti hana síðan sem Ready / Production.
+Í production prófuðum við Verk-síðuna og staðfestum að Verk sjálft hleðst eðlilega eftir breytingarnar. Þar sáum við jafnframt að gamla heitið „Auðlindir Verks“ var of kerfislegt og óskýrt. Við ákváðum að notandinn eigi að sjá Tækjalisti, þó undirliggjandi gagnalíkan megi áfram vera almennt.
+Tækjalistinn var síðan endurunninn þannig að notandinn sér nú vinnuvélar, ökutæki, tæki og verkfæri, en ekki teymi eða verktaka. Við festum líka að teymi eiga heima undir fólki/skipulagi en ekki í Tækjalista.
+Við fórum yfir verðreiti og tókum skýra ákvörðun um að bæði innra kostnaðarverð / einingu og söluverð án VSK / einingu séu valfrjáls. Sama regla á að gilda síðar fyrir mannalaun/vinnukostnað. Fyrirtæki eiga að geta skráð aðeins tíma/magn ef þau vilja og bæta verði við síðar ef þau þurfa kostnaðar- eða framlegðargreiningu.
+Við staðfestum einnig að Sérsniðin eining sé aðeins aukamöguleiki og eigi ekki að trufla venjulegt flæði. Hún birtist aðeins ef fyrirtæki þarf einingu sem fellur ekki undir klst., km, stk. o.s.frv.
+Fyrir vinnuvélar og ökutæki ákváðum við að skráningarnúmer sé eðlilegur sýnilegur tækjakóði þar sem það á við. Fyrir tæki án skráningarnúmers er notað innra tækjanúmer. Réttindakröfur verða hins vegar sérstök rekjanleg gögn á tækinu, svo GLÖGGT geti síðar tengt starfsmann → réttindi → tæki → má nota / má ekki nota.
+Við stofnuðum raunprófunartæki, Sláttutraktor JL-564, og staðfestum að Tækjalistinn sýnir það rétt. Innra kostnaðarverð 8.000 kr. varðveittist og söluverð gat verið autt.
+Þar kom upp tvíteknivörn sem fyrst birtist sem Runtime Error. Við fundum að varnarreglan sjálf var rétt — JL-564 var þegar til — en framsetningin var röng. Hún var því breytt þannig að notandinn fær nú eðlilega gula viðvörun: „Tæki með þessu skráningarnúmeri / tækjanúmeri er þegar til.“ Þá var einnig lagað ZIP-pakkningarvandamál sem olli því að tímabundin möppur lentu inni í C:\GLÖGGT og tsc reyndi að þýða þær.
+QR-flæðið tók síðan stórt skref. QR-merkið er nú tengt tækinu og sýnir GLÖGGT TÆKI í stað „GLÖGGT AUÐLIND“. QR-stærðin er stillanleg í sentimetrum og við prófuðum raunverulega 2 × 2 cm QR-kóða í prentsýn. Það virkaði. Við bættum einnig við möguleika á mismunandi stærð merkis svo QR-kóðinn geti verið lítill án þess að allt merkið þurfi að vera stórt. Langi innri auðkennisstrengurinn var tekinn af merkinu til að halda því hreinu.
+Við fórum einnig yfir viðhald. Orðalagið „Viðvörun fyrir gjalddaga“ var óeðlilegt í þessu samhengi og var breytt í merkingu á borð við „Viðvörun áður en viðhald er tímabært“. Hugmyndin er að kerfið geti t.d. varað við þegar 25 klst. eru eftir þar til þjónusta á 250 klst. verður tímabær.
+Í Mobile fundum við að starfsmaður ætti ekki að sjá kerfislegt orðalag eins og „Auðlind“. Þar á að standa Tæki. Við ákváðum líka að myndataka af mæli eigi að vera vinnuaðgerð, ekki skráaraðgerð: „Taka mynd af mæli“ í stað „Veldu skrá“. Native file input má vera undir húddinu, en starfsmaðurinn á að sjá myndavélaraðgerð.
+Þá kom stærri hönnunarákvörðun um Mobile: appið á að vera eins einfalt og mögulegt er. Það á ekki að sýna sama viðmót öllum eða verða smækkuð desktop útgáfa. Stjórnandi á að geta valið hvað starfsmaður sér.
+Úr því varð nýtt sameiginlegt Stjórnun-svæði fyrir fyrirtækið. Það er aðskilið frá GLÖGGT Admin /stjornbord. Stjórnun á að vera sameiginlegt stjórnunarlag fyrir Bókhald, Verk, Vinnustundir, Sala, Birgðir og fleiri framtíðarþjónustur.
+Við festum einnig áskriftarregluna: stjórnandi sér aðeins þá möguleika sem áskrift fyrirtækisins veitir. Undirliggjandi hugsun er nú:
+áskrift → virkar einingar → heimildir → Mobile-sýnileiki
+Þessi lög eiga að vera aðskilin. Að fela eitthvað í Mobile breytir ekki sjálfkrafa heimildum og fyrirtæki getur ekki virkjað þjónustu sem áskriftin inniheldur ekki.
+Fyrsta Stjórnunarsíðan kom upp með þjónustukortum fyrir Bókhald, Sala, Laun, Birgðir, Vinnustundir og Verk, auk Notenda og heimilda, Tækjalista, Fyrirtækisreglna og GLÖGGT Mobile.
+Við sáum strax að Mobile-stillingarnar voru fyrst aðeins fyrirtækislegar. Þú bentir rétt á að stjórnandi þarf að geta stillt hvern notanda fyrir sig. Við bættum því við notendasértæku Mobile-sýnileikalagi og nýju Prisma-módeli. Migration:
+20260920005500_add_user_mobile_feature_visibility
+var keyrð, Prisma validate/generate fór í gegn og npx tsc --noEmit fór áfram í gegn með 0 villum.
+Þá kom upp React/UI-villa þar sem hakaðar stillingar virtust fylgja með þegar skipt var milli Benedikts og Sigríðar. Það var lagað þannig að Mobile-formið endurhleðst rétt fyrir valinn notanda. Eftir lagfæringuna staðfestum við á skjá að Sigríður var valin, að hennar stillingar birtust sérstaklega og að „Stillingar vistaðar.“ kom upp. Verk og Vörutalning voru virk hjá henni en Myndataka fylgiskjala óvirk. Þetta leit loksins út eins og rétt notendasértækt flæði.
+Stóra kvöldlotan var síðan commit-uð sem:
+3399795 – Add company management and user-specific Mobile visibility
+og push-uð:
+34b01fd..3399795 main -> main
+Vercel staðfesti síðan commit 3399795 sem Ready / Production.
+Í allra síðasta prófinu kvittaðir þú Verk út í símanum. Það er mikilvæg staðfesting á því að nýja Mobile/Verk-flæðið er komið nógu langt til raunnotkunar.
+Nákvæmur stoppunktur fyrir morgundaginn: við byrjum á gömlu Verkunum. Gömul/lokin verk eiga ekki að sitja áfram í sama virka vinnuflæðinu og ný Verk. Við þurfum því að skilgreina og útfæra hvernig þau flytjast sjálfkrafa eða með skýrri stöðubreytingu yfir í annan stað, líklega lokið/saga/skjalasafn, þannig að virka Verk-sýnin haldist hrein. Síðan höldum við áfram að styrkja tengslin milli Tækjalista, Verka og Mobile.
+Við endum því nóttina með tvo örugga production-checkpointa, hreint TypeScript, migrationir applied, nýtt Tækjalista/QR/viðhaldsflæði, sameiginlegt Stjórnunarsvæði og notendasértækt Mobile sem er komið í virk próf.
+Góða nótt Benedikt. Við byrjum á gömlu/loknu Verkunum á morgun.
+
+verk skýrslu
+Já — hér er almennileg verkskýrsla fyrir GLÖGGT, sunnudaginn 20. september 2026. Ég tek með bæði það sem var klárað, það sem var sannreynt í prófun og það sem við fundum að þarf að halda áfram með á morgun.
+
+GLÖGGT – Verkskýrsla 20. september 2026
+Yfirlit dagsins
+Dagurinn fór að mestu í að færa Verk frá því að vera hefðbundinn verkefnalisti yfir í raunverulegt skipulags-, mannafla- og framkvæmdarkerfi.
+
+Stærsti áfanginn var að við fórum frá litlum handvirkum prófum yfir í raunhæft álagsumhverfi með 50 starfsmönnum, 300 Verkum og 18 vélum/tækjum. Það gerði okkur kleift að hætta að giska á hvernig kerfið ætti að virka og byrja í staðinn að sjá raunveruleg vandamál í notkun.
+
+Við staðfestum sérstaklega að Dagskipulagið getur nú unnið með stóran starfsmannahóp, lifandi tímalínu, leit, síur og stöðu á ákveðnum tíma. Í lok dags kom jafnframt í ljós mikilvæg regla fyrir sjálfvirkar mönnunartillögur: laus starfsmaður má aldrei fá forgang fram yfir starfsmann sem hefur rétta hæfni.
+
+1. Verk – lífsferill og lokun
+Við prófuðum og staðfestum lífsferil Verks.
+
+Verkþáttur gat farið í Lokið, talningar uppfærðust rétt og þegar allir Verkþættir voru lokaðir varð Verkið „Tilbúið til lokunar“ í stað þess að lokast sjálfkrafa.
+
+Stjórnandi gat síðan sérstaklega valið „Ljúka Verki“.
+
+Við staðfestum með prófverkinu „Þrif á baðherbergi“ að:
+
+Verkþátturinn hélst lokaður.
+Verkið fór úr virku Dagskipulagi.
+Það birtist undir Lokið Verk.
+Virk verkatalning fór niður.
+Fyrri vinnustundir og önnur saga varðveittust.
+Þessi aðgreining er mikilvæg:
+
+Verkþáttur lokið → Verk tilbúið til lokunar → stjórnandi lokar Verki.
+
+2. Úthlutun starfsmanna með drag-and-drop
+Drag-and-drop úthlutun var byggð inn í Dagskipulagið.
+
+Starfsmann má nú draga úr Fólk-listanum yfir á Verk eða Verkþátt.
+
+Mikilvæg hönnunarregla var staðfest:
+
+Úthlutun er ekki tímaskráning.
+
+Þegar starfsmaður er dreginn á Verk:
+
+hann er aðeins úthlutaður;
+raunvinnutími byrjar ekki;
+tímaskráning hefst aðeins þegar starfsmaður velur sérstaklega að hefja vinnu eða raunvinna er skráð.
+Við fundum einnig að það var mjög slæmt UX að hoppa sjálfkrafa inn á Verksíðu eftir drop.
+
+Það var lagað þannig að stjórnandinn helst á Dagskipulaginu og getur haldið áfram að manna næsta Verk.
+
+3. Vinnustundir starfsmanna
+Við mótuðum leiðina fyrir vinnustundir eftir starfsmanni.
+
+Starfsmaður á að vera smellanlegur og þaðan eiga að fást raunverulegar vinnustundir eftir:
+
+degi;
+viku;
+mánuði;
+öllu tímabili;
+Verki;
+Verkþætti;
+dagsetningu;
+skráningarmáta.
+Mikilvæg regla:
+
+Lokið Verk hverfur úr daglegri framkvæmdarsýn en vinnustundir þess hverfa ekki úr sögu eða skýrslum.
+
+4. Mönnun og áætlaður vinnutími
+Við bættum við skipulagsupplýsingum á Verk.
+
+Við stofnun Verks er nú hægt að skrá:
+
+fjölda starfsmanna sem þarf;
+áætlaðan vinnutíma;
+myndakröfu;
+áætlaðan dag;
+áætlað upphaf.
+Við prófuðum m.a. Verk sem þurfti tvo starfsmenn og kerfið sýndi mönnun rétt.
+
+Þetta gefur grunn að framsetningu eins og:
+
+1 af 2 úthlutað
+
+eða
+
+3 af 3 úthlutað.
+
+5. Kort og staðsetning
+Við bættum við „Opna leið að staðsetningu“.
+
+Starfsmaður eða stjórnandi getur því farið beint úr Verki yfir í kortaleið að vinnustað.
+
+Þetta er ætlað að virka bæði á desktop og Mobile.
+
+6. Myndakrafa á Verk
+Við ákváðum að myndakrafa verði valkvæð undantekning, ekki sjálfgefin regla.
+
+Sjálfgefið er:
+
+Myndakrafa: Engin
+
+Stjórnandi getur síðan valið myndakröfu þar sem hún á við, t.d.:
+
+fyrir upphaf;
+á meðan á framvindu stendur;
+fyrir lok Verkþáttar;
+fyrir lok alls Verks.
+Kerfið getur hindrað lokun ef nauðsynleg mynd vantar.
+
+Þetta hentar sérstaklega viðhaldi, tjónum, mælastöðum, frágangi og öðrum Verkum þar sem sönnun eða stöðuskráning skiptir máli.
+
+7. Prisma – ný skipulags- og myndagögn
+Ný migration var sett inn fyrir mönnun og myndagögn.
+
+Migration:
+
+20260920170000_add_work_planning_and_evidence
+
+Við lentum fyrst í Prisma relation-villu þar sem createdWorkEvidencePhotos hafði verið sett á Company í stað User.
+
+Það var lagað.
+
+Eftir lagfæringuna fengum við:
+
+prisma validate → hreint
+prisma generate → hreint
+npx tsc --noEmit → hreint
+
+Migrationin fór rétt inn í Supabase.
+
+8. Tímasetning Verka
+Stórt skref var að greina á milli:
+
+hversu lengi Verkið tekur
+
+og
+
+hvenær Verkið á að fara fram.
+
+Við bættum því við:
+
+áætluðum degi;
+áætluðum upphafstíma;
+áætlaðri lengd.
+Verk með dag en engan tíma birtast nú sem:
+
+Ótímasett í dag
+
+í stað þess að GLÖGGT finni þeim tilbúinn stað á tímalínunni.
+
+Tímasett Verk birtast á sínum rétta tíma.
+
+9. 24 tíma tímakerfi
+Við fundum að native browser-time input sýndi AM/PM eftir Windows/vafrastillingum.
+
+Það samræmist ekki GLÖGGT.
+
+Við skiptum yfir í eigið 24 tíma tímaval.
+
+GLÖGGT notar nú:
+
+00–23 fyrir klukkustundir;
+00–59 fyrir mínútur.
+Einnig er leyfilegt að skrá tíma sem þegar er liðinn sama dag.
+
+Það er mikilvægt því skipulag má vera skráð eða leiðrétt eftir á.
+
+10. Dagsetning og músavæn tímaval
+Native dagsetningarreitur sýndi bandarískt dagsetningarform hjá vafranum.
+
+Við færðum framsetninguna nær GLÖGGT-reglunni um:
+
+dd.mm.áááá
+
+og bættum við músavænna tímavali.
+
+Markmiðið var að notandi gæti bæði:
+
+skrifað tíma;
+og valið hann með mús.
+Við gerðum einnig skipulagsreitina hægra megin á Dagskipulaginu smellanlega svo hægt væri að vinna meira úr Verkinu án þess að yfirgefa skipulagssýnina.
+
+11. Lifandi tímalína
+Upphaflega var Dagskipulagið fast í 07:00–17:00.
+
+Það var of takmarkandi.
+
+Við breyttum tímalínunni í lifandi tímasýn.
+
+Í dagssýn:
+
+fylgir glugginn núverandi tíma;
+rauð lína sýnir Nú;
+hægt er að færa sýnina aftur og fram;
+„Núna“ færir hana aftur að rauntímanum.
+Við prófuðum m.a. kvöldsýn með kl. 14–23 og rauðri núlínu.
+
+Þetta virkaði rétt.
+
+12. Álagspróf – 50 starfsmenn og 300 Verk
+Við bjuggum til sérstakt load-test fyrir:
+
+Próf ehf 2.
+
+Prófunarumhverfið fékk:
+
+50 prófunarstarfsmenn;
+300 Verk;
+mismunandi starfsheiti;
+mismunandi staðsetningar;
+mismunandi forgang;
+mismunandi mannaþörf;
+mismunandi áætlaðan tíma.
+Verkin voru fyrst skilin eftir ótímasett til að við gætum prófað skipulagskerfið.
+
+Við bjuggum jafnframt cleanup-skript svo hægt sé að hreinsa prófunargögnin aftur síðar.
+
+13. Skalanlegt Dagskipulag
+50 starfsmanna prófið sýndi að venjulegur síðuskrollur var ekki nógu góður.
+
+Við breyttum Dagskipulaginu í sjálfstætt vinnusvæði.
+
+Núna:
+
+Fólk-listinn hefur eigið skroll;
+tímalínan hefur samsvarandi skroll;
+röðin helst samstillt;
+tímahausinn helst aðgengilegur;
+aðeins sýnilegar starfsmannaraðir eru renderaðar með windowed/virtual nálgun.
+Við prófuðum mikið skroll niður listann og staðfestum að nöfn og tímalínuraðir héldust saman.
+
+Þetta er mikilvægur skalanleikaáfangi.
+
+14. Leit og síur
+Nýjar síur voru settar á Dagskipulag:
+
+Allir / Laus / Úthlutað / Í vinnu
+
+Leitin var útvíkkuð þannig að hægt sé að leita að:
+
+starfsmanni;
+starfsheiti;
+Verki;
+staðsetningu;
+Verknúmeri;
+Verklykli.
+Markmiðið er að stór vinnustaður þurfi ekki að fletta í gegnum hundruð starfsmanna eða Verka.
+
+15. „Staða á ákveðnum tíma“
+Ný aðgerð var smíðuð:
+
+Staða á ákveðnum tíma
+
+Notandi getur t.d. skrifað:
+
+14:00
+
+og séð stöðu starfsmanna á þeim tíma.
+
+Við skilgreindum mikilvæga aðgreiningu:
+
+Raunvinna – hvað tímaskráning segir að maðurinn hafi raunverulega verið að gera.
+Áætlað – hvað skipulag sagði að hann ætti að vera að gera.
+Laus – ekkert tímasett eða skráð á þeim tíma.
+Þetta opnar seinna spurningar eins og:
+
+„Hvað var Jón að gera kl. 14?“
+„Hverjir voru lausir kl. 10?“
+„Hver var á þessu Verki í gær?“
+„Hvaða Verk voru undirmönnuð kl. 08?“
+
+16. Vélar og tæki – álagspróf
+Við bættum við vélaprófunargögnum hjá Próf ehf 2.
+
+Stofnuð voru 18 tæki/vélar/ökutæki.
+
+Þar á meðal voru dæmi eins og:
+
+Bobcat;
+Bomag vals;
+lyftari;
+gröfur;
+dráttarvél;
+þjónustubílar;
+rafstöð;
+dæla;
+háþrýstiþvottavél.
+Við gáfum sumum þeirra:
+
+innra kostnaðarverð;
+söluverð;
+mælieiningu;
+stöðu;
+Verk-tengingar.
+Ein vél var sérstaklega sett í viðhald og önnur í notkun til að prófa árekstra.
+
+17. Vélamenn og hæfni
+Hluti af 50 starfsmönnunum var tengdur vélatengdri hæfni/réttindum.
+
+Markmiðið var að geta prófað:
+
+hver kann á hvaða vél;
+hvort vél er laus;
+hvort maður er laus;
+hvort rétt hæfni fylgir Verki;
+hvort kerfið varar við tvíbókun.
+Þetta próf varð mjög mikilvægt síðar um kvöldið.
+
+18. Mikilvæg niðurstaða um tækjastöðu
+Við sáum dæmi þar sem vél var merkt:
+
+Laus
+
+en hafði samt virkar úthlutanir.
+
+Þar mótuðum við skýrari reglu:
+
+Að vél sé tengd Verki þýðir ekki sjálfkrafa að hún sé Í notkun.
+
+Staða „Í notkun“ á að ráðast af raunnotkun eða tímasettu Verki sem er í gangi.
+
+Framtíðarsýn þarf að greina á milli:
+
+laus;
+frátekin/tengd framtíðarVerki;
+í notkun;
+í viðhaldi;
+óvirk.
+19. Verkalisti og mönnun
+Við fórum að færa Verkalista frá einföldum lista yfir í raunverulegan mönnunarlista.
+
+Við ákváðum:
+
+Ómönnuð og undirmönnuð Verk eiga að fá forgang fram yfir fullmönnuð Verk.
+
+Innan þess ræður svo:
+
+forgangur Verks;
+upphafstími;
+mannaþörf;
+hæfni;
+vél/tæki;
+árekstrar;
+síðar staðsetning og ferðatími.
+20. „Manna Verk“
+Við byggðum sérstakt mönnunarspjald.
+
+Notandi getur valið Manna Verk án þess að fara í mörg undirskref.
+
+Spjaldið sýnir:
+
+hversu marga vantar;
+hæfnikröfur;
+búnað;
+líklegustu starfsmenn;
+tillögu að teymi.
+Kerfið úthlutar ekki sjálft.
+
+Stjórnandi samþykkir alltaf.
+
+21. Morgunmönnun
+Við mótuðum hugmyndina að sérstakri morgunmönnun fyrir stærri vinnustaði.
+
+Dæmi:
+
+„Allir eiga að vera í vinnu kl. 08:00.“
+
+GLÖGGT á þá að geta sýnt:
+
+hversu margir starfsmenn eru tiltækir;
+hverjir hafa ekkert Verk;
+hvaða Verk vantar fólk;
+hvaða Verk eru hæst í forgangi;
+tillögu að heildarmönnun.
+Stjórnandi getur síðan samþykkt eða breytt tillögunni.
+
+Þetta er sérstaklega mikilvægt ef einn verkstjóri þarf að koma 30–100 starfsmönnum af stað á stuttum tíma.
+
+22. Lærð pörun starfsmanna
+Við ákváðum að GLÖGGT eigi að læra með tímanum hverjir vinna oft saman.
+
+En samkvæmt meginreglunni:
+
+Gögn fyrst, AI síðan
+
+á þetta fyrst að byggjast á samþykktum sögulegum úthlutunum.
+
+Dæmi:
+
+tveir starfsmenn vinna oft saman;
+sami vélamaður notar oft ákveðna vél;
+ákveðið teymi er oft notað í ákveðinni verktegund.
+Slík saga getur síðan fengið vægi í framtíðartillögum.
+
+23. Forgangur í sjálfvirku Verkavali
+Við festum einnig mikilvæga reglu:
+
+Forgangur Verks ræður hvaða Verk kerfið reynir fyrst að manna.
+
+Grunnröðin verður:
+
+Brýnt → Hátt → Venjulegt → Lágt
+
+en síðan tekur kerfið einnig tillit til:
+
+tímans;
+mannaþarfar;
+hæfni;
+tækja;
+árekstra;
+tengsla milli Verka;
+sögulegrar pörunar.
+Mikilvægasta niðurstaða dagsins
+Síðasta prófið í kvöld fann mjög mikilvægan galla í tillögukerfinu.
+
+Við opnuðum Verkið:
+
+„Yfirfara vél 077“
+
+Kerfið vissi ekki hvaða vél Verkið varðaði og hæfni var óstaðfest.
+
+Samt setti GLÖGGT efst sem tillögu:
+
+Þjónustufulltrúa
+
+eingöngu vegna þess að viðkomandi var laus.
+
+Þetta er ekki ásættanleg mönnunarregla.
+
+Við festum því niðurstöðu dagsins:
+
+„Laus“ má aldrei vega þyngra en „hæfur“.
+
+Ef Verkið er vélatengt en vantar tengingu við vél eða hæfnikröfu á GLÖGGT frekar að segja:
+
+„Vantar vél/tæki eða hæfnikröfu til að gefa örugga mönnunartillögu.“
+
+Það má ekki láta fyrsta lausa mann líta út eins og besta valið.
+
+Þetta verður fyrsta verkefni morgundagsins.
+
+Tæknileg staða í lok dags
+Prisma migrationar dagsins hafa farið inn.
+
+Við fengum nokkra hotfix-hringi vegna:
+
+Prisma relation;
+generated Prisma Client;
+WorkOrder/WorkPart týpa;
+tímasetningar;
+ZIP sem fór óvart í auka undirmöppu;
+i18n type-lykla.
+Allt var lagað jafnóðum og við fengum aftur hreint:
+
+npx tsc --noEmit
+
+á þeim áföngum sem voru prófaðir.
+
+Production var fyrr í dag einnig uppfært með hluta Verk/Mobile/QR/notification vinnunnar, en seinni stóra Dagskipulags- og mönnunarvinnan er enn í localhost prófun og á ekki að pushast fyrr en við höfum klárað næstu mönnunarreglur og prófað þær betur.
+
+Staða í lok dags
+Í lok dags höfum við nú raunhæft prófunarumhverfi hjá Próf ehf 2. með:
+
+50 starfsmönnum;
+300 Verkum;
+18 vélum/tækjum;
+mismunandi forgangi;
+mismunandi mannaþörf;
+vélahæfni;
+lifandi Dagskipulagi;
+virtual skrolli;
+leit og síum;
+tímasetningu;
+stöðu á ákveðnum tíma;
+drag-and-drop;
+mönnunarspjaldi;
+teymistillögum;
+grunn að morgunmönnun.
+Kerfið er því komið langt frá einföldum Verklista og farið að verða raunverulegt daglegt stjórntæki fyrir verkstjóra.
+
+Fyrsta verkefni á morgun
+Við höldum áfram nákvæmlega þar sem við stoppuðum:
+
+Laga röðun mönnunartillagna þannig að hæfni og nauðsynleg vél/tæki komi á undan einföldu „laus“-merki.
+
+Síðan prófum við aftur sömu tegund af vélaverki og sjáum hvort:
+
+rétt vél er þekkt;
+rétt hæfni er þekkt;
+hæfir menn koma efst;
+óhæfir/óstaðfestir fara neðar;
+vél í viðhaldi eða notkun útilokar eða varar;
+forgangur Verks heldur áfram að stýra því hvaða Verk er mannað fyrst.
+Þar myndi ég stoppa í kvöld. Við eigum mjög góðan, raunverulegan áfanga að halda áfram frá á morgun.
+
+GLÖGGT – Ítarleg verkdagbók
+21. september 2026 · kl. 07:00–23:00
+Markmið þessarar dagbókar er ekki bara að telja upp hvað var gert, heldur að varðveita hugsunina, ákvarðanirnar og sálina í því sem var mótað í dag svo næsta vinnulota geti byrjað án þess að tapa samhenginu.
+
+1. Dagsyfirlit
+21. september varð einn stærsti mótunardagurinn í Verk-kjarnanum hingað til.
+Við byrjuðum daginn með þá spurningu hvernig GLÖGGT ætti að manna stóran Verkabanka raunhæft yfir daginn. Við enduðum með miklu stærri kjarna:
+- 750-Verka load-test
+- 50 starfsmenn
+- hæfni og starfssvið sem hörð skilyrði
+- deildir og föst teymi
+- vinnudagur, hlé og raunhæf dagsgeta
+- staðsetningar og akstur
+- tímabundin umferðaráhrif
+- heimferð á starfstöð
+- deadline / „Klárað fyrir“
+- svæðapökkun
+- 93% algjört hámark á einstakling
+- stjórnunarvísar fyrir hæsta/lægsta álag
+- 1–31 daga Verkaáætlun
+- sérstakt vaktaplanslag sem getur náð miklu lengra fram
+- 5 daga próf
+- deildargeta
+- eftirbunkagreining
+- jafnað load-test safn
+- 15 hæst / 15 lægst nýttir yfir tímabil
+- loks skýr stefna um næsta lag: Mobile + Verk + sjálfstæð vinna / Dagbók
+Í lok dags var þessi Verk/mönnunarkjarni festur í git og kominn í Production:
+Commit: 11c7815
+Heiti: Complete Verk scheduling and workforce planning baseline
+Branch: main
+Vercel: Ready – Production
+Þetta er skilapunkturinn sem næsta lota á að byggja ofan á.
+2. 07:00–08:00 – Dagurinn settur upp sem raunpróf
+Um morguninn var ákveðið að hætta að prófa aðeins litlar 08:00 úthlutanir og setja upp raunverulegt álagspróf.
+Mikilvægasta krafa morgunsins var:
+- ólokin Verk eiga að halda áfram yfir dagamót
+- aðeins raunverulega Brýnt á að vera rautt / neyð
+- Verk eiga að vera nægilega mörg til að fylla allan daginn
+- ekki bara prófa fyrsta Verk kl. 08:00
+- prófa frekar 500–1000 Verk
+Úr því varð 750-Verka load-test.
+Load-testið
+Gamla 300-Verka safnið var hreinsað út og nýtt safn byggt:
+- 50 starfsmenn
+- 750 Verk / Verkþættir
+- 7 Brýn
+- 66 Mikil / Há
+- 653 Venjuleg
+- 24 Lág
+- aldur Verka dreifður 0–60 daga
+- aldur óháður forgangi
+- Verkin byrjuðu sem sameiginlegur óskipulagður banki
+Mikilvæg regla var fest strax:
+Gamalt Verk verður ekki sjálfkrafa Brýnt bara af því að það er gamalt.
+
+Aldur, forgangur, mönnunarvandi og deadline eru mismunandi víddir.
+Load-test script
+Grunnskipunin sem notuð var fyrir nýja safnið:
+node --env-file=.env --import tsx scripts/seed-verk-load-test.ts --reset --apply --count=750
+3. 08:00–09:00 – Skipuleggjandinn má ekki vera bara „næsta lausa manneskja“
+Um 08:50 var kjarni dagsmönnunarreglunnar orðinn skýr:
+Skipuleggjandinn þarf að horfa á:
+- hæfni
+- starfssvið
+- hvort starfsmaður sé tiltækur
+- hvað hann er þegar að gera
+- staðsetningu
+- ferðatíma
+- vegalengd
+- hlé
+- raunverulegan lokatíma fyrri Verka
+- og framtíðarskort á sjaldgæfri hæfni
+Þetta leiddi til mikilvægrar hugmyndar:
+Ekki eyða sjaldgæfri hæfni snemma dags í Verk sem einhver annar gæti tekið, ef líklegt er að hæfnin verði nauðsynleg síðar.
+
+Jafnframt var mótað að Dagsmönnun eigi að geta endurreiknað sig út frá raunverulegri stöðu, t.d.:
+- 08:00
+- 10:30
+- 13:00
+- 15:00
+Þetta er ekki bara „plan dagsins“, heldur lifandi áætlun.
+4. 09:00–10:00 – Vinnudagur, hlé og raunhæf dagsgeta
+Um 09:25 var vinnudagspróf sett upp.
+Migration
+20260921093000_add_workday_break_and_agreement_profiles
+Prófunarvinnudagur fyrirtækis #1
+- upphaf dags: 08:00
+- staðlaður dagur: 480 mínútur
+- fyrra kaffihlé: 09:40–10:00
+- hádegishlé: 12:00–12:30
+- seinna kaffihlé: 15:30–15:45
+- allt að 30 mín. sveigjanleiki
+- ef aðeins 15 mín. eða minna eru eftir af Verki má klára það áður en farið er í hlé
+Mikilvægt var að aðgreina:
+- formlegt hlé
+- ferð / umskipti í hlé
+- raunverulegt laust rými
+Þetta verður mikilvægt síðar, sérstaklega fyrir Mobile starfsfólk sem er úti á vettvangi.
+5. 10:00–11:00 – Sameiginlegur mönnunarkjarni
+Um 10:37 var stórt grunnlag sett inn.
+Migration
+20260921103000_add_employee_schedule_staffing_core
+Þessi kjarni bætti inn grunn fyrir meðal annars:
+- dagvinnu
+- fastan yfirvinnuramma
+- vaktir / rúllandi vaktir
+- sveigjanlegan vinnutíma
+- samnings-/agreement profiles
+- menntun
+- starf / ráðningarsamhengi
+- mönnunarhlutverk
+- lágmarksmönnun eftir hlutverki
+- deild / vinnustað
+- vikudag
+- tímabil dags
+Þarna varð mikilvægt að aðgreina:
+- vinnustaðareglur
+- ráðningarsamninga
+- kjarasamninga
+- mönnunarkröfur
+Þetta á ekki allt að vera ein tafla eða ein regla.
+6. 11:00–12:00 – Heils dags áætlun og starfssvið
+Um 11:03 kom næsta skref.
+Migration
+20260921111500_add_workorder_planned_end_minutes
+Þetta bætti við:
+- heils dags skipulagi
+- raðaðri úthlutun yfir daginn
+- hlé-meðvitaðri tímasetningu
+- plannedEndMinutes
+- aðgreiningu á áætluðum lengdum og raunverulegum tímasetningum
+estimatedMinutes var varðveitt sem eðli Verksins; plannedEndMinutes varð hluti af skipulagðri staðsetningu þess í deginum.
+Starfssvið
+Um 11:46 var annað mikilvægt lag sett inn.
+Migration
+20260921120000_add_employee_work_scopes
+Starfsmannaspjald fékk:
+- venjuleg starfssvið
+- tilfallandi-störf-reglu:
+  - NEVER
+  - MANUAL_ONLY
+  - AUTO_IF_NEEDED
+- hæfni/réttindi sem hörð mörk
+- hvert mönnunarsæti getur krafist eigin starfssviðs
+Meginreglan varð:
+Fyrst innan venjulegs starfssviðs. Tilfallandi vinna er fallback, aldrei leið framhjá hæfnikröfum.
+
+Fagmaður verður ekki sjálfkrafa „almennur verkamaður“ bara af því að hann er laus.
+7. 12:00–13:00 – Deildir og föst teymi
+Um 12:28 var hönnunarreglan fest:
+Á stórum vinnustað vinna menn yfirleitt innan deildar. Deildaskipti eiga að vera sjaldgæf. Stoðdeildir geta þjónustað fleiri deildir.
+
+Þetta leiddi til:
+Migration
+20260921124500_add_departments_and_employee_teams
+Inn kom:
+- deildir / einingar
+- ábyrgðardeild Verks
+- staðdeild þar sem við á
+- föst teymi
+- dagsteymi
+- teymisvitund í mönnun
+- deildarmeðvituð úthlutun
+Mikilvæg regla fyrir fjölmenn Verk:
+Ef eitt fast teymi getur fyllt öll sæti Verksins, á það að fara saman áður en farið er að blanda saman einstaklingum úr mismunandi teymum.
+
+Fallback er aðeins notað ef ekkert heilt teymi getur tekið Verkið.
+8. 13:00–15:00 – Staðsetning, leiðir og ferðatími
+Eftir hádegi færðist fókusinn yfir á raunverulega landafræði.
+Mikilvæg hugsun:
+Deild er ekki staðsetning.
+
+Sami starfsmaður getur tilheyrt ákveðinni deild en unnið á mörgum rekstrarstöðum.
+Migration
+20260921144500_add_operational_locations_and_travel
+Inn kom meðal annars:
+- OperationalLocation
+- grunn-/upphafsstaður starfsmanns
+- staðsetning Verks
+- stefnu-háðar leiðir A → B
+- ferðatími eftir tíma dags
+- vegalengd
+- kostnaðargrunnur
+- ferðaleggur geymdur með tillögu / staðfestingu
+- núverandi staðsetning starfsmanns / teymis færist áfram eftir Verk
+Ferðatími varð þannig háður:
+- uppruna
+- áfangastað
+- brottfarartíma
+- vikudegi
+- umferðarsniði
+Prófunarleiðir voru aðeins merktar sem TEST_PROJECTION, ekki staðhæfing um raunverulega umferð.
+Reykjavík fékk meiri morgun-/síðdegisáhrif; Suðurnes mildari.
+Einnig var tekið inn:
+Ef ferð leggst yfir væntanlegt hlé þarf skipuleggjandinn að meta hvort hlé eigi að koma á undan brottför.
+
+9. 15:00–16:00 – Heimferð og deadline
+Um 15:45 var ein mikilvægasta rekstrarregla dagsins ákveðin:
+Allir eiga helst að vera komnir aftur á sína starfstöð fyrir kl. 16:00.
+
+Yfir 16:00 er aðeins leyfilegt sem:
+- meðvituð undantekning
+- með skýrri ástæðu
+- ekki sjálfkrafa vegna deadline
+Næst kom „Klárað fyrir“.
+Deadline á ekki að vera bara forgangsstimpill.
+Meginhugsunin:
+- Verk með langan frest má bíða
+- þegar slack minnkar hækkar vægið
+- langt Verk þarf að fara að hækka fyrr en stutt Verk
+- deadline má aldrei brjóta hæfni eða aðrar hörðar reglur
+- deadline opnar ekki sjálfkrafa yfirvinnu
+Migration
+20260921155000_add_work_completion_deadlines_and_return_travel
+Inn kom:
+- completion deadline
+- deadline slack
+- heimferðaleggur
+- TO_WORK
+- RETURN_BASE
+10. 16:00–17:00 – Fyrsta alvöru heils dags niðurstaðan
+Um 16:56 var komin heils dags keyrsla sem varð fyrsti mikilvægi baseline punkturinn.
+Niðurstaða
+- 85% nýting
+- 227 klst. 20 mín. virk vinna
+- 67 klst. 56 mín. akstur
+- 50 klst. 34 mín. ónotað rými
+- 54 klst. 10 mín. formleg hlé
+- 4 starfsmenn án úthlutunar
+Þetta var mjög gagnleg niðurstaða.
+Mikilvæg túlkun:
+Nýtingin taldi vinnu + nauðsynlegan akstur sem nýttan tíma.
+
+Þess vegna getur betri skipulagning með minni akstri lækkað prósentuna tímabundið, þó reksturinn batni.
+Þetta varð síðar mikilvægt þegar við tókum ferðalög út úr „góðri tölu“ og horfðum meira á raunverulega gæði.
+11. 17:00–18:00 – Dagsfylling og lok dags
+Á þessu stigi var unnið áfram með að fylla daginn:
+- lengri Verk fyrr þegar hægt er
+- styttri Verk í glugga
+- lookahead
+- hlé + akstur + heimferð talin með
+- deadline slack
+- near-end fit
+- sama staðsetning fær sterkt vægi
+- síðdegisverk sem færa starfsmann nær heimastöð eru hagstæðari
+Einnig kom upp galli þar sem liðið hlé gat verið rangt meðhöndlað í síðdegisendurkeyrslu; það var lagað.
+12. 18:00–19:00 – Svæðapökkun verður aðalregla
+Um 18:09 kom mjög mikilvæg athugasemd:
+Það er óskynsamlegt að senda þrjú teymi til Grindavíkur í sambærileg Verk.
+
+Þetta var síðan alhæft yfir allt kerfið.
+Ný rekstrarregla
+Svæði → safna Verkum → velja hæfan einstakling / minnsta hæfa teymi → ein ferð → taka eins mikið og skynsamlegt er → heim.
+Nánar:
+- einn bíll frekar en margir
+- velja breiða hæfni ef hún getur leyst mörg Verk
+- fjölmenn Verk fá minnsta hæfa teymi
+- ekki senda annað teymi nema raunveruleg ástæða sé til:
+  - önnur hæfni
+  - capacity
+  - deadline
+  - samtímis framkvæmd
+  - team-size
+  - brýnt atvik
+- taka hlé á svæðinu
+- ekki nota hlé sem ástæðu til nýrrar innferðar
+- starfsmaður/teymi sem er þegar á svæði fær næsta samhæfa Verk áður en ný ferð er sett af stað
+- óbrýnt Verk má bíða frekar en að búa til tilgangslausa ferð
+Þetta er eitt af mikilvægustu „sálaratriðum“ dagsins.
+13. 19:00–20:00 – 93% algjört hámark
+Í kvöldprófunum kom upp mjög skýr athugasemd:
+„Það getur enginn skilað meira en 93%. Það er ekki hægt.“
+
+Þetta varð hörð regla.
+93% regla
+- 93% er algjört hámark
+- ekki bara viðvörun
+- 98–99% plan er sjálfkrafa óraunhæft
+- venjulegt mark er frekar um 85%
+- 90–93% getur verið eðlilegt á einföldum degi
+- akstur telst með
+- heimferð telst með
+- kerfið á frekar að færa Verk, skilja það eftir eða færa seinna en að fara yfir 93%
+Eftir breytinguna:
+- toppurinn fór niður í 91–92%
+- ekki lengur 98–99%
+Þetta staðfesti að harða þakið virkaði.
+Starfsmenn með Verk
+UI hafði misst töluna yfir hversu margir fengu Verk.
+Hún var sett aftur inn:
+- Starfsmenn með Verk
+- Óúthlutaðir starfsmenn
+Í einni keyrslu:
+- 46 með Verk
+- 4 óúthlutaðir
+10 minnst nýttu
+Bætt var inn:
+- 10 minnst nýttu starfsmenn
+- aðeins ef nýting ≥ 1%
+- 0% fólk sést sem óúthlutað
+Þetta leiddi strax til áhugaverðrar stjórnunarumræðu.
+14. 19:30–20:00 – Zoran, Ylfa og eðlilegt svigrúm
+Tveir starfsmenn skáru sig sérstaklega úr:
+- Zoran Gunnarsson – 38%
+- Ylfa Kowalski – 44%
+Þeir höfðu mikið svigrúm en voru þó í vinnu.
+Við fórum yfir verkefnin þeirra og niðurstaðan varð:
+- Zoran er aðstoðarmaður í Vélum
+- Ylfa er aðstoðarmaður í Viðhaldi
+Þeir mega ekki bara taka sérfræðiverk frá fagmanni.
+Jöfnunarregla
+Færa má Verk á minna nýttan starfsmann aðeins ef:
+1. hann er í sömu deild
+2. hann hefur rétta hæfni/réttindi
+3. hlutverk/sæti passar
+4. fast teymi brotnar ekki
+5. ferðalag versnar ekki
+6. deadline heldur
+7. 93% þak heldur
+Mikilvæg leiðrétting á hugsun:
+Einn dagur á 38–44% er ekki endilega vandamál.
+
+Starfsmaður getur þurft tíma til:
+- tiltektar
+- þrifa
+- verkfæra
+- búnaðar
+- lager
+- smáviðhalds
+- undirbúnings
+- innri frágangs
+Því varð niðurstaðan:
+Ekki þvinga alla upp í 85% á hverjum degi.
+
+15. 20:00–20:30 – 5 daga próf og 1–31 daga hönnun
+Næsta spurning var hvort hægt væri að skipuleggja heila viku í einu.
+Ákvörðun:
+Ekki byggja „5 daga kerfi“. Byggja 1–31 daga Verkaáætlun, en prófa fyrst 5 daga.
+
+Nánari hugsun:
+- dagur 1 getur verið mjög nákvæmur
+- dagar 2–5 nokkuð fastir en færanlegir
+- dagar lengra fram lausari
+- endurreikna þegar ný Verk, veikindi eða raunverulegur framgangur breytir stöðu
+Vaktaplan
+Mikilvægt aðgreiningarlag var mótað:
+Vaktaplan má ná miklu lengra fram en 31 dag.
+Það svarar:
+- hver er á vakt
+- hvenær
+- hvar
+- í hvaða hlutverki
+- lágmarksmönnun
+- hæfni á vakt
+Verkaáætlun er annað lag:
+Vaktaplan → tiltækir starfsmenn → tímabilsmönnun → dagsmönnun → lifandi enduráætlun
+16. 20:30–21:00 – Fyrsta 5 daga keyrslan
+Fyrsta 5 daga prófið kláraðist, en vafrinn varð tímabundið óviðbragðshæfur.
+Chrome sýndi:
+Page Unresponsive
+Þetta var ekki rangt svar – keyrslan kláraðist – en UI þurfti afkastabætur.
+Fyrsta niðurstaða
+- 750 Verk í potti
+- 497 Verk komu í 5 daga plan
+- 691 úthlutunartillaga
+- 253 Verk eftir
+Dagarnir:
+- mánudagur: 80%
+- þriðjudagur: 82%
+- miðvikudagur: 79%
+- fimmtudagur: 60%
+- föstudagur: 42%
+Þetta leit fyrst út eins og Verk væru að klárast.
+Afkastabót
+Tímabilsmönnun var síðan breytt þannig að:
+- reiknað er dag fyrir dag
+- vafranum gefið tækifæri til að teikna á milli daga
+- ekki allar úthlutunarraðir renderaðar í einu
+- fyrst kemur samantekt
+- síðan er valinn dagur opnaður
+Þetta gerði 5 daga keyrsluna nothæfa.
+17. 21:00–21:15 – Af hverju eru 253 Verk eftir?
+Bætt var við greiningu á eftirbunka.
+Greiningin skoðaði meðal annars:
+- hæfni / starfssvið
+- ábyrgðardeild
+- teymissamsetningu
+- 93% þak
+- deadline
+- ferðatíma
+- dagslok
+- tæknilega mögulega Verk
+Fyrsta greining
+Af 253 Verkum:
+- 152 – ferðatími eða dagslok
+- 86 – dagsgeta / 93% hámark
+- 5 – hæfni/hlutverk/starfssvið
+- 7 – teymissamsetning
+- 3 – virðast tæknilega möguleg, skoða pökkun/forgang
+Ábyrgðardeildir:
+- Flutningar: 100
+- Viðhald: 97
+- Umhverfi: 56
+Þetta sýndi að vandamálið var ekki fyrst og fremst skortur á hæfu fólki.
+18. 21:15–21:30 – Deildargetan afhjúpar load-test vandann
+Næst var bætt inn Deildarleg tímabilsgeta.
+Þar kom í ljós:
+- Flutningar: 90%, 100 Verk eftir
+- Viðhald: 88%, 97 Verk eftir
+- Umhverfi: 90%, 56 Verk eftir
+- Eftirlit: 80%, ekkert eftir
+- Vélar: 62%, ekkert eftir
+- Lager: 56%, ekkert eftir
+- Ræsting: 52%, ekkert eftir
+- Þjónusta: 0%
+Þetta var mjög mikilvæg greining.
+Niðurstaðan:
+Skipuleggjandinn var ekki að bila. Load-test Verkefnasafnið var ójafnt milli deilda.
+
+Þess vegna var ákveðið að laga prófunargögnin, ekki „snjallleikann“ í mönnuninni.
+19. 21:30–21:45 – Jafnað 750-Verka safn
+Load-test safnið var jafnað eftir raunhæfari deildargetu.
+Ný dreifing um það bil:
+- Eftirlit 196
+- Viðhald 180
+- Lager 111
+- Vélar 83
+- Ræsting 83
+- Flutningar 52
+- Umhverfi 45
+Þjónusta fékk ekki tilbúin Verk bara til að bæta tölur.
+Það er mikilvægt:
+Prófunargögn eiga að reyna á kerfið, ekki falsa fallega nýtingu.
+
+Ný 5 daga keyrsla
+- 595 Verk í tímabilsáætlun
+- 812 úthlutunartillögur
+- 155 Verk eftir
+Dagarnir:
+- mánudagur 83%
+- þriðjudagur 80%
+- miðvikudagur 81%
+- fimmtudagur 79%
+- föstudagur 79%
+Þetta var fyrsta mjög sannfærandi 5 daga dreifingin.
+20. 21:45–22:00 – Deildirnar komnar í jafnvægi
+Eftir jafnað safn sýndi deildargetan:
+- Eftirlit 89%
+- Lager 90%
+- Viðhald 87%
+- Ræsting 87%
+- Vélar 81%
+- Flutningar 90%
+- Umhverfi 87%
+- Þjónusta 0%
+Þetta var mjög góð niðurstaða.
+Mikilvægasta atriðið:
+93% hámarkið kemur ekki í veg fyrir góða nýtingu.
+
+Það neyðir bara kerfið til að skilja eftir raunhæft svigrúm.
+155 Verk eftir
+Ný greining:
+- 109 – ferðatími / dagslok
+- 38 – dagsgeta / 93%
+- 3 – hæfni
+- 2 – teymi
+- 3 – virðast tæknilega möguleg
+Þetta er heilbrigðari eftirbunki en sá fyrri.
+Stærsta vandamálið er nú raunverulegur rekstrarkostnaður:
+tími + ferðalög
+ekki rangar deildir eða ónóg hæfni.
+21. 22:00–22:20 – 15 hæst og 15 lægst yfir tímabilið
+Bætt var við stjórnunarspjaldi:
+- 15 hæst nýttu starfsmenn
+- 15 lægst nýttu starfsmenn
+Yfir alla 5 dagana.
+Hæstu 15
+Nánast allir í:
+90–91%
+Það var talið mjög gott:
+- enginn yfir 93%
+- enginn einn látinn bera of mikið
+- toppurinn mjög jafn
+Lægstu 15
+- 4 starfsmenn í Þjónustu: 0%
+- Zoran: um 45%
+- Ylfa: um 58%
+- næsti hópur: um 75%
+- síðan 83–89%
+Þarna varð endanleg niðurstaða dagsins um mönnun:
+Ekki þarf að fínstilla úthlutunina meira núna.
+
+Zoran og Ylfa eru stjórnunarupplýsing, ekki sjálfkrafa reikniritavandamál.
+Og 0% Þjónusta þýðir ekki sjálfkrafa að fólk sé óþarft – þeirra vinna getur einfaldlega verið utan hefðbundinnar Verk-úthlutunar.
+22. 22:20–22:40 – Stjórnunarvirðið verður skýrt
+Á þessum tímapunkti var orðið ljóst að tölfræðin er ekki bara fyrir skipuleggjandann.
+Hún verður stjórnunarverkfæri fyrir atvinnurekandann.
+Hann getur séð:
+- stöðugt háa/lága nýtingu
+- ofmannaðar eða undirmannaðar deildir
+- hæfnisskort
+- ferðatíma
+- hvort starfshlutföll passi
+- hvort vaktir séu skynsamlegar
+- hvort þörf sé á ráðningu
+- hvort menntun / réttindi þurfi að dreifast betur
+GLÖGGT á ekki að segja:
+„Segðu þessum upp.“
+
+Það á að segja:
+„Hér eru gögnin. Þetta mynstur er að myndast.“
+
+Stjórnandinn tekur ákvörðunina.
+23. 22:40–22:50 – Sjálfstæð vinna og Dagbók
+Næsta stóra hugmynd kom rétt fyrir lok dags:
+Sumir starfsmenn eiga ekki að vera daglega skipulagðir af kerfinu.
+
+Þeir geta verið:
+1. Úthlutuð vinna
+GLÖGGT skipuleggur Verkin.
+2. Sjálfstæð vinna / Dagbók
+Starfsmaður stýrir deginum sjálfur og skráir það sem hann gerir.
+3. Blandaður hamur
+Sum Verk eru úthlutuð, annað er sjálfstætt.
+Þetta er næsta meginþróunarlota.
+Dagbókin þarf að geta orðið raunveruleg staðreyndaskráning, t.d.:
+- hvað var gert
+- frá–til
+- Verk / verklykill
+- staðsetning
+- athugasemd
+- myndir
+- efni
+- tæki
+- akstur
+- frágangur / staða
+Og mikilvægt:
+Sjálfstæður starfsmaður má ekki líta út fyrir að vera vannýttur bara af því að stjórnandi úthlutaði honum fáum Verkum.
+
+Raunveruleg Dagbók verður hluti af nýtingar- og rekstrarsannleikanum.
+24. 22:50–23:00 – Verk/mönnunaráfanganum lokað
+Ákveðið var að hefja ekki Mobile + Verk blönduðu vinnuna í kvöld.
+Réttara var að:
+1. festa núverandi áfanga
+2. push-a
+3. tryggja Production
+4. byrja hreint á morgun
+Git / Production
+Commit:
+11c7815
+Complete Verk scheduling and workforce planning baseline
+Vercel:
+Production
+Ready
+main
+Þar með var þessum áfanga formlega lokað.
+25. AI-kostnaður – staðfest í kvöld
+Spurt var hvort AI-kostnaður væri í þessum mönnunar- og greiningarkeyrslum.
+Svarið:
+Nei.
+Eftirfarandi er deterministic:
+- dagsmönnun
+- tímabilsmönnun
+- hæfnispróf
+- starfssvið
+- deildir
+- föst teymi
+- 93% regla
+- ferðatími
+- heimferð
+- deildargeta
+- eftirbunkagreining
+- nýtingartölur
+Þetta veldur venjulegum:
+- server-kostnaði
+- compute
+- database notkun
+en engin OpenAI/API token-köll eru hluti af hverri keyrslu.
+Meginreglan heldur:
+Gögn fyrst, AI síðan.
+
+26. Sálin sem verður að fara með okkur á morgun
+Þetta er mikilvægasti hluti dagsins.
+GLÖGGT á ekki að hámarka fólk
+Fólk er ekki prósenta.
+93% er þak vegna þess að raunverulegur dagur inniheldur:
+- umskipti
+- samtöl
+- bílastæði
+- verkfæri
+- smávandamál
+- ófyrirséðar tafir
+- raunverulegt mannlegt starf
+GLÖGGT á að skipuleggja reksturinn, ekki fegra töluna
+Betra er:
+- 80–85% raunhæf áætlun
+- minni akstur
+- rétt hæfni
+- rétt deild
+- rétt fólk
+heldur en:
+- 99% „nýting“
+- óraunhæft plan
+- mörg ökutæki
+- of mikið ferðalag
+- enginn tími fyrir raunveruleikann
+Hæfni er hörð regla
+Forgangur eða deadline má ekki gera óhæfan starfsmann hæfan.
+Deildir skipta máli
+Starfsfólk vinnur fyrst innan sinnar eigin deildar.
+Stoðdeildir geta farið yfir mörk þegar það er hluti af hlutverki þeirra.
+Svæðið skiptir máli
+Ekki senda marga bíla ef einn hæfur einstaklingur / eitt teymi getur leyst svæðið.
+Föst teymi eiga að haldast
+Söguleg samvinna og teymisuppbygging eru rekstrarverðmæti.
+Deadline er ekki leyfi fyrir yfirvinnu
+„Klárað fyrir“ hækkar vægi þegar slack minnkar en opnar ekki sjálfkrafa daginn fram yfir reglur.
+Rólegur dagur er ekki galli
+Starfsmaður getur þurft tíma í:
+- þrif
+- tiltekt
+- búnað
+- lager
+- undirbúning
+- innri frágang
+Tölfræði á að styðja stjórnanda
+Kerfið sýnir mynstur.
+Stjórnandinn ákveður.
+Sjálfstæð vinna verður að eiga heima í kerfinu
+Ekki allir eiga að fá verkefnalista niður á mínútu.
+Sumir eiga að nota GLÖGGT sem:
+dagbók + tími + staðreyndir + rekjanleiki
+Mobile verður sannleikslagið
+Næsta skref er að raunveruleg framkvæmd í Mobile fari að verða sannleikurinn sem dags- og tímabilsplan endurreiknast út frá.
+27. Næsta vinnulota
+Mobile + Verk + Dagbók
+Byrja á:
+- sjálfstæðum vinnuham
+- blönduðum vinnuham
+- dagbók starfsmanns
+- raunverulegum tíma
+- staðsetningu
+- myndum
+- efni
+- tækjum
+- akstri
+- Verki/verklykli
+- fjöltyngi
+- heimildum
+- samþykkt / frágangi þar sem við á
+Ekki byrja á morgun á:
+- meiri fínstillingu á 750-Verka úthlutun
+- að reyna að hækka nýtinguna yfir það sem nú er
+- að „laga“ Zoran/Ylfu með valdi
+- að setja gerviverk á Þjónustu
+Núverandi Verk/mönnunarkjarni er nógu góður sem baseline.
+28. Endanleg dagsniðurstaða
+Við byrjuðum daginn á:
+„Hvernig á GLÖGGT að finna næsta Verk fyrir næsta mann?“
+
+Við enduðum á:
+GLÖGGT þarf að skilja mönnun, deildir, hæfni, teymi, tíma, hlé, landafræði, ferðalög, deadline, svigrúm, vaktir, sjálfstæði og raunverulega framkvæmd sem aðskilda en tengda hluti.
+
+Og þar liggur sálin:
+Kerfið á að gera reksturinn skýrari og skynsamlegri án þess að reyna að stjórna fólki eins og vélum.
+
+Það er grunnurinn sem Mobile + Dagbók á að byggja ofan á á morgun.
+
+Mobile Dagbók og vinnumátar
+Fyrsta stóra lotan var Mobile Dagbók ásamt þremur vinnumátum:
+ASSIGNED – starfsmaður vinnur fyrst og fremst úthlutuð Verk.
+SELF_DIRECTED – starfsmaður skráir sjálfur það sem hann vinnur.
+MIXED – bæði úthlutuð Verk og sjálfstæð Dagbók.
+Dagbókin fékk sameiginlegan virkan tímamæli með Verk, þannig að starfsmaður getur ekki óvart verið með tvær samtímis virkar vinnulotur. Dagbókarvinna fer inn í raunverulega vinnunýtingu starfsmanns en er ekki það sama og úthlutun.
+Migration:
+20260922080000_add_employee_work_diary
+Commit:
+86c7e5e – Add Mobile Work diary and mixed work modes
+Production varð Ready.
+Verklyklar urðu raunveruleg skrá
+Við byggðum síðan fyrirtækissértæka WorkKey / Verklyklaskrá í stað þess að verklykill væri bara frjáls texti.
+Kom inn /verk/lyklar, virk/óvirk staða, lýsing, external ID og innflutningur úr CSV/XLSX/XLS.
+Innflutningurinn kannast við algeng íslensk og ensk dálkaheiti og leitar að haus innan fyrstu 30 lína. Við lögðum sérstaklega áherslu á að varðveita núll fremst í lyklum.
+Við prófuðum Excel-skrá með:
+0100 Almenn þjónusta
+0200 Viðhald fasteigna
+0300 Götuviðhald
+0400 Græn svæði
+0500 Vetrarþjónusta
+0990 Gamall lykill óvirkur.
+Innflutningurinn tókst og óvirki lykillinn birtist ekki sem nýtt val á Verki.
+Migration:
+20260922090000_add_work_key_registry
+Commit:
+a3e386c – Add Work key registry and file import
+Production Ready.
+Starfsstöð, verkstaður og ferðatími
+Við færðum ferðahugsunina upp á rétt arkitektúrlag.
+Fyrirtæki fékk sjálfgefna starfsstöð, aðskilda frá lögheimili og verkstað. Fallback-hugsunin varð starfsmaður → deild → fyrirtæki, þar sem slíkt á við.
+Áætlun um akstur varð aðskilin frá raunverulegum akstri. Verkstaður og starfsstöð eru ekki sama staðreynd.
+Vinnuvélar fengu ferðamáta og mögulegan viðmiðunarhraða.
+Migration:
+20260922093000_add_company_work_base_and_resource_travel
+Commit:
+b545552 – Add company work base and resource travel planning
+Live Dagbók, tæki og staðfangaleit
+Dagbókarheild dagsins var gerð lifandi þannig að svartur „Dagbók í dag“ kassi telur með virka tímamælinum án refresh.
+Tækjaval var sett inn í stofnun Verks og síðar einnig Mobile Dagbók.
+Staðfangaleit byrjaði fyrst með eigin þekktum rekstrarstöðum og nýlegum verkstöðum, samkvæmt „gögn fyrst, AI síðan“.
+Í þeirri lotu kom ein mikilvæg mistök upp: TypeScript-villa var push-uð fyrir slysni. WorkKey query reyndi að select-a address/postalCode/city sem WorkKey hafði ekki.
+Broken commit:
+77a2825 – Improve Mobile diary work setup and location search
+Vercel fór í Error.
+Hotfix:
+321f945 – Fix Mobile diary WorkKey query
+Production varð Ready.
+Þarna festum við mjög skýra vinnureglu:
+Ef npx tsc --noEmit sýnir eina einustu villu, þá stoppum við. Enginn commit/push fyrr en hún er leyst.
+Tækjaval í Mobile Dagbók
+Við tengdum síðan eitt aðaltæki/vinnuvél við Dagbókarfærslu.
+Valið tæki er snapshot-að á færsluna, ásamt kóða/heiti, ferðamáta og hraða þar sem við á.
+Migration:
+20260922104500_add_diary_work_resource
+Þar kom fyrst schema-mistök þar sem @@index([workResourceId]) lenti óvart á WorkOrder í stað Dagbókar-models. Við stoppuðum fyrir Git, löguðum schema og migration fór svo rétt inn.
+Commit:
+78caf11 – Add resource selection to Mobile work diary
+Production Ready.
+KY645 / Volvo XP350 varð aðal raunprófunartækið, með 25 km/klst. ferðahraða.
+HMS staðfangaskrá – allt Ísland
+Við vildum ekki að starfsmaður þyrfti GPS-heimild bara til að finna heimilisfang.
+Því var byggð staðfangaleit sem notar eigin GLÖGGT-gögn fyrst en HMS Staðfangaskrá sem landsgrunn.
+HMS gögnin eru geymd staðbundið í gagnagrunni GLÖGGT þannig að ekki þarf utanaðkomandi API-call við hvert lyklaborðsslag.
+Migration:
+20260922113000_add_iceland_address_registry
+Einu sinni var keyrt:
+npx tsx scripts/import-stadfangaskra.ts
+Niðurstaða:
+139.507 staðföng vistuð.
+Commit:
+b608e64 – Add HMS Iceland address search
+Production Ready.
+Við staðfestum leit m.a. með Fitjum og öðrum raunverulegum stöðum í Mobile.
+Leiðarreikningur + hraði vinnuvélar
+Við tengdum HMS hnitin við raunverulegan leiðarreikning.
+Leiðir fara í núverandi OperationalTravelRoute cache þannig að Mobile og Dagsmönnun geta notað sömu leiðina.
+Leiðarþjónustan notar Valhalla/OpenStreetMap grunninn.
+KY645, sem keyrir sjálf og er skráð 25 km/klst., setur neðri mörk á ferðatímann.
+Við fengum raunpróf:
+Heimili · Aragerði 7 → Hafnargata 8 · 240
+um 20 km
+48 mínútur
+20 km / 25 km/klst. = 48 mínútur, þannig að vélahraðinn var að virka nákvæmlega eins og ætlað var.
+Við lentum þó í production runtime-villu:
+OperationalTravelRoute_source_check
+Constraintið leyfði:
+MANUAL | IMPORTED | API | TEST_PROJECTION
+en leiðarreikningurinn reyndi að vista:
+VALHALLA_OSM
+Hotfixið varð að vista source = API, en varðveita Valhalla/OpenStreetMap sem provider/upplýsingar annars staðar.
+Eftir hotfix virkaði leiðarreikningurinn.
+Reglan fyrir ökutæki, vinnuvélar og verkfæri
+Við tókum síðan mjög mikilvæga hönnunarákvörðun.
+Venjulegur fólksbíll/ökutæki á ekki að fá fastan ferðahraða. Leiðarreikningurinn notar eðlilegan vegahraða/leiðartíma.
+Vinnuvél fær spurninguna:
+„Fer vélin sjálf á milli verkstaða?“
+Val:
+Keyrir sjálft
+Flutt
+Ef Keyrir sjálft er valið birtist:
+Ferðahraði vélar (km/klst.)
+Ef Flutt er valið ræður flutningsfarartækið ferðinni, ekki hraði vélarinnar.
+Verkfæri fá ekkert akstursflæði.
+Commit sem staðfest er:
+bc35da1 – Refine resource travel settings by equipment type
+Production Ready.
+Sérstakt Verkfæraspjald
+Við sáum að verkfæri áttu ekki heima í sama sjónræna spjaldi og vinnuvélar.
+Því var Tækjalistinn aðgreindur betur.
+Verkfæri fengu eigið spjald og engin akstursgögn.
+Síðan fínstilltum við mæla:
+Verkfæri fá ekki „Mælieining mælis“ sjálfkrafa.
+Í staðinn er val:
+„Verkfærið er með mæli“
+Aðeins þegar það er hakað birtist mælieining mælis.
+Þetta var prófað í Production og virkaði rétt.
+QR, kostnaður, notkun og viðhald geta samt átt við verkfæri.
+Stóra GPS-hönnunarumræðan
+Síðan færðist dagurinn yfir í það sem varð líklega mikilvægasta hönnunarumræða dagsins.
+GPS á ekki að vera „hvar er starfsmaðurinn?“-eftirlitskerfi.
+Það á fyrst og fremst að vera framvinduskráning Verks.
+Dæmi sem við mótuðum:
+Snjómokstur
+Götusópun
+Söltun
+Sláttur
+Veghefill
+önnur leiða- eða svæðavinna.
+Fyrir leiðarverk getur GPS sýnt hvaða götur/leiðir eru búin og hvað er eftir.
+Fyrir svæðavinnu getur síðar komið GPS + vinnubreidd, t.d. sláttutraktor með 1,8 m vinnubreidd, þannig að við fáum raunverulegt yfirfarið flatarmál.
+Verkstjórakortið – framtíðarsýnin
+Mjög skýr ákvörðun varð að aðalsýnin á GPS á að vera í stjórnendasýninni í tölvunni.
+Yfirmaður á að geta séð t.d. 10 vélar samtímis á sama korti og horft á hverfin hreinsast.
+Heildarkortið á að sameina track allra véla í framvindu Verksins.
+Það á að vera hægt að smella á einstaka vél og sjá hennar track, starfsmann/verktaka, tíma, km, myndir, stöðu o.s.frv.
+Yfirferðin tilheyrir Verkinu, ekki bara vélinni.
+Þannig getur önnur vél tekið við af þeirri fyrri án þess að framvindan tapist.
+QR-verktakar passa beint inn í GPS-kerfið
+Við sáum að QR-verktakakerfið sem við höfðum áður hannað passar mjög vel inn í þetta.
+Ef sveitarfélag er með 10 eigin vélar og fær 3 verktakavélar inn í snjómokstur, eiga allar 13 að geta farið inn í sama Verk og sama GPS-framvindukort.
+Verktakinn fær tímabundinn QR-aðgang, aðeins að viðkomandi Verki og nauðsynlegum aðgerðum.
+GPS, tími, tæki, myndir og framkvæmdarsaga varðveitast þó QR-aðgangurinn renni út.
+Keðjur á snjómoksturstækjum
+Þú bentir á raunverulegt sveitarfélagadæmi þar sem meira er greitt fyrir tæki með keðjur.
+Við ákváðum að keðjufjöldi eigi ekki að vera fastur eiginleiki vélar, heldur snapshot við upphaf vinnulotu.
+Dæmi:
+0
+2
+4
+Annað
+Síðar getur þetta farið inn í greiðslugrunn samkvæmt samningi/verðskrá.
+Þetta á aðeins að birtast á viðeigandi verklykli. Að spyrja alla um keðjur væri bara truflandi.
+Verklyklastýrðar upphafsspurningar
+Þarna varð til almennari arkitektúr:
+Verklykill ræður hvaða sértækar spurningar eða kröfur birtast þegar vinna hefst.
+Sjálfgefið birtist ekkert aukalega.
+Fyrsti grunnurinn styður:
+GPS-framvindu
+Fjölda keðja
+Mynd við upphaf
+Þetta er ekki harðkóðað „snjómokstursform“. Þetta er almennur grunnur sem hægt er síðar að nota á aðra lykla.
+Migration:
+20260922143000_add_work_key_start_requirements
+Við virkuðum þetta á:
+0500 · Vetrarþjónusta
+og prófuðum Mobile.
+Full-screen gluggi kom rétt áður en vinna hófst.
+Eftir staðfestingu sýndi vinnulotan:
+GPS staðfest
+Fjöldi keðja: 4
+Mynd skráð
+Þannig virkaði keðjan:
+Verklykill → upphafskröfur → Mobile full-screen → staðfesting → snapshot á vinnulotu
+Við tókum einnig eftir að ein tilraun með 0 keðjur gaf einhverja villu, en hún fannst ekki í loggi og var ekki endurframkölluð. 0 á að vera gilt gildi. Við ætlum síðar að gera UI líklega 0 / 2 / 4 / Annað og prófa 0 sérstaklega aftur.
+Raunveruleg GPS-punktasöfnun
+Næsta lota var sjálft trackingið.
+Migration:
+20260922150000_add_work_gps_tracking
+Commit:
+73c534a – Add Mobile GPS track recording
+Production Ready.
+Þegar GPS-virkt Verk hefst stofnast GPS-vinnulota og síminn safnar raunverulegum staðsetningarpunktum.
+Við staðfestum fyrst 8 punkta, síðar 11 punkta.
+Þegar vinnu er stöðvað/lokið lokast GPS-lotan og punktarnir varðveitast.
+Þar með var staðfest að GPS-gagnasöfnunin sjálf virkar í raun.
+Fyrsta GPS-kortið
+Við byggðum síðan kort fyrir lokaða Dagbókarvinnulotu.
+Commit:
+8f224b1 – Add GPS track map for Mobile diary
+Production Ready.
+Í Mobile birtist:
+„Sjá GPS-kort · 11 punktar“
+Við opnuðum kortið.
+Það sýndi track, upphaf og lok.
+En prófunin var gerð meðan síminn var kyrr inni í húsinu.
+Kortið teiknaði samt litla leið um lóðina vegna GPS-drift.
+Þetta var mjög gagnlegt testcase.
+Það staðfesti:
+GPS-punktarnir skrást.
+Kortið virkar.
+En hráir GPS-punktar mega ekki sjálfkrafa teljast framkvæmd/yfirferð.
+Við þurfum síðar gæðasíu sem getur m.a. tekið tillit til GPS-nákvæmni, kyrrstöðudrifts, óraunhæfra stökkva og mögulega sléttunar, á meðan hrá gögn eru varðveitt undir húddinu.
+Raunveruleg aksturstilraun er líka til
+Þú mundir síðan að þú hafðir gert aðra tilraun þar sem þú varst raunverulega á ferð.
+Sú vinnulota var ekki Dagbók; hún hafði verið stofnuð úr stjórnun í tölvunni og unnin á öðrum Mobile-aðgangi.
+Við bættum því sama GPS-korti við venjulegt úthlutað Verk.
+Nýjasta deploymentið fyrir það varð Ready / Production.
+En þegar við fórum að leita að vinnulotunni kom í ljós að hún var gerð á öðrum starfsmannaaðgangi.
+Þá leiðréttum við stefnuna:
+Við eigum ekki að þurfa að skrá okkur inn sem starfsmaður til að skoða GPS-track.
+Mjög mikilvæga síðasta ákvörðun dagsins
+Þetta er nákvæmlega þar sem við stoppum núna:
+GPS-aðalsýnin á að vera í stjórnendasýn Verk í tölvunni.
+Mobile-kortið má vera gagnlegt fyrir starfsmann, en það er aukasýn.
+Næsta sem á að smíða er:
+Verk → stjórnendasýn → GPS-kort
+Það kort á fyrst að sýna allar GPS-vinnulotur á einu Verki, óháð því hvaða starfsmaður eða Mobile-aðgangur framkvæmdi þær.
+Þannig getum við strax opnað raunverulegu aksturstilraunina sem er þegar í gagnagrunninum og borið hana saman við kyrrstöðudriftið.
+Eftir það stækkar sami grunnur náttúrulega yfir í:
+10 vélar samtímis
+verktakavélar úr QR-kerfinu
+sameinaða yfirferð
+búið / eftir
+leiðir eða svæði
+myndir á korti
+rauntímaframvindu
+sjónvarps-/verkstjóraskjá.
+Verkstjórnar-/sjónvarpsskjár
+Við ákváðum einnig í dag að Verk eigi síðar að fá sérstakan sjónvarpsham / upplýsingaskjá.
+Dæmi er kaffistofuskjár þar sem starfsfólk sér Verk framundan og stöðu dagsins.
+Þegar GPS-verk eins og snjómokstur er í gangi getur kortið tekið yfir aðalsýnina og sýnt hvernig svæðið hreinsast.
+Heimildir eiga að stýra hversu mikið sést. Kaffistofa þarf ekki sömu smáatriði og skrifstofa verkstjóra.
+Git / deployment regla sem verður að halda eftir restart
+Repoið er enn með gamalt óskylt modified/deleted/untracked efni.
+Því gildir áfram:
+Aldrei git add .
+Stage-a alltaf aðeins nákvæmlega skrár viðkomandi pakka.
+Örugga röðin er áfram:
+prisma validate ef schema breytist → prisma generate → tsc --noEmit → migrate deploy ef migration er til → nákvæmt git add → git diff --cached --name-status → git diff --cached --check → commit → push → Vercel Ready → raunpróf.
+LF→CRLF warning í PowerShell er ekki blocker.
+Og mikilvægast:
+Ef TypeScript gefur villu, þá stoppum við.
+Nákvæmur endurræsingarpunktur
+Ef tölvan eða samtalið þarf að byrja aftur, notaðu þetta:
+GLÖGGT 22.09.2026, ca. 17:00: Mobile Dagbók, mixed work modes, WorkKey registry/import, company work base, resource travel planning, HMS staðfangaskrá (139.507 staðföng), leiðarreikningur, tækjaval, vinnuvélar/ökutæki/verkfæri aðgreind, verklyklastýrðar upphafskröfur og GPS tracking eru komin á Production. GPS-punktasöfnun hefur verið raunprófuð og Mobile GPS-kort virkar. Kyrrstöðutilraun sýndi GPS-drift sem þarf síðar gæðasíu. Önnur raunveruleg aksturstilraun er til í gagnagrunni en var framkvæmd á öðrum Mobile-aðgangi. Síðasta ákvörðun: hætta að elta þetta fyrst í Mobile. NÆSTA SKREF er að byggja GPS-kort inn í stjórnendasýn Verk í tölvunni þannig að yfirmaður sjái allar GPS-vinnulotur allra starfsmanna/véla/verktaka á viðkomandi Verki. Þaðan þróast sameiginlegt 10-véla framvindukort og síðar sjónvarps-/verkstjóraskjár. Ekki nota git add ..
+
+Þetta er góður og öruggur staður til að endurræsa tölvuna núna.
+
+GLÖGGT – arkitektúr- og afkastaúttekt
+Dagsetning: 22. september 2026
+Grunnur: ferskar möppur app, components, lib, prisma, docs afhentar um 20:24.
+Markmið: taka upp aftur samþykkta heildararkitektúrstefnu, endurmeta Verk eftir raunprófanir síðustu daga og finna kerfislæga staði sem gera GLÖGGT þungt eða óþarflega hægt.
+1. Fyrri samþykkt stefna stendur
+Úttektin staðfestir eldri arkitektúrákvörðun úr vinnudagbók:
+Aðalleiðarkerfið flytur notanda milli vinnusvæða en hliðarstikan leiðir innan þess vinnusvæðis sem hann er í.
+
+„GLÖGGT segir mér hvar ég er — hliðarstikan segir mér hvað ég get gert hér.“
+
+Einnig stendur áfram:
+- fyrirtækið er vinnusamhengi, ekki bara síða í hliðarvalmynd;
+- Home er stutt stöðuyfirlit og aðgerðapunktur, ekki önnur útgáfa af öllum einingum;
+- Stjórnun er sameiginlegt fyrirtækisstjórnunarlag;
+- Innsýn er skilnings-/greiningarlag;
+- áskrift/einingar, heimildir og sýnileiki eru aðskilin lög;
+- hlutverk og heimildir stýra því sem notandi sér, en við byggjum ekki gjörólík kerfi fyrir hverja notendategund.
+Núverandi hliðarstika fylgir þessu ekki enn. Hún er flatur listi yfir bæði vinnusvæði, undirsíður og kerfisaðgerðir.
+2. Staða núverandi leiðarkerfis
+Núverandi desktop shell
+components/Sidebar.tsx sýnir í einni fastri hliðarstiku m.a.:
+- GLÖGGT Admin
+- Heim
+- Fyrirtæki
+- Skilaboð
+- Sala
+- Laun
+- Birgðir
+- Óunnin fylgiskjöl
+- Bókuð fylgiskjöl
+- Banki
+- VSK
+- Innsýn
+- Vinnustundir
+- Verk
+- Stjórnun
+- Mínar stillingar
+Þetta blandar saman:
+1. alþjóðlegri leiðsögn;
+2. fyrirtækjaskiptum;
+3. sjálfstæðum vinnusvæðum;
+4. undirsíðum eins vinnusvæðis;
+5. notandastillingum;
+6. GLÖGGT Admin.
+Dæmi: Óunnin fylgiskjöl og Bókuð fylgiskjöl eru tvær sidebar-línur þó þær eigi eðlilega heima sem undirsýnir innan Bókhalds. Sama gildir um Banka og VSK.
+Fjöldi route-síðna
+Ferska app safnið hefur 90 page.tsx route-síður.
+Stærstu route-fjölskyldur:
+- Fyrirtæki: 13
+- Banki: 12
+- Mobile: 11
+- Verk: 8
+- Stjórnstöð/Admin: 8
+- Fylgiskjöl: 8
+Þetta er nægilega stórt kerfi til að flatur sidebar geti ekki verið langtímaleiðin.
+3. Tillaga – tvö lög leiðarkerfis
+Lag A – Aðalleiðarkerfi / vinnusvæðaval
+Aðalleiðarkerfið segir hvar notandinn er. Það velur vinnusvæði en reynir ekki að sýna allar undirleiðir þess.
+Vinnusvæði birtast aðeins ef áskrift/heimildir leyfa:
+- Heim
+- Bókhald
+- Verk
+- Vinnustundir
+- Sala
+- Birgðir
+- Laun
+- Innsýn
+- Stjórnun
+- GLÖGGT Admin (aðeins ADMIN)
+Skilaboð, tilkynningar, persónulegar stillingar og fyrirtækjaskipti eiga frekar heima í sameiginlegum shell/header-aðgerðum en sem sambærileg „eining“ við Verk eða Bókhald.
+Lag B – Hliðarstika innan vinnusvæðis
+Hliðarstikan svarar: hvað get ég gert hér?
+Dæmi – Verk:
+- Dagskipulag
+- Verkabanki
+- Kort
+- Tæki og búnaður
+- Verklyklar
+- Vinnutími / reglur
+- síðar skýrslur þegar þær eru raunverulega til
+Dæmi – Bókhald:
+- Óunnin fylgiskjöl
+- Skjalasafn / bókuð
+- Banki
+- Afstemming
+- VSK og skil
+- ársuppgjör þegar það er orðið eiginlegt vinnuflæði
+Dæmi – Stjórnun:
+- Yfirlit
+- Notendur og heimildir
+- Einingar / áskrift
+- GLÖGGT Mobile
+- Fyrirtækisreglur
+- einingasértækar stillingar eftir áskrift
+Fyrirtækjasamhengi
+Virkt fyrirtæki verður sýnilegt í sameiginlega shell-inu. Að skipta fyrirtæki skiptir vinnusamhengi en notandi þarf ekki að velja fyrirtæki aftur inni í hverri einingu.
+Ef ekkert fyrirtæki er tengt er Home í hlutlausri fjöl-fyrirtækjasýn fyrir verkefni/athygli.
+4. Verk – niðurstaða heildarúttektar
+4.1 Work10Dashboard er orðið monolith
+app/verk/Work10Dashboard.tsx:
+- 5.302 línur
+- um 301 KB source
+- 18 useState
+- 30 useMemo
+- 3 useEffect
+Í sömu client-skrá eru m.a.:
+- Dagskipulag;
+- starfsmannalisti/virtualization;
+- tímalína;
+- snapshot-staða;
+- drag-and-drop úthlutun;
+- hægra Verk-spjald;
+- mönnunartillögur;
+- dagmönnun;
+- tímabilsmönnun;
+- ferðareikningur;
+- Verklisti;
+- Kort;
+- Tækjasýn;
+- placeholder flipar;
+- neðri samantektarkort sem sjást óháð aðalflipa.
+Þetta gerir bæði viðhald og render-útreikninga óþarflega víðtæka.
+4.2 Dagskipulag er of mikið skoðun, of lítið stjórntæki
+Nú er hægt að:
+- leita og sía fólk;
+- draga fólk á Verk/Verkþátt;
+- sjá dagstímalínu;
+- breyta dagsetningu/upphafstíma í hægra spjaldi;
+- sjá vinnu, mönnun og stöðu.
+En stjórnandi getur ekki enn unnið daginn eins eðlilega og markmiðið krefst:
+- ekki draga Verk úr Verkabanka beint inn á tíma;
+- ekki draga Verk eftir tímalínunni til að færa það;
+- ekki færa Verk á milli starfsmanna/teyma sem eina sýnilega skipulagsaðgerð;
+- ekki sjá tillögu frá mönnunarvél beint sem editable preview á tímalínunni;
+- ekki endurskipuleggja „frá núna“ með tillögu og staðfestingu.
+4.3 Mönnun er á röngum stað
+Mikið af sterkustu dagmönnunar- og tímabilsmönnunarvirkninni er nú undir Verkalisti-sýninni.
+Arkitektúrlega á hún að tengjast Dagskipulagi:
+Búa til tillögu → forskoða á tímalínu → breyta → staðfesta.
+Verkalisti á ekki að verða annað stjórnborð.
+4.4 Dagur / Vika / Mánuður er villandi núna
+calendarMode hefur gildin day | week | month, en aðeins day hefur sértæka hegðun/renderingu. Vika og Mánuður skipta aðallega um textamerki; þau fá ekki raunverulega eigin sýn.
+Niðurstaða:
+- annaðhvort fela Viku/Mánuð þar til þær eru raunverulegar;
+- eða smíða þær sem ólíkar sýnir með eigin gagnasókn og tilgangi.
+Ekki láta notanda halda að þrjár fullar sýnir séu til þegar aðeins ein er raunverulega útfærð.
+4.5 Placeholder-flipar eiga út
+Raðverk, Skjöl og Skýrslur hafa ekki öll sjálfstætt fullgilt innihald.
+Tillaga:
+- Raðverk verður röðun/sía innan Verkabanka;
+- Skjöl birtast fyrst og fremst á Verki/Verkþætti eða í sér skjalavinnusvæði þegar global notagildi er skýrt;
+- Skýrslur verða sýnilegar þegar raunverulegt skýrslusvæði er komið.
+4.6 Hægra spjaldið þarf að verða raunvirkt
+Nú sýnir það haus eins og:
+Fólk | Vélar | Skjöl | Athugasemdir
+en aðeins Fólk er raunverulega virkt tab-efni í sama skilningi.
+Hægra spjaldið ætti að verða lifandi stjórnun á valda Verkinu með raunverulegum flipum, t.d.:
+- Yfirlit
+- Fólk / teymi
+- Tími
+- Tæki
+- Verkþættir
+- Skjöl
+- Athugasemdir
+Aðeins virkur hluti á að rendera/fetch-a sitt efni.
+4.7 Neðri global-kort eiga að hverfa úr öllum flipum
+Eftir aðalflipa renderast nú óháð flipa m.a.:
+- óvirkt „Nýtt verk“ form;
+- lítið Raðverk-kort;
+- Tæki-kort;
+- Staða dagsins;
+- Fljótlegar aðgerðir.
+Þetta veldur tvíverknaði og ruglar merkingu vinnusvæðisins. Hluti þess á í Dagskipulagshaus/statusstrip, hluti í Verkabanka og hluti á alls ekki að vera sýnilegur.
+5. Verk – afkastavandamál sem sjást í kóðanum
+5.1 /verk sækir allt áður en fyrsta sýn birtist
+app/verk/page.tsx keyrir í einu Promise.all stórt safn queries, m.a.:
+- öll WorkOrder fyrirtækisins;
+- translations;
+- departments/locations;
+- alla legacy WorkLog fyrir hvert Verk;
+- alla WorkPart;
+- staffing requirements;
+- virkar assignments;
+- alla laborFacts fyrir work parts;
+- dependencies;
+- alla virka starfsmenn með teymum, hæfni, hlutverkum og work scopes;
+- öll tæki;
+- alla PERSON assignmentHistory;
+- vinnustaðarprófíla;
+- kjarasamningsprófíla;
+- ferðaleiðir;
+- allar EmployeeWorkDiaryEntry fyrirtækisins.
+Þetta er síðan normalíserað á server og stór hluti sendur sem einn Work10DashboardData JSON-pakki í 5.302 línu client-component.
+Afleiðing: að opna bara Dagskipulag greiðir fyrir gögn sem aðeins Verklisti, tímabilsmönnun eða önnur sýn þarf.
+5.2 Pairing history er reiknað við hvert /verk load
+Öll WorkPartAssignment saga fyrir fólk er sótt og síðan er sögulegt samstarf starfsmanna reiknað með nested lykkjum eftir Verkþætti.
+Þetta er gagnlegt fyrir mönnunartillögur en á ekki að vera skyldukostnaður við hvert venjulegt Dagskipulag-load.
+5.3 Tillaga að nýrri gagnasókn fyrir Verk
+Dagskipulag:
+- valinn dagur;
+- fólk/teymi sem þarf fyrir daginn;
+- Verk dagsins;
+- takmarkaður backlog/verkabanki;
+- núverandi vinnustaða;
+- nauðsynleg tæki/ferðagögn.
+Verkabanki:
+- paginated / incremental fetch;
+- aðeins summary fields í lista;
+- smáatriði sótt þegar Verk opnast/velst.
+Mönnunartillaga:
+- sækja pairing/hæfni/period data þegar notandi biður um tillögu;
+- ekki fyrir hvert venjulegt page load.
+Kort:
+- áfram lazy/date-scoped eins og nýja GPS-kortið gerir.
+Tæki:
+- sér route/sýn; ekki fullur tækjapakki inn í allt Verk nema það sé nauðsynlegt.
+6. Kerfislægt afkastavandamál – request context er endurreiknað
+Þetta er líklega einn besti „allur kerfið verður léttara“ áfanginn.
+Dæmi /verk
+Áður en stóra Verk-queryið er unnið getur sami request farið í gegnum:
+1. RootLayout – session, virkur notandi, virkt fyrirtæki, UserCompany, UserSettings, CompanyModule;
+2. requireCompanyModule("verk") – session, UserCompany og CompanyModule aftur;
+3. getEffectiveUser() – session aftur og mögulega impersonated user aftur;
+4. síðan sækir Verk-síðan UserSettings aftur.
+Þetta er ekki einstakt fyrir Verk. prisma.session.findUnique finnst í um 31 app/lib skrá í snapshotinu.
+Nýtt kerfislög
+Búa til request-scoped samhengi sem reiknar einu sinni:
+- authenticated session;
+- session user;
+- effective/impersonated user;
+- active company;
+- company access;
+- interface language;
+- module entitlements/settings.
+Síðan nota RootLayout, require-helpers og síður sama context innan request.
+Mikilvægt: þetta á að vera request-scoped memoization, ekki langlíft cache sem gæti geymt úreltar heimildir milli requesta.
+7. Aðrir þungir staðir sem fundust
+Þetta er static code audit, ekki mældur production-profiler. Engar ms-tölur eru fullyrtar án mælinga.
+Innsýn
+app/innsyn/page.tsx er um 3.690 línur og hefur a.m.k. 14 beinar Prisma-query tilvísanir.
+Sérstaklega þungt:
+- öll Receipt fyrirtækisins með booking entries;
+- stór InsightEntity/Fact söfn;
+- sér incomeFacts query upp í 1.000 færslur;
+- og síðan allar bankafærslur allra virkra bankareikninga, yfir öll ár, til að reikna nýjasta ársyfirlit í hvert skipti sem Innsýn opnast.
+Tillaga:
+- Innsýn aðalsíða fær summary/gagnalag;
+- bankabrú og ársgreining lazy eða cached per company/year/data-version;
+- ekki lesa alla bankasögu bara til að opna Innsýn.
+Banki → Ársgreining
+app/banki/arsgreining/page.tsx les allar bankafærslur allra ára, finnur síðan ár í JavaScript og síar niður í valið ár.
+Betra:
+1. finna nýjustu dagsetningu / valið ár;
+2. sækja aðeins date range þess árs;
+3. sækja annað ár aðeins þegar notandi velur það.
+Heim
+Heim sækir m.a. heilt Receipt-safn virka fyrirtækisins með AI documents til að telja stöður. Í hlutlausri fjöl-fyrirtækjasýn eru receipt/task gögn margra fyrirtækja dregin inn og talin í JS.
+Betra:
+- count/summary queries;
+- sér home summary query/service;
+- ekki flytja heilu skjölin þegar aðeins fjöldi þarf.
+ensureCompanyStatutoryTasks() keyrir líka þegar Home opnast; meta þarf hvort task-generation eigi að vera request-kostnaður forsíðunnar eða sérstakt idempotent scheduler/periodic lag.
+Fylgiskjöl
+Óunnin fylgiskjöl sækja öll óapproved Receipt og fulla company relation fyrir hverja færslu ásamt AI documents, án pagination.
+Betra:
+- company name kemur úr active context einu sinni;
+- select aðeins þau document fields sem listinn sýnir;
+- pagination/infinite list þegar magn vex.
+8. Mælingar sem verða hluti af refactor
+Við eigum ekki að meta hraða eftir tilfinningu eingöngu.
+Bæta við development-only mælingu á lykilsíðum:
+- request context ms;
+- DB query-lota ms;
+- server transformation ms;
+- approximate serialized payload size;
+- client mount/render þar sem við á.
+Fyrstu mælipunktar:
+1. Heim
+2. Verk / Dagskipulag
+3. Innsýn
+4. Banki / Ársgreining
+5. Fylgiskjöl
+Við berum saman fyrir/eftir og höldum niðurstöðum í vinnudagbók.
+9. Forgangsröðuð framkvæmd
+Áfangi 0 – frysta GPS-prófið
+Engin breyting á GPS-söfnun áður en akstursprófið til Reykjavíkur er búið. UI/arkitektúrvinna má halda áfram.
+Áfangi 1 – Shell / navigation grunnur
+- skilgreina aðalleiðarkerfi vinnusvæða;
+- virkt fyrirtæki sem stöðugt samhengi;
+- contextual sidebar fyrir vinnusvæði;
+- entitlement/role-driven sýnileiki;
+- GLÖGGT Admin aðskilið frá fyrirtækisstjórnun;
+- engar route-breytingar nauðsynlegar í fyrstu útgáfu – hægt að umbreyta shell fyrst.
+Áfangi 2 – request context / afkastagrunnur
+- eitt request-scoped auth/company/language/module context;
+- fjarlægja endurteknar session/access/module queries úr layout + require helpers;
+- mæla áhrif.
+Áfangi 3 – Verk klofið í raunveruleg vinnusvæði
+- /verk = Dagskipulag / stjórnstöð dagsins;
+- Verkabanki sem sér sýn/route;
+- Kort lazy og dagsett;
+- Tæki heldur sér í sér route;
+- Verklyklar og Vinnutími contextual sidebar;
+- placeholder tabs fjarlægðir;
+- Work10Dashboard.tsx brotið í smærri einingar.
+Áfangi 4 – Dagskipulag verður stjórntæki
+- drag Verk úr Verkabanka → tími;
+- drag/færa Verk á tímalínu;
+- mönnunartillaga sem preview á tímalínu;
+- breyta preview → staðfesta;
+- „Endurskipuleggja frá núna“ sem tillaga, aldrei sjálfvirk breyting án staðfestingar;
+- hægra spjald verður raunvirkt.
+Áfangi 5 – þungu gagnasvæðin
+- Innsýn bankagögn lazy/cached;
+- Ársgreining date-scoped;
+- Home summary queries;
+- Fylgiskjöl select/pagination;
+- fleiri svæði eftir mælingum.
+10. Ekki gera
+- Ekki bæta fleiri stórum eiginleikum í núverandi flata sidebar.
+- Ekki bæta fleiri state/memo blokkum við 5.302 línu Work10Dashboard sem langtímalausn.
+- Ekki hlaða gögn allra flipa til að sýna einn flipa.
+- Ekki nota cache á heimildir yfir request-mörk án skýrrar invalidation-stefnu.
+- Ekki breyta GPS-söfnun áður en morgunprófið er búið.
+- Ekki refactora gagnalíkan bara til að laga UI ef núverandi sannleikslög duga.
+11. Niðurstaða
+Prófanir síðustu daga voru ekki frávik frá arkitektúrnum; þær gáfu okkur upplýsingar sem vantaði til að klára hann.
+Verk er nú nógu raunverulegt til að sjá hvað þarf að breytast:
+- stjórnandasýnin þarf að verða aðgerðamiðuð;
+- navigation þarf að verða contextual;
+- gagnasókn þarf að verða view-scoped;
+- sameiginlegt request context þarf að draga úr tvíverknaði;
+- þungar greiningar þurfa lazy/cached gagnalög.
+Rétta næsta skrefið er því ekki að bæta einum takka við Dagskipulag. Það er að smíða nýja shell/navigation grunninn og afkastagrunninn, og færa síðan Verk inn í þann ramma með þeirri virkni sem raunprófanirnar hafa kennt okkur að þarf.
+
+GLÖGGT – vinnuskýrsla eftir arkitektúr- og afkastaúttekt
+Dagsetning: 22. september 2026
+Tímabil: frá lokum arkitektúr-/afkastaúttektar kvöldsins og fram að stoppunkti um 22:00
+Meginþráður: Ný GLÖGGT-skel, Verk Phase 2, client-side sýnaskipting og fyrsti raunverulegi drag/drop-áfangi Dagskipulags.
+1. Upphafspunktur þessarar lotu
+Fyrri skýrslan hafði þegar staðfest stóru arkitektúrniðurstöðuna:
+- GLÖGGT á að nota tveggja laga leiðarkerfi.
+- Aðalleiðarkerfi flytur notanda milli vinnusvæða.
+- Hliðarstikan sýnir hvað notandinn getur gert innan þess vinnusvæðis sem hann er í.
+- Fyrirtækið er vinnuumhverfið, ekki bara ein síða í flatri hliðarstiku.
+- Verk þurfti heildarendurskipulagningu.
+- Afköst þurfa að vera hluti af arkitektúrnum sjálfum, ekki seinna hreinsunarverkefni.
+- GPS-söfnunin var fryst fram yfir raunpróf næsta dag.
+Fyrir þessa lotu voru einnig tilbúnir tveir pakkar:
+1. nýtt vinnusvæðis-/sidebar-shell Phase 1;
+2. request-context afkastagrunnur.
+Request-context pakkinn var ekki settur inn né prófaður í þessari lotu.
+2. GLÖGGT shell – Phase 2
+Eftir fyrsta skjáskot af nýju shelli kom skýrt í ljós að nýja skelin var rétt stefna en gamla Verk-navigationið sat enn inni í henni.
+Vandamál sem sáust
+- Tvítekið Verk-navigation:
+  - ný vinstri Verk-hliðarstika;
+  - gömul efri fliparöð inni á /verk;
+  - auk þess sérhnappar fyrir Verklykla og Vinnutíma.
+- Ysta vinnusvæðastikan var of mjó og textar klipptust.
+- Lárétt scrollbar birtist á ysta rail.
+- Verkalisti og Raðverk voru tvö aðskilin svæði þó þau ættu að vera eitt sameiginlegt vinnusvæði.
+- Verklyklar og Vinnutími tóku of mikið pláss sem aðalnavigation þó þau séu fremur stoð-/stillingavirkni.
+Phase 2 breytingar
+Byggður var pakki:
+gloggt-verk-shell-phase2-20260922.zip
+Meginbreytingar:
+- ysta workspace-rail gert icon-only;
+- láréttur scrollbar fjarlægður;
+- Verkalisti + Raðverk sameinað undir Verkabanki;
+- Kort og Tæki og búnaður skilgreind sem skýr Verk-vinnusvæði;
+- Verklyklar og Vinnutími færð undir Stillingar Verks;
+- gömul tvítekin Verk-fliparöð fjarlægð;
+- tvítekin neðri spjöld hreinsuð út.
+3. Sýnaskipting án refresh
+Eftir Phase 2 þurfti að endurhlaða síðuna þegar skipt var á milli:
+- Dagskipulags
+- Verkabanka
+- Korts
+Þetta var ekki samþykkt hegðun.
+Orsök
+Hash-navigationið var að fara í gegnum Next navigation í stað þess að sameiginleg client-state sýn skipti strax um efni.
+Lagfæring
+Byggður var:
+gloggt-verk-shell-view-switch-fix-20260922.zip
+Ný hegðun:
+- Dagskipulag / Verkabanki / Kort skipta strax client-side;
+- engin full refresh;
+- engin ný server-sókn bara vegna sýnaskipta;
+- hash í URL uppfærist áfram fyrir bakktakka/bookmark.
+Staðfesting
+Notandi staðfesti:
+„virkar vel núna“
+
+Þessi hegðun var síðan tekin í checkpoint.
+4. Git / production checkpoint fyrir nýju skelina
+Nákvæmlega 8 skrár voru staged.
+Commit:
+5709361 – Restructure GLÖGGT workspace navigation and Verk shell
+Vercel:
+- Ready
+- Production
+Production smoke-test:
+- Verk opnast;
+- Dagskipulag / Verkabanki / Kort skipta sýn án refresh;
+- nýja tveggja laga skelin virkar í production.
+Þetta er nú öruggur production-checkpoint.
+5. Dagskipulag – fyrsti raunverulegi stjórnunaráfanginn
+Eftir shell-checkpoint var farið í fyrsta skrefið að breyta Dagskipulagi úr skoðunarsýn yfir í raunverulegt stjórnborð.
+Markmið Phase 1:
+- Verkið sjálft verður draggable;
+- ótímasett Verk má draga inn á tímalínu;
+- tímasett Verk má færa á nýjan tíma;
+- Verk má draga á starfsmannaröð til að tímasetja og bæta starfsmanni við úthlutun;
+- tími snappar á 5 mínútna bil;
+- drop á starfsmann má ekki taka annan starfsmann sjálfkrafa af Verkinu.
+Byggður var:
+gloggt-dagskipulag-drag-time-phase1-20260922.zip
+GPS var ósnert.
+6. Drag/drop – rannsókn og villur
+Fyrsta tilraun virkaði ekki.
+Einkenni
+- hægt var að byrja að draga prufa gps;
+- boxið virtist hreyfast meðan músarhnappi var haldið niðri;
+- þegar sleppt var fór það strax til baka.
+Síðar kom í ljós að það sem virtist vera „fært box“ var að hluta til drag-preview vafrans.
+Fyrsta dragover-rannsókn
+Chrome skilar ekki alltaf dataTransfer gögnunum í dragover.
+Því var byggð lagfæring:
+gloggt-dagskipulag-dragover-fix-20260922.zip
+React state (dragWorkId) var notað sem fallback á meðan drag stóð yfir.
+7. Vistun á tímasetningu – sér server action
+DB-próf var gert á Verki #6310:
+id: 6310
+title: prufa gps
+plannedDate: 2026-09-22
+plannedStartMinutes: 960
+estimatedMinutes: 60
+requiredPeople: 1
+status: IN_PROGRESS
+960 = 16:00.
+Þetta staðfesti að fyrri tilraun hafði ekki vistað nýjan tíma í gagnagrunninn.
+Ákvörðun:
+Ekki nota stóru almennu updateWorkOrderPlanning() aðgerðina bara til að færa Verk á tímalínu.
+Í staðinn var útbúin sérhæfð schedule-aðgerð sem á aðeins að:
+- uppfæra plannedDate;
+- uppfæra plannedStartMinutes;
+- hreinsa plannedEndMinutes þar sem við á;
+- skrifa audit, t.d. SCHEDULE_MOVED.
+Byggður var:
+gloggt-dagskipulag-schedule-persist-fix-20260922.zip
+8. Nákvæma drag/drop-villan fannst
+Eftir frekari prófun kom fram rauður bannað-hringur með þverstriki þegar Verki var dregið yfir tímalínuna.
+Þetta sýndi að drop-svæðið var ekki að samþykkja dragið.
+Nákvæm orsök
+Í dragover gat Chrome skilað tómum streng:
+""
+Kóðinn gerði:
+Number("")
+sem verður:
+0
+Þar með var tómt dataTransfer túlkað sem tölugildi og fallback á dragWorkId var ekki notað.
+Afleiðing:
+- preventDefault() fór ekki rétta leið;
+- drop-svæðið samþykkti ekki Verkið;
+- rauði bannað-hringurinn birtist.
+Lagfæring
+Byggður var:
+gloggt-dagskipulag-drag-id-fix-20260922.zip
+Ný regla:
+- tómt dataTransfer er hunsað;
+- aðeins jákvætt Work ID telst gilt;
+- annars er React dragWorkId notað.
+9. Fyrsta staðfesta drag/drop virkni
+Eftir drag-ID lagfæringuna virkaði dropið.
+Notandi staðfesti:
+„núna virkaði það“
+
+Síðasta skjáskot lotunnar sýndi:
+- prufa gps á um 22:35–23:35;
+- græn staðfesting:
+  - „Úthlutun vistuð. Tímasetning vistuð · 22:35“
+- hægra spjald:
+  - áætlaður dagur: 22.09.2026;
+  - áætlað upphaf: 22:35–23:35;
+  - mönnun: 1/1;
+  - Sigríður tengd Verkinu.
+Að Verkið sjáist bæði í:
+- efri röð Áætluð Verk;
+- og starfsmannaröð Sigríðar
+er eðlilegt þegar báðar sýnir eru að sýna sama Verk út frá sitthvoru samhengi.
+Það sem er EKKI fullstaðfest enn
+Eftir síðasta skjáskot var beðið um:
+1. refresh á síðunni;
+2. staðfestingu að prufa gps kæmi aftur á 22:35;
+3. mögulega DB-lesningu á plannedStartMinutes.
+Þessi lokastaðfesting kom ekki áður en vinnulotu lauk.
+Því skal ekki merkja persistence-keðjuna sem fullstaðfesta fyrr en þetta hefur verið prófað næst.
+Ef 22:35 er vistað ætti:
+plannedStartMinutes = 1355
+10. GPS staða í lok kvölds
+GPS-söfnun var vísvitandi ekki breytt meðan Dagskipulag og shell voru þróuð.
+Staðfest fyrr um kvöldið:
+- wake lock heldur skjánum vakandi;
+- þegar GPS fór í græna virka stöðu lagaðist Mobile skjástærðin;
+- pan á GPS-korti virkar;
+- hámarkszoom niður á hús-/götustig virkar;
+- fyrirtækjakort og Verk-kort eru í production;
+- GPS-línur eru orðnar þynnri;
+- hrá GPS-gögn eru áfram varðveitt óbreytt.
+Á morgun er fyrirhugað raunpróf með GPS í ferð til Reykjavíkur.
+Mikilvæg regla fyrir prófið:
+Ekki breyta GPS-söfnuninni fyrir ferðina svo prófið verði hreinn samanburðarpunktur.
+
+11. Afkastavinna – hvað var gert og hvað bíður
+Í arkitektúr-/afkastaúttektinni fannst kerfislægt tvíverknaðarmynstur:
+- RootLayout les session/fyrirtæki/aðgang/tungumál/einingar;
+- requireCompanyModule() getur lesið session + aðgang + einingar aftur;
+- getEffectiveUser() getur lesið session aftur;
+- síðan sjálf byrjar síðan sína eigin gagnasókn.
+Einnig fannst prisma.session.findUnique dreift víða um app/lib.
+Byggður var pakkinn:
+gloggt-request-context-afkostagrunnur-20260922.zip
+Markmið:
+- request-scoped sameiginlegt context;
+- session/effective user/module upplýsingar lesnar einu sinni og endurnýttar innan sama request;
+- ekkert cross-request auth-cache.
+Staða
+Þessi pakki er:
+- byggður;
+- en ekki settur inn;
+- ekki tsc-prófaður í heila projectinu hjá notanda;
+- ekki commit-aður;
+- ekki production-prófaður.
+Hann bíður þar til Dagskipulag hefur fengið hreinan checkpoint.
+12. Git-regla sem stendur áfram
+Repo-ið inniheldur áfram eldri eyðingar, copy-skrár, api/, generated/ og annað sem á ekki sjálfkrafa með í commit.
+Regla stendur:
+Aldrei git add . í þessu repo.
+
+Alltaf:
+- git status --short;
+- stage-a nákvæmar skrár;
+- git diff --cached --name-only;
+- git diff --cached --stat;
+- npx tsc --noEmit;
+- síðan commit.
+Nákvæmur stoppunktur fyrir næstu vinnulotu
+Fyrst – staðfesta síðasta Dagskipulag-próf
+1. Opna:
+   /verk#dagskipulag
+2. Athuga hvort prufa gps sé enn á 22:35–23:35 eftir refresh.
+3. Ef það er þar:
+   - persistence er sjónrænt staðfest.
+4. Lesa síðan DB ef við viljum fulla staðfestingu:
+   - plannedStartMinutes ætti að vera 1355.
+Ef það stenst
+Taka hreinan Git-checkpoint fyrir Dagskipulag Phase 1:
+- git status --short
+- finna aðeins skrár frá:
+  - drag/time Phase 1;
+  - dragover fix;
+  - schedule persist fix;
+  - drag ID fix;
+- npx tsc --noEmit
+- commit/push
+- production smoke-test.
+Næsti virkniáfangi Dagskipulags
+Eftir checkpoint:
+færa Verk milli starfsmanna / breyta úthlutun með drag/drop
+Reglur:
+- rekjanlegt;
+- ekki taka annan starfsmann sjálfkrafa af nema það sé skýr aðgerð;
+- ef nýr starfsmaður er settur á Verkið má bæta honum við;
+- „skipta út starfsmanni“ verður sér aðgerð;
+- allar sýnir lesa sama authoritative plan state.
+GPS á morgun
+Ferð til Reykjavíkur verður raunpróf á:
+- wake lock;
+- punktatíðni;
+- accuracy;
+- bilum milli GPS-punkta;
+- hvort PWA heldur watchPosition lifandi á löngum akstri.
+Eftir ferð:
+- lesa alla punkta;
+- bera saman tímabil, accuracy, speed, heading og bil milli punkta;
+- bera saman við ferð Sigríðar.
+Helstu öruggu checkpoint í Git í kvöld
+- 5410081 — Add GPS manager maps for work tracking
+- 3c60914 — Add GPS tracks API route
+- 05db99c — Improve GPS maps and keep mobile screen awake
+- 5709361 — Restructure GLÖGGT workspace navigation and Verk shell
+Síðustu Dagskipulag drag/drop breytingarnar eru ekki enn staðfestar sem Git-checkpoint í þessari skýrslu.
+Lokaniðurstaða kvöldsins
+Stærsti breytingapunkturinn eftir síðustu skýrslu er að GLÖGGT er farið úr því að hafa aðeins nýtt navigation-shell yfir í að fyrsta daglega rekstraraðgerðin í nýja Verk-stjórnborðinu er farin að virka:
+Verk er nú hægt að grípa og færa á tíma í Dagskipulagi.
+
+Við fundum og löguðum raunverulega browser-level drag/drop villu í stað þess að fela hana með UI-brellum.
+Næsti morgunpunktur er mjög skýr:
+Staðfesta 22:35 eftir refresh → taka Git-checkpoint → síðan færa Verk milli starfsmanna.
+
+GPS helst fryst fram yfir Reykjavíkurprófið.
