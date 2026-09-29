@@ -24,6 +24,7 @@ export type BankBookingReconciliationResult =
       };
       transactionCount: number;
       bookingCount: number;
+      transactions: import("./candidates").BankCandidateInput[];
       counts: {
         uniqueStrong: number;
         ambiguousStrong: number;
@@ -90,6 +91,7 @@ export async function getBankBookingReconciliation(
     ledgerAccount: source.ledgerAccount,
     transactionCount: source.transactions.length,
     bookingCount: source.bookings.length,
+    transactions: source.transactions,
     counts,
     resolutions,
   };
