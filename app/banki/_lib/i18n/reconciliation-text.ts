@@ -19,6 +19,8 @@ const text = {
     exactDateAmountParty: "Sama dagsetning, upphæð og mótaðili",
     exactDateAmount: "Sama dagsetning og upphæð",
     nearDateAmountParty: "Sama upphæð og mótaðili, nálæg dagsetning",
+    extendedDateAmountParty: "Sama upphæð og mótaðili, dagsetning innan 30 daga",
+    noDateAmountParty: "Sama upphæð og mótaðili, bókunardagsetning vantar",
     readOnly:
       "Þetta eru deterministic pörunartillögur. Ekkert er tengt eða bókað sjálfkrafa.",
     notLinkedTitle: "Bókhaldslykill bankareiknings er ekki tengdur",
@@ -47,6 +49,8 @@ const text = {
     exactDateAmountParty: "Same date, amount and counterparty",
     exactDateAmount: "Same date and amount",
     nearDateAmountParty: "Same amount and counterparty, nearby date",
+    extendedDateAmountParty: "Same amount and counterparty, date within 30 days",
+    noDateAmountParty: "Same amount and counterparty, booking date missing",
     readOnly:
       "These are deterministic matching suggestions. Nothing is linked or posted automatically.",
     notLinkedTitle: "No ledger account linked to this bank account",
@@ -75,6 +79,8 @@ const text = {
     exactDateAmountParty: "Ta sama data, kwota i kontrahent",
     exactDateAmount: "Ta sama data i kwota",
     nearDateAmountParty: "Ta sama kwota i kontrahent, zbliżona data",
+    extendedDateAmountParty: "Ta sama kwota i kontrahent, data w ciągu 30 dni",
+    noDateAmountParty: "Ta sama kwota i kontrahent, brak daty księgowania",
     readOnly:
       "To są deterministyczne sugestie dopasowania. Nic nie jest automatycznie łączone ani księgowane.",
     notLinkedTitle: "Brak konta księgowego powiązanego z rachunkiem bankowym",
@@ -103,6 +109,8 @@ const text = {
     exactDateAmountParty: "Исти датум, износ и друга страна",
     exactDateAmount: "Исти датум и износ",
     nearDateAmountParty: "Исти износ и друга страна, близак датум",
+    extendedDateAmountParty: "Исти износ и друга страна, датум у року од 30 дана",
+    noDateAmountParty: "Исти износ и друга страна, недостаје датум књижења",
     readOnly:
       "Ово су детерминистички предлози за поклапање. Ништа се не повезује нити књижи аутоматски.",
     notLinkedTitle: "Банковни рачун није повезан са књиговодственим контом",

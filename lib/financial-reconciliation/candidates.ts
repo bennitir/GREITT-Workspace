@@ -23,7 +23,9 @@ export type CandidateStrength = "STRONG" | "POSSIBLE";
 export type CandidateReason =
   | "EXACT_DATE_AMOUNT_PARTY"
   | "EXACT_DATE_AMOUNT"
-  | "NEAR_DATE_AMOUNT_PARTY";
+  | "NEAR_DATE_AMOUNT_PARTY"
+  | "EXTENDED_DATE_AMOUNT_PARTY"
+  | "NO_DATE_AMOUNT_PARTY";
 
 export type BankBookingCandidate = {
   bankTransactionId: number;
@@ -37,7 +39,7 @@ export type BankBookingCandidate = {
   bankAmount: number;
   bookingAmount: number;
 
-  dateDistanceDays: number;
+  dateDistanceDays: number | null;
   partyMatch: boolean;
 
   strength: CandidateStrength;
@@ -131,8 +133,6 @@ export function buildBankBookingCandidateGraph(
     if (bankMinor === null) continue;
 
     for (const booking of bookingEntries) {
-      if (!booking.date) continue;
-
       // Fyrir eignareikning banka:
       // debit = innstreymi (+), credit = útstreymi (-).
       // Þetta kemur í veg fyrir að mótbókunarlínan með gagnstæðu formerki
@@ -147,11 +147,13 @@ export function buildBankBookingCandidateGraph(
         continue;
       }
 
-      const distance = daysBetween(bank.date, booking.date);
       const partyMatch = partiesMatch(
         bank.text,
         booking.partyText
       );
+      const distance = booking.date
+        ? daysBetween(bank.date, booking.date)
+        : null;
 
       let strength: CandidateStrength | null = null;
       let reason: CandidateReason | null = null;
@@ -162,9 +164,20 @@ export function buildBankBookingCandidateGraph(
       } else if (distance === 0) {
         strength = "POSSIBLE";
         reason = "EXACT_DATE_AMOUNT";
-      } else if (distance <= 3 && partyMatch) {
+      } else if (distance !== null && distance <= 3 && partyMatch) {
         strength = "POSSIBLE";
         reason = "NEAR_DATE_AMOUNT_PARTY";
+      } else if (
+        distance !== null &&
+        distance >= 4 &&
+        distance <= 30 &&
+        partyMatch
+      ) {
+        strength = "POSSIBLE";
+        reason = "EXTENDED_DATE_AMOUNT_PARTY";
+      } else if (distance === null && partyMatch) {
+        strength = "POSSIBLE";
+        reason = "NO_DATE_AMOUNT_PARTY";
       }
 
       if (!strength || !reason) continue;
@@ -223,7 +236,8 @@ export function buildBankBookingCandidateGraph(
         (a, b) =>
           Number(b.strength === "STRONG") -
             Number(a.strength === "STRONG") ||
-          a.dateDistanceDays - b.dateDistanceDays ||
+          (a.dateDistanceDays ?? Number.POSITIVE_INFINITY) -
+            (b.dateDistanceDays ?? Number.POSITIVE_INFINITY) ||
           a.receiptEntryId - b.receiptEntryId
       );
 

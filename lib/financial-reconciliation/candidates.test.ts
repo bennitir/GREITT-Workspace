@@ -191,3 +191,71 @@ test("one bank transaction competing with two bookings is ambiguous", () => {
   assert.equal(result[0].strongCandidates[0].mutuallyUnique, false);
   assert.equal(result[0].strongCandidates[1].mutuallyUnique, false);
 });
+
+test("extended date plus party match stays POSSIBLE", () => {
+  const result = buildBankBookingCandidateGraph(
+    [
+      {
+        id: 1,
+        date: new Date("2026-02-09T12:00:00Z"),
+        text: "HS Veitur",
+        amount: -62817,
+      },
+    ],
+    [
+      {
+        entryId: 60,
+        receiptId: 600,
+        voucherNumber: null,
+        date: new Date("2026-01-31T00:00:00Z"),
+        partyText: "HS Veitur hf.",
+        description: null,
+        account: "1510",
+        entryText: "",
+        debit: 0,
+        credit: 62817,
+      },
+    ]
+  );
+
+  assert.equal(result[0].state, "POSSIBLE");
+  assert.equal(
+    result[0].possibleCandidates[0].reason,
+    "EXTENDED_DATE_AMOUNT_PARTY"
+  );
+  assert.equal(result[0].possibleCandidates[0].dateDistanceDays, 9);
+});
+
+test("missing booking date plus party match stays POSSIBLE", () => {
+  const result = buildBankBookingCandidateGraph(
+    [
+      {
+        id: 1,
+        date: new Date("2026-01-30T12:00:00Z"),
+        text: "Lifeyrissjodur verzlunarmanna",
+        amount: 7291,
+      },
+    ],
+    [
+      {
+        entryId: 61,
+        receiptId: 601,
+        voucherNumber: null,
+        date: null,
+        partyText: "Lifeyrissjodur verzlunarmanna",
+        description: null,
+        account: "1510",
+        entryText: "",
+        debit: 7291,
+        credit: 0,
+      },
+    ]
+  );
+
+  assert.equal(result[0].state, "POSSIBLE");
+  assert.equal(
+    result[0].possibleCandidates[0].reason,
+    "NO_DATE_AMOUNT_PARTY"
+  );
+  assert.equal(result[0].possibleCandidates[0].dateDistanceDays, null);
+});

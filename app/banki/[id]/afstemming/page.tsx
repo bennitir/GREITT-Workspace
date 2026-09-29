@@ -116,6 +116,10 @@ export default async function AfstemmingPage({ params }: Props) {
         return t.exactDateAmount;
       case "NEAR_DATE_AMOUNT_PARTY":
         return t.nearDateAmountParty;
+      case "EXTENDED_DATE_AMOUNT_PARTY":
+        return t.extendedDateAmountParty;
+      case "NO_DATE_AMOUNT_PARTY":
+        return t.noDateAmountParty;
     }
   }
 
