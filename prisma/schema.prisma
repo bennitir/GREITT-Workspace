@@ -457,6 +457,7 @@ model Account {
   updatedAt DateTime @updatedAt
 
   company            Company                    @relation(fields: [companyId], references: [id], onDelete: Cascade)
+  linkedBankAccounts BankAccount[]              @relation("BankAccountLedgerAccount")
   insightEntityLinks InsightEntityAccountLink[]
   accountingPatterns AccountingPattern[]
   financialLiabilityEvents FinancialEvent[] @relation("FinancialEventLiabilityAccount")
@@ -2703,6 +2704,7 @@ model WorkPartLaborFactTranslation {
 model BankAccount {
   id            Int      @id @default(autoincrement())
   companyId     Int
+  ledgerAccountId Int?
   name          String
   bankName      String
   accountNumber String?
@@ -2712,10 +2714,12 @@ model BankAccount {
   updatedAt     DateTime @updatedAt
 
   company       Company           @relation(fields: [companyId], references: [id], onDelete: Cascade)
+  ledgerAccount Account?           @relation("BankAccountLedgerAccount", fields: [ledgerAccountId], references: [id], onDelete: SetNull)
   transactions  BankTransaction[]
   importBatches ImportBatch[]
 
   @@index([companyId])
+  @@index([ledgerAccountId])
 }
 
 model BankTransaction {
