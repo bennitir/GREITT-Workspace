@@ -41,10 +41,14 @@ export type BankReconciliationSourceResult =
  * Canonical source-selection only. Enginn UI-texti eða tungumál hér.
  */
 export async function loadBankBookingReconciliationSource(
-  bankAccountId: number
+  bankAccountId: number,
+  companyId: number
 ): Promise<BankReconciliationSourceResult> {
-  const bankAccount = await prisma.bankAccount.findUnique({
-    where: { id: bankAccountId },
+  const bankAccount = await prisma.bankAccount.findFirst({
+    where: {
+      id: bankAccountId,
+      companyId,
+    },
     select: {
       id: true,
       companyId: true,

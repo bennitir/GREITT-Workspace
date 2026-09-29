@@ -41,10 +41,14 @@ export type BankBookingReconciliationResult =
  * Enginn persistence, enginn UI-texti og engin tungumál hér.
  */
 export async function getBankBookingReconciliation(
-  bankAccountId: number
+  bankAccountId: number,
+  companyId: number
 ): Promise<BankBookingReconciliationResult> {
   const source =
-    await loadBankBookingReconciliationSource(bankAccountId);
+    await loadBankBookingReconciliationSource(
+      bankAccountId,
+      companyId
+    );
 
   if (!source.ok) {
     return source;
