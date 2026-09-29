@@ -1,0 +1,126 @@
+import type { Prisma } from "@/app/generated/prisma/client";
+
+type BookingEntry = { account: string; debit: number; credit: number };
+type Entity = { id: number; entityType: string; identifierValue?: string | null };
+
+export type ReviewedFinancialDocument = {
+  id: number;
+  documentRole: string | null;
+  classificationSource: string | null;
+  documentType: string | null;
+  totalAmount?: number | null;
+  receiptNumber?: string | null;
+  merchantName?: string | null;
+  date?: Date | null;
+  paymentSchedule?: unknown;
+  bookingEntries?: BookingEntry[];
+  entityLinks: Array<{ entity: Entity }>;
+};
+
+const nonEmpty = (value?: string | null) => value?.trim() || null;
+
+export function decideReviewedFinancialEvent(document: ReviewedFinancialDocument) {
+  if (
+    document.documentRole !== "BOOKABLE" ||
+    document.classificationSource === "MANUAL" ||
+    typeof document.totalAmount !== "number" ||
+    !Number.isFinite(document.totalAmount) ||
+    Math.abs(document.totalAmount) === 0
+  ) return null;
+
+  const schedule = document.paymentSchedule;
+  if (schedule && typeof schedule === "object" && !Array.isArray(schedule) &&
+    "installments" in schedule && Array.isArray(schedule.installments) &&
+    schedule.installments.length > 0) return null;
+
+  let eventType: "CHARGE" | "CREDIT";
+  let externalReference: string | null;
+  if (document.documentType === "ACCOUNTING_DOCUMENT") {
+    const invoices = document.entityLinks.filter(({ entity }) => entity.entityType === "INVOICE");
+    if (invoices.length !== 1) return null;
+    eventType = "CHARGE";
+    externalReference = nonEmpty(invoices[0].entity.identifierValue);
+  } else if (document.documentType === "CREDIT_NOTE") {
+    const credits = new Map(document.entityLinks
+      .filter(({ entity }) => entity.entityType === "CREDIT_INVOICE" && nonEmpty(entity.identifierValue))
+      .map(({ entity }) => [entity.id, entity]));
+    eventType = "CREDIT";
+    externalReference = credits.size === 1
+      ? nonEmpty([...credits.values()][0].identifierValue)
+      : nonEmpty(document.receiptNumber);
+  } else return null;
+
+  const organizations = new Set(document.entityLinks
+    .filter(({ entity }) => entity.entityType === "ORGANIZATION")
+    .map(({ entity }) => entity.id));
+
+  return {
+    eventType,
+    amount: (eventType === "CREDIT" ? -1 : 1) * Math.abs(document.totalAmount),
+    externalReference,
+    counterpartyId: organizations.size === 1 ? [...organizations][0] : null,
+  };
+}
+
+export async function findReviewedLiabilityAccount(
+  tx: Prisma.TransactionClient,
+  companyId: number,
+  entries: BookingEntry[] = [],
+  includeDebit = false,
+) {
+  const numbers = [...new Set(entries
+    .filter((entry) => (Number(entry.credit) > 0 && Number(entry.debit) === 0) ||
+      (includeDebit && Number(entry.debit) > 0 && Number(entry.credit) === 0))
+    .map((entry) => entry.account.trim()).filter(Boolean))];
+  if (!numbers.length) return null;
+  const accounts = await tx.account.findMany({
+    where: {
+      companyId,
+      number: { in: numbers },
+      type: { in: ["ACCOUNTS_PAYABLE", "SHORT_TERM_LIABILITY", "LONG_TERM_LIABILITY"] },
+    },
+    select: { id: true },
+  });
+  return accounts.length === 1 ? accounts[0] : null;
+}
+
+// Caller owns the transaction and locks the document through its review update.
+export async function materializeReviewedFinancialDocument(
+  tx: Prisma.TransactionClient,
+  params: { companyId: number; receiptId: number; document: ReviewedFinancialDocument },
+) {
+  const { companyId, receiptId, document } = params;
+  const decision = decideReviewedFinancialEvent(document);
+  if (!decision) return;
+  const existing = await tx.documentFinancialEvent.findFirst({
+    where: { documentId: document.id, role: "PRIMARY" },
+  });
+  if (existing) return;
+
+  const liabilityAccount = await findReviewedLiabilityAccount(
+    tx, companyId, document.bookingEntries, decision.eventType === "CREDIT",
+  );
+  const event = await tx.financialEvent.create({
+    data: {
+      companyId,
+      eventType: decision.eventType,
+      status: "OPEN",
+      title: [nonEmpty(document.merchantName), decision.externalReference].filter(Boolean).join(" · ") || null,
+      eventDate: document.date ?? null,
+      amount: decision.amount,
+      currency: "ISK",
+      externalReference: decision.externalReference,
+      liabilityAccountId: liabilityAccount?.id ?? null,
+      metadata: { source: "REVIEWED_DOCUMENT", sourceDocumentId: document.id, documentType: document.documentType },
+    },
+  });
+  await tx.documentFinancialEvent.create({
+    data: { receiptId, documentId: document.id, eventId: event.id, role: "PRIMARY", source: "REVIEWED_DOCUMENT" },
+  });
+  if (decision.counterpartyId !== null) {
+    const key = { eventId: event.id, entityId: decision.counterpartyId, role: "COUNTERPARTY" };
+    await tx.financialEventEntity.upsert({
+      where: { eventId_entityId_role: key }, update: {}, create: key,
+    });
+  }
+}

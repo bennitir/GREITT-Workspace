@@ -1,4 +1,5 @@
 "use server";
+import { findReviewedLiabilityAccount, materializeReviewedFinancialDocument } from "@/lib/receipts/financial-event-materialization";
 import { queueInsightForDocument } from "@/lib/insight/auto-enqueue";
 import { runInsightWorker } from "@/lib/insight/worker";
 import { persistReceiptDerivedInsight } from "@/lib/insight/receipt-derived";
@@ -4198,40 +4199,9 @@ async function materializeReviewedPaymentSchedule(
       ? schedule.totalAmount
       : document.totalAmount ?? installments.reduce((sum, item) => sum + item.amount, 0);
 
-  // Skuldareikningurinn er ekki harðkóðaður. AI/bókari velur hann í
-  // bókunartillögunni og við festum hann aðeins þegar skjalið er yfirfarið.
-  // Þannig getur 2000 verið rétt í einu tilviki en sértækur skuldalykill í öðru.
-  const creditAccountNumbers = Array.from(
-    new Set(
-      (document.bookingEntries ?? [])
-        .filter((entry) => Number(entry.credit) > 0 && Number(entry.debit) === 0)
-        .map((entry) => String(entry.account).trim())
-        .filter(Boolean)
-    )
+  const liabilityAccount = await findReviewedLiabilityAccount(
+    tx, companyId, document.bookingEntries,
   );
-
-  const liabilityAccounts = creditAccountNumbers.length
-    ? await tx.account.findMany({
-        where: {
-          companyId,
-          number: { in: creditAccountNumbers },
-          type: {
-            in: [
-              "ACCOUNTS_PAYABLE",
-              "SHORT_TERM_LIABILITY",
-              "LONG_TERM_LIABILITY",
-            ],
-          },
-        },
-        select: { id: true, number: true },
-      })
-    : [];
-
-  // Aðeins ótvírætt skuldarval verður varanlegt. Ef fleiri en einn
-  // skuldareikningur er í færslunni þarf matching-lagið síðar að vita
-  // nákvæmlega hvaða hluti greiðslan á við; við giskum ekki hér.
-  const liabilityAccount =
-    liabilityAccounts.length === 1 ? liabilityAccounts[0] : null;
 
   // Idempotency: eitt PRIMARY event fyrir sama greinda frumskjal.
   const existingLink = await tx.documentFinancialEvent.findFirst({
@@ -5546,6 +5516,7 @@ export async function applyConfirmedBookingSuggestions(
     include: {
       receipt: true,
       bookingEntries: true,
+      entityLinks: { include: { entity: true } },
     },
   });
 
@@ -5650,6 +5621,12 @@ export async function applyConfirmedBookingSuggestions(
         document,
       });
     }
+
+    await materializeReviewedFinancialDocument(tx, {
+      companyId: document.receipt.companyId,
+      receiptId: document.receiptId,
+      document,
+    });
 
     // „Merkja yfirfarið“ er staðfest bókaraval. Vista reikningsvalið strax
     // í AccountingPattern svo næsta sambærilega skjal geti endurnýtt ALLA
