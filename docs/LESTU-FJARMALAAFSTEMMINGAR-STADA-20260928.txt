@@ -1,0 +1,99 @@
+GLÖGGT – Fjármálaafstemmingar: staða við dagslok
+28. september 2026
+
+KJARNAREGLA
+Bankafærsla/greiðslufærsla sannar að peningar færðust.
+Bókun segir fjárhagslega ráðstöfun/eðli.
+Afstemming tengir heimildirnar og varðveitir sönnunina.
+
+MIKILVÆG HÖNNUNARÁKVÖRÐUN
+Ekki byggja sértækt BankTransactionBookingMatch sem aðalvél.
+Smíða almennt reconciliation-lag sem getur stutt:
+- 1↔1
+- 1↔many
+- many↔1
+- banki↔bókun
+- banki↔krafa/skuldbinding
+- kortauppgjör
+- innri millifærslur
+- partial matches
+- fleiri source-types síðar
+
+FYRIRHUGAÐ SCHEMA – EKKI ENN SETT INN
+FinancialReconciliation
+- company
+- type
+- status
+- confidence
+- source/origin
+- confirmedBy / confirmedAt
+- audit timestamps
+
+FinancialReconciliationParticipant
+- reconciliationId
+- sourceType
+- sourceKey
+- role
+- matchedAmount (jákvæð fjárhæð)
+- metadata eftir þörfum
+
+Engin Prisma migration fyrir þetta almenna lag var búin til 28.09.
+
+HALDA AÐSKILDU
+1. Receipt/known-facts reconciliation:
+   - lib/insight/reconciliation.ts
+   - lib/receipts/reconciliation.ts
+   - canonical facts/entity identity/account links
+   - markmið m.a. 0-AI endurmat fylgiskjala
+   Þetta er ekki almenn bankafstemming.
+
+2. InsightEntityAccountLink:
+   almennt entity→Account mapping, en ekki greiðsluafstemming.
+
+NÚVERANDI BANKA-AFSTEMMING
+/app/banki/[id]/afstemming er enn með einfalt heuristic:
+- nálæg dagsetning
+- absolute upphæð
+- texta/mótaðilasamsvörun
+- receipt-level leit
+- ekki persisted almennt reconciliation truth
+
+UI/slóð má nýtast áfram, backend þarf síðar að færa yfir á almenna vél.
+
+BankTransaction.status=RECONCILED má ekki verða source of truth fyrir almenna afstemmingu.
+
+FYRSTA GÓÐA PRÓFTILFELLIÐ
+ReceiptEntry #584
+Receipt #145
+BankTransaction #305
+30. janúar
+Greiðslustofa
+324.243 kr.
+Nákvæm dagsetning/fjárhæð/mótaðili.
+Góður deterministic 1↔1 kandídat.
+
+TVÍRÆÐA FAIL-CLOSED PRÓFIÐ
+ReceiptEntry #563
+-22.160 kr.
+Fleiri en einn nákvæmur bankakandídat.
+Kerfið má ekki giska eða auto-staðfesta.
+
+NÆSTA SKREF EFTIR PRODUCTION SMOKE-TEST
+1. read-only staðfesta núverandi schema/tengingar aftur.
+2. bæta við almennu FinancialReconciliation + Participant schema með þröngri migration.
+3. halda receipt-specific reconciliation óbreyttu.
+4. smíða deterministic candidate matching + evidence/confidence.
+5. auto-staðfesta aðeins ótvíræð örugg tilfelli.
+6. prófa Greiðslustofu 324.243.
+7. prófa 22.160 tvíræðni og staðfesta fail-closed.
+8. færa /banki/[id]/afstemming yfir á nýja backend-ið í litlum skrefum.
+
+PRODUCTION CHECKPOINT ÁÐUR EN HALDIÐ ER ÁFRAM
+899c993 – Forðast óþarfa Turbopack filesystem tracing
+origin/main = HEAD
+divergence 0 / 0
+Vercel Production Ready
+TypeScript + Prisma validate + production build hreint.
+
+FYRSTA VERK Á MORGUN
+Production-smoke-test. Ekki byrja schema/migration fyrr en smoke-testið er grænt.
