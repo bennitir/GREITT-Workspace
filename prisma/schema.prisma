@@ -125,6 +125,7 @@ model Company {
   // Innsýn – sameiginlegt gagnalag
   insightEntities       InsightEntity[]
   financialEvents       FinancialEvent[]
+  financialReconciliations FinancialReconciliation[]
   insightFacts          InsightFact[]
   insightProcessingJobs InsightProcessingJob[]
 
@@ -522,6 +523,7 @@ model User {
   accountingPatternEvidence      AccountingPatternEvidence[]
   globalProductKnowledgeEvidence GlobalProductKnowledgeEvidence[]
   insightProcessingJobs          InsightProcessingJob[]      @relation("InsightProcessingRequestedBy")
+  confirmedFinancialReconciliations FinancialReconciliation[] @relation("FinancialReconciliationConfirmedBy")
 
   submittedSuggestions Suggestion[] @relation("SuggestionSubmittedBy")
   reviewedSuggestions  Suggestion[] @relation("SuggestionReviewedBy")
@@ -3127,6 +3129,76 @@ model FinancialEventPaymentAllocation {
   @@index([paymentId, status])
 }
 
+// Almenn fjármálaafstemming milli ólíkra canonical heimilda.
+//
+// UI-tungumál eiga aldrei heima í þessum gildum.
+// reconciliationType, status, source, sourceType og role eru canonical kóðar.
+// Viðmótið þýðir birtingarheiti þeirra í sameiginlegu i18n-lagi fyrir is/en/pl/sr.
+//
+// Deterministic candidate-leit þarf ekki að skrifa FinancialReconciliation.
+// Varanlegt record er notað þegar tillaga er sérstaklega varðveitt
+// eða samsvörun hefur verið staðfest.
+model FinancialReconciliation {
+  id        Int @id @default(autoincrement())
+  companyId Int
+
+  // Dæmi: BANK_TO_BOOKING, BANK_TO_FINANCIAL_EVENT, CARD_TO_BOOKING.
+  reconciliationType String
+
+  // PROPOSED, CONFIRMED, VOID.
+  status     String @default("PROPOSED")
+  confidence Float?
+
+  // SYSTEM, MANUAL, IMPORTED.
+  source String @default("SYSTEM")
+
+  confirmedByUserId Int?
+  confirmedAt       DateTime?
+
+  metadata  Json?
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  company     Company @relation(fields: [companyId], references: [id], onDelete: Cascade)
+  confirmedBy User?   @relation("FinancialReconciliationConfirmedBy", fields: [confirmedByUserId], references: [id], onDelete: SetNull)
+
+  participants FinancialReconciliationParticipant[]
+
+  @@index([companyId, status])
+  @@index([companyId, reconciliationType])
+  @@index([confirmedByUserId])
+}
+
+// Ein canonical heimild sem tekur þátt í reconciliation.
+//
+// sourceType/sourceKey geta t.d. verið:
+// BANK_TRANSACTION / "305"
+// RECEIPT_ENTRY    / "584"
+//
+// matchedAmount er jákvæð stærð þess hluta sem er samsvaraður.
+// Debet/kredit eða inn-/útstreymi helst eiginleiki frumheimildarinnar.
+model FinancialReconciliationParticipant {
+  id               Int @id @default(autoincrement())
+  reconciliationId Int
+
+  // Dæmi: BANK_TRANSACTION, RECEIPT_ENTRY, FINANCIAL_EVENT.
+  sourceType String
+  sourceKey  String
+
+  // Dæmi: MONEY_MOVEMENT, BOOKING, OBLIGATION.
+  role String
+
+  matchedAmount Decimal
+
+  metadata  Json?
+  createdAt DateTime @default(now())
+
+  reconciliation FinancialReconciliation @relation(fields: [reconciliationId], references: [id], onDelete: Cascade)
+
+  @@unique([reconciliationId, sourceType, sourceKey, role])
+  @@index([sourceType, sourceKey])
+  @@index([reconciliationId, role])
+}
 model FinancialEventRelation {
   id Int @id @default(autoincrement())
 
