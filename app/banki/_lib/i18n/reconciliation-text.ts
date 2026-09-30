@@ -29,6 +29,18 @@ const text = {
     sourceErrorTitle: "Ekki tókst að lesa afstemmingargögn",
     sourceErrorHelp:
       "Athuga þarf tengingu bankareiknings og bókhaldslykils áður en haldið er áfram.",
+    financialEventCandidates: "Tillögur að fjárhagsatburði",
+    financialEventCandidateHelp:
+      "Þetta eru mögulegar tengingar við fjárhagsatburði. Engin tenging verður til fyrr en hún er staðfest sérstaklega.",
+    financialEvent: "Fjárhagsatburður",
+    eventCharge: "Skuldfærsla",
+    eventCredit: "Inneign",
+    eventNearDate: "Sama upphæð í gagnstæða átt og dagsetning innan 3 daga",
+    eventExtendedDate:
+      "Sama upphæð í gagnstæða átt og dagsetning innan 30 daga",
+    reference: "Tilvísun",
+    referenceAlsoMatches: "Tilvísun bankafærslu stemmir einnig.",
+    confirmEventMatch: "Staðfesta tengingu",
   },
 
   en: {
@@ -59,6 +71,18 @@ const text = {
     sourceErrorTitle: "Reconciliation data could not be loaded",
     sourceErrorHelp:
       "Check the bank-account and ledger-account link before continuing.",
+    financialEventCandidates: "Financial event suggestions",
+    financialEventCandidateHelp:
+      "These are possible links to financial events. No link is created until it is explicitly confirmed.",
+    financialEvent: "Financial event",
+    eventCharge: "Charge",
+    eventCredit: "Credit",
+    eventNearDate: "Same amount in the opposite direction and date within 3 days",
+    eventExtendedDate:
+      "Same amount in the opposite direction and date within 30 days",
+    reference: "Reference",
+    referenceAlsoMatches: "The bank-transaction reference also matches.",
+    confirmEventMatch: "Confirm link",
   },
 
   pl: {
@@ -89,6 +113,18 @@ const text = {
     sourceErrorTitle: "Nie udało się wczytać danych uzgodnienia",
     sourceErrorHelp:
       "Sprawdź powiązanie rachunku bankowego z kontem księgowym przed kontynuowaniem.",
+    financialEventCandidates: "Sugestie zdarzeń finansowych",
+    financialEventCandidateHelp:
+      "To są możliwe powiązania ze zdarzeniami finansowymi. Powiązanie nie zostanie utworzone bez wyraźnego potwierdzenia.",
+    financialEvent: "Zdarzenie finansowe",
+    eventCharge: "Obciążenie",
+    eventCredit: "Uznanie",
+    eventNearDate: "Ta sama kwota w przeciwnym kierunku i data w ciągu 3 dni",
+    eventExtendedDate:
+      "Ta sama kwota w przeciwnym kierunku i data w ciągu 30 dni",
+    reference: "Referencja",
+    referenceAlsoMatches: "Referencja transakcji bankowej również jest zgodna.",
+    confirmEventMatch: "Potwierdź powiązanie",
   },
 
   sr: {
@@ -119,6 +155,18 @@ const text = {
     sourceErrorTitle: "Подаци за усклађивање нису могли да се учитају",
     sourceErrorHelp:
       "Проверите везу банковног рачуна и књиговодственог конта пре наставка.",
+    financialEventCandidates: "Предлози финансијских догађаја",
+    financialEventCandidateHelp:
+      "Ово су могуће везе са финансијским догађајима. Веза се не прави док се изричито не потврди.",
+    financialEvent: "Финансијски догађај",
+    eventCharge: "Задужење",
+    eventCredit: "Одобрење",
+    eventNearDate: "Исти износ у супротном смеру и датум у року од 3 дана",
+    eventExtendedDate:
+      "Исти износ у супротном смеру и датум у року од 30 дана",
+    reference: "Референца",
+    referenceAlsoMatches: "Референца банковне трансакције се такође поклапа.",
+    confirmEventMatch: "Потврди везу",
   },
 } as const satisfies Record<UiLanguage, object>;
 

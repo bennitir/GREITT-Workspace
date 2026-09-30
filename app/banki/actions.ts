@@ -360,7 +360,7 @@ export async function confirmBankFinancialEventPayment(formData: FormData) {
   }
   revalidatePath("/innsyn");
 
-  return result;
+  return;
 }
 
 export async function confirmFinancialEventPaymentAllocation(formData: FormData) {

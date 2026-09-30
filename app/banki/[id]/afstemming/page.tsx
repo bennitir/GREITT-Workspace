@@ -1,6 +1,10 @@
+import { confirmBankFinancialEventPayment } from "@/app/banki/actions";
 import { bankReconciliationText } from "@/app/banki/_lib/i18n/reconciliation-text";
 import type { CandidateReason } from "@/lib/financial-reconciliation/candidates";
+import type { BankFinancialEventCandidate } from "@/lib/financial-reconciliation/event-candidates";
+import { getBankFinancialEventCandidates } from "@/lib/financial-reconciliation/event-service";
 import { getBankBookingReconciliation } from "@/lib/financial-reconciliation/service";
+import { getCompanyAccess } from "@/lib/core/access-control";
 import { getCurrentInterfaceLanguage } from "@/lib/i18n/current-language";
 import {
   formatDate,
@@ -30,7 +34,7 @@ export default async function AfstemmingPage({ params }: Props) {
     notFound();
   }
 
-  const [language, account] = await Promise.all([
+  const [language, account, access] = await Promise.all([
     getCurrentInterfaceLanguage(),
     prisma.bankAccount.findFirst({
       where: {
@@ -44,19 +48,26 @@ export default async function AfstemmingPage({ params }: Props) {
         accountNumber: true,
       },
     }),
+    getCompanyAccess(activeCompanyId),
   ]);
 
-  if (!account) {
+  if (!account || !access.allowed) {
     notFound();
   }
 
   const t = bankReconciliationText(language);
 
-  const reconciliation =
-    await getBankBookingReconciliation(
-      bankAccountId,
-      activeCompanyId
-    );
+  const [reconciliation, eventCandidateResult] =
+    await Promise.all([
+      getBankBookingReconciliation(
+        bankAccountId,
+        activeCompanyId
+      ),
+      getBankFinancialEventCandidates(
+        bankAccountId,
+        activeCompanyId
+      ),
+    ]);
 
   if (!reconciliation.ok) {
     const isNotLinked =
@@ -102,6 +113,22 @@ export default async function AfstemmingPage({ params }: Props) {
     ])
   );
 
+  const eventCandidatesByTransactionId = new Map<
+    number,
+    BankFinancialEventCandidate[]
+  >();
+
+  if (eventCandidateResult.ok) {
+    for (const candidate of eventCandidateResult.candidates) {
+      eventCandidatesByTransactionId.set(candidate.bankTransactionId, [
+        ...(eventCandidatesByTransactionId.get(
+          candidate.bankTransactionId
+        ) ?? []),
+        candidate,
+      ]);
+    }
+  }
+
   const transactions = [...reconciliation.transactions].sort(
     (a, b) =>
       b.date.getTime() - a.date.getTime() ||
@@ -121,6 +148,14 @@ export default async function AfstemmingPage({ params }: Props) {
       case "NO_DATE_AMOUNT_PARTY":
         return t.noDateAmountParty;
     }
+  }
+
+  function eventReasonText(
+    reason: BankFinancialEventCandidate["reason"]
+  ) {
+    return reason === "EXACT_EVENT_AMOUNT_NEAR_DATE"
+      ? t.eventNearDate
+      : t.eventExtendedDate;
   }
 
   return (
@@ -221,6 +256,11 @@ export default async function AfstemmingPage({ params }: Props) {
                     ? resolution?.possibleCandidates ?? []
                     : [];
 
+              const eventCandidates =
+                eventCandidatesByTransactionId.get(
+                  transaction.id
+                ) ?? [];
+
               const badge =
                 state === "UNIQUE_STRONG"
                   ? {
@@ -306,6 +346,86 @@ export default async function AfstemmingPage({ params }: Props) {
                           </p>
                         </div>
                       ))}
+                    </div>
+                  ) : null}
+
+                  {eventCandidates.length > 0 ? (
+                    <div className="mt-3 rounded-lg border border-indigo-200 bg-indigo-50 p-3">
+                      <p className="text-sm font-semibold text-indigo-900">
+                        {t.financialEventCandidates}
+                      </p>
+                      <p className="mt-1 text-xs text-indigo-800">
+                        {t.financialEventCandidateHelp}
+                      </p>
+
+                      <div className="mt-3 space-y-2">
+                        {eventCandidates.map((candidate) => (
+                          <div
+                            key={`${candidate.bankTransactionId}-${candidate.eventId}`}
+                            className="rounded-lg border border-indigo-200 bg-white p-3 text-sm"
+                          >
+                            <div className="flex flex-wrap items-start justify-between gap-3">
+                              <div>
+                                <p className="font-medium">
+                                  {t.financialEvent} #{candidate.eventId}
+                                  {" · "}
+                                  {candidate.eventType === "CHARGE"
+                                    ? t.eventCharge
+                                    : t.eventCredit}
+                                </p>
+                                <p className="mt-1 text-gray-700">
+                                  {eventReasonText(candidate.reason)}
+                                </p>
+                                <p className="mt-1 text-gray-600">
+                                  {formatDate(candidate.eventDate)}
+                                  {" · "}
+                                  {candidate.eventAmount} kr.
+                                </p>
+                                {candidate.externalReference ? (
+                                  <p className="mt-1 text-gray-600">
+                                    {t.reference}: {candidate.externalReference}
+                                  </p>
+                                ) : null}
+                                {candidate.evidence.includes(
+                                  "EXACT_EVENT_REFERENCE"
+                                ) ? (
+                                  <p className="mt-1 font-medium text-indigo-800">
+                                    {t.referenceAlsoMatches}
+                                  </p>
+                                ) : null}
+                              </div>
+
+                              {access.canReconcileBookkeeping ? (
+                                <form
+                                  action={confirmBankFinancialEventPayment}
+                                >
+                                  <input
+                                    type="hidden"
+                                    name="companyId"
+                                    value={activeCompanyId}
+                                  />
+                                  <input
+                                    type="hidden"
+                                    name="bankTransactionId"
+                                    value={transaction.id}
+                                  />
+                                  <input
+                                    type="hidden"
+                                    name="eventId"
+                                    value={candidate.eventId}
+                                  />
+                                  <button
+                                    type="submit"
+                                    className="rounded-lg bg-indigo-700 px-3 py-2 text-sm font-semibold text-white hover:bg-indigo-800"
+                                  >
+                                    {t.confirmEventMatch}
+                                  </button>
+                                </form>
+                              ) : null}
+                            </div>
+                          </div>
+                        ))}
+                      </div>
                     </div>
                   ) : null}
                 </div>
