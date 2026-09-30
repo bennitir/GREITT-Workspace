@@ -7,6 +7,9 @@ import { revalidatePath } from "next/cache";
 import { redirect } from "next/navigation";
 import { Prisma } from "@/app/generated/prisma/client";
 import { getCompanyAccess } from "@/lib/core/access-control";
+import {
+  confirmBankFinancialEventPayment as confirmBankFinancialEventPaymentCore,
+} from "@/lib/financial-reconciliation/event-confirmation";
 import { prisma } from "@/lib/prisma";
 
 async function bankContext(requestedCompanyId?: number) {
@@ -313,6 +316,51 @@ export async function confirmBankImport(formData: FormData) {
     data: { status: duplicates > 0 ? `IMPORTED:${imported}:DUPLICATES:${duplicates}` : `IMPORTED:${imported}` },
   });
   redirect(`/banki/${batch.bankAccountId}`);
+}
+
+export async function confirmBankFinancialEventPayment(formData: FormData) {
+  const companyId = Number(formData.get("companyId"));
+  const bankTransactionId = Number(formData.get("bankTransactionId"));
+  const eventId = Number(formData.get("eventId"));
+
+  if (
+    !Number.isSafeInteger(companyId) ||
+    companyId < 1 ||
+    !Number.isSafeInteger(bankTransactionId) ||
+    bankTransactionId < 1 ||
+    !Number.isSafeInteger(eventId) ||
+    eventId < 1
+  ) {
+    throw new Error("INVALID_CONFIRMATION_ID");
+  }
+
+  const { userId } = await bankContext(companyId);
+  const access = await getCompanyAccess(companyId);
+
+  if (!access.allowed || !access.canReconcileBookkeeping) {
+    throw new Error("RECONCILIATION_ACCESS_DENIED");
+  }
+
+  const result = await confirmBankFinancialEventPaymentCore({
+    companyId,
+    userId,
+    bankTransactionId,
+    eventId,
+  });
+
+  const bankTransaction = await prisma.bankTransaction.findUnique({
+    where: { id: result.bankTransactionId },
+    select: { bankAccountId: true },
+  });
+
+  revalidatePath("/banki");
+  if (bankTransaction) {
+    revalidatePath(`/banki/${bankTransaction.bankAccountId}`);
+    revalidatePath(`/banki/${bankTransaction.bankAccountId}/afstemming`);
+  }
+  revalidatePath("/innsyn");
+
+  return result;
 }
 
 export async function confirmFinancialEventPaymentAllocation(formData: FormData) {
