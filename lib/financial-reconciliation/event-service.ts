@@ -1,5 +1,13 @@
 import { prisma } from "../prisma";
-import { buildBankFinancialEventCandidates } from "./event-candidates";
+import {
+  buildBankFinancialEventCandidates,
+  type BankFinancialEventCandidate,
+} from "./event-candidates";
+
+export type BankFinancialEventCandidateProjection =
+  BankFinancialEventCandidate & {
+    primaryReceiptIds: number[];
+  };
 
 export type ConfirmedBankFinancialEventLink = {
   bankTransactionId: number;
@@ -12,6 +20,7 @@ export type ConfirmedBankFinancialEventLink = {
   eventDate: Date | null;
   externalReference: string | null;
   confirmedAt: Date | null;
+  primaryReceiptIds: number[];
 };
 
 /** Internal read-only service. The caller must authorize access to companyId. */
@@ -40,21 +49,52 @@ export async function getBankFinancialEventCandidates(bankAccountId: number, com
       select: {
         id: true, companyId: true, eventType: true, amount: true,
         eventDate: true, externalReference: true, currency: true,
+        documentLinks: {
+          where: { role: "PRIMARY" },
+          select: { receiptId: true },
+        },
       },
       orderBy: { id: "asc" },
     }),
   ]);
+  const primaryReceiptIdsByEventId = new Map(
+    events.map((event) => [
+      event.id,
+      [...new Set(event.documentLinks.map((link) => link.receiptId))].sort(
+        (a, b) => a - b,
+      ),
+    ]),
+  );
+
+  const candidates: BankFinancialEventCandidateProjection[] =
+    buildBankFinancialEventCandidates(
+      bankAccount,
+      transactions.map((bank) => ({
+        ...bank,
+        amount: bank.amount.toString(),
+      })),
+      events.map((event) => ({
+        id: event.id,
+        companyId: event.companyId,
+        eventType: event.eventType,
+        amount: event.amount?.toString() ?? null,
+        eventDate: event.eventDate,
+        externalReference: event.externalReference,
+        currency: event.currency,
+      })),
+    ).map((candidate) => ({
+      ...candidate,
+      primaryReceiptIds:
+        primaryReceiptIdsByEventId.get(candidate.eventId) ?? [],
+    }));
+
   // No status filtering: OPEN does not establish an unpaid balance.
   return {
     ok: true as const,
     kind: "BANK_TO_FINANCIAL_EVENT" as const,
     bankAccountId: bankAccount.id,
     companyId: bankAccount.companyId,
-    candidates: buildBankFinancialEventCandidates(
-      bankAccount,
-      transactions.map((bank) => ({ ...bank, amount: bank.amount.toString() })),
-      events.map((event) => ({ ...event, amount: event.amount?.toString() ?? null })),
-    ),
+    candidates,
   };
 }
 
@@ -120,6 +160,10 @@ export async function getConfirmedBankFinancialEventLinks(
             eventType: true,
             eventDate: true,
             externalReference: true,
+            documentLinks: {
+              where: { role: "PRIMARY" },
+              select: { receiptId: true },
+            },
           },
         },
       },
@@ -223,6 +267,11 @@ export async function getConfirmedBankFinancialEventLinks(
       eventDate: payment.event.eventDate,
       externalReference: payment.event.externalReference,
       confirmedAt: reconciliation.confirmedAt ?? payment.confirmedAt,
+      primaryReceiptIds: [
+        ...new Set(
+          payment.event.documentLinks.map((link) => link.receiptId),
+        ),
+      ].sort((a, b) => a - b),
     });
   }
 

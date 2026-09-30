@@ -32,6 +32,13 @@ const text = {
     financialEventCandidates: "Tillögur að fjárhagsatburði",
     financialEventCandidateHelp:
       "Þetta eru mögulegar tengingar við fjárhagsatburði. Engin tenging verður til fyrr en hún er staðfest sérstaklega.",
+    financialEventCandidateBadge: "Mögulegur fjárhagsatburður",
+    obligationPaymentCandidateBadge: "Möguleg greiðsla",
+    obligationPaymentCandidateTitle: "Möguleg greiðsla skuldbindingar",
+    obligationPaymentCandidateHelp:
+      "Fjárhagsatburðurinn og bókunartillagan rekja sig að sama fylgiskjali. Ein staðfesting tengir bankafærsluna við skuldbindinguna.",
+    sourceReceipt: "Fylgiskjal",
+    bookingEvidence: "Bókunargögn úr sama fylgiskjali",
     financialEvent: "Fjárhagsatburður",
     eventCharge: "Skuldfærsla",
     eventCredit: "Inneign",
@@ -42,6 +49,8 @@ const text = {
     referenceAlsoMatches: "Tilvísun bankafærslu stemmir einnig.",
     confirmEventMatch: "Staðfesta tengingu",
     confirmingEventMatch: "Staðfesti…",
+    confirmObligationPayment: "Staðfesta greiðslu",
+    confirmingObligationPayment: "Staðfesti greiðslu…",
     eventMatchConfirmedBadge: "Tenging staðfest",
     eventMatchConfirmed: "Tenging staðfest",
     eventMatchConfirmedHelp:
@@ -80,6 +89,13 @@ const text = {
     financialEventCandidates: "Financial event suggestions",
     financialEventCandidateHelp:
       "These are possible links to financial events. No link is created until it is explicitly confirmed.",
+    financialEventCandidateBadge: "Possible financial event",
+    obligationPaymentCandidateBadge: "Possible payment",
+    obligationPaymentCandidateTitle: "Possible obligation payment",
+    obligationPaymentCandidateHelp:
+      "The financial event and booking suggestion come from the same source document. One confirmation links the bank transaction to the obligation.",
+    sourceReceipt: "Source receipt",
+    bookingEvidence: "Booking evidence from the same receipt",
     financialEvent: "Financial event",
     eventCharge: "Charge",
     eventCredit: "Credit",
@@ -90,6 +106,8 @@ const text = {
     referenceAlsoMatches: "The bank-transaction reference also matches.",
     confirmEventMatch: "Confirm link",
     confirmingEventMatch: "Confirming…",
+    confirmObligationPayment: "Confirm payment",
+    confirmingObligationPayment: "Confirming payment…",
     eventMatchConfirmedBadge: "Link confirmed",
     eventMatchConfirmed: "Link confirmed",
     eventMatchConfirmedHelp:
@@ -128,6 +146,13 @@ const text = {
     financialEventCandidates: "Sugestie zdarzeń finansowych",
     financialEventCandidateHelp:
       "To są możliwe powiązania ze zdarzeniami finansowymi. Powiązanie nie zostanie utworzone bez wyraźnego potwierdzenia.",
+    financialEventCandidateBadge: "Możliwe zdarzenie finansowe",
+    obligationPaymentCandidateBadge: "Możliwa płatność",
+    obligationPaymentCandidateTitle: "Możliwa płatność zobowiązania",
+    obligationPaymentCandidateHelp:
+      "Zdarzenie finansowe i sugestia księgowania pochodzą z tego samego dokumentu. Jedno potwierdzenie łączy transakcję bankową ze zobowiązaniem.",
+    sourceReceipt: "Dokument źródłowy",
+    bookingEvidence: "Dane księgowe z tego samego dokumentu",
     financialEvent: "Zdarzenie finansowe",
     eventCharge: "Obciążenie",
     eventCredit: "Uznanie",
@@ -138,6 +163,8 @@ const text = {
     referenceAlsoMatches: "Referencja transakcji bankowej również jest zgodna.",
     confirmEventMatch: "Potwierdź powiązanie",
     confirmingEventMatch: "Potwierdzanie…",
+    confirmObligationPayment: "Potwierdź płatność",
+    confirmingObligationPayment: "Potwierdzanie płatności…",
     eventMatchConfirmedBadge: "Powiązanie potwierdzone",
     eventMatchConfirmed: "Powiązanie potwierdzone",
     eventMatchConfirmedHelp:
@@ -176,6 +203,13 @@ const text = {
     financialEventCandidates: "Предлози финансијских догађаја",
     financialEventCandidateHelp:
       "Ово су могуће везе са финансијским догађајима. Веза се не прави док се изричито не потврди.",
+    financialEventCandidateBadge: "Могући финансијски догађај",
+    obligationPaymentCandidateBadge: "Могућа уплата",
+    obligationPaymentCandidateTitle: "Могућа уплата обавезе",
+    obligationPaymentCandidateHelp:
+      "Финансијски догађај и предлог књижења потичу из истог документа. Једна потврда повезује банковну трансакцију са обавезом.",
+    sourceReceipt: "Изворни документ",
+    bookingEvidence: "Књиговодствени подаци из истог документа",
     financialEvent: "Финансијски догађај",
     eventCharge: "Задужење",
     eventCredit: "Одобрење",
@@ -186,6 +220,8 @@ const text = {
     referenceAlsoMatches: "Референца банковне трансакције се такође поклапа.",
     confirmEventMatch: "Потврди везу",
     confirmingEventMatch: "Потврђивање…",
+    confirmObligationPayment: "Потврди уплату",
+    confirmingObligationPayment: "Потврђивање уплате…",
     eventMatchConfirmedBadge: "Веза потврђена",
     eventMatchConfirmed: "Веза потврђена",
     eventMatchConfirmedHelp:

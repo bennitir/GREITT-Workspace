@@ -1,12 +1,15 @@
 import { ConfirmFinancialEventMatchForm } from "@/app/banki/[id]/afstemming/ConfirmFinancialEventMatchForm";
 import { bankReconciliationText } from "@/app/banki/_lib/i18n/reconciliation-text";
 import type { CandidateReason } from "@/lib/financial-reconciliation/candidates";
-import type { BankFinancialEventCandidate } from "@/lib/financial-reconciliation/event-candidates";
 import {
   getBankFinancialEventCandidates,
   getConfirmedBankFinancialEventLinks,
+  type BankFinancialEventCandidateProjection,
   type ConfirmedBankFinancialEventLink,
 } from "@/lib/financial-reconciliation/event-service";
+import {
+  combineBankReconciliationCandidates,
+} from "@/lib/financial-reconciliation/cross-layer";
 import { getBankBookingReconciliation } from "@/lib/financial-reconciliation/service";
 import { getCompanyAccess } from "@/lib/core/access-control";
 import { getCurrentInterfaceLanguage } from "@/lib/i18n/current-language";
@@ -138,7 +141,7 @@ export default async function AfstemmingPage({ params }: Props) {
 
   const eventCandidatesByTransactionId = new Map<
     number,
-    BankFinancialEventCandidate[]
+    BankFinancialEventCandidateProjection[]
   >();
 
   if (eventCandidateResult.ok) {
@@ -190,7 +193,7 @@ export default async function AfstemmingPage({ params }: Props) {
   }
 
   function eventReasonText(
-    reason: BankFinancialEventCandidate["reason"]
+    reason: BankFinancialEventCandidateProjection["reason"]
   ) {
     return reason === "EXACT_EVENT_AMOUNT_NEAR_DATE"
       ? t.eventNearDate
@@ -287,7 +290,7 @@ export default async function AfstemmingPage({ params }: Props) {
               const state =
                 resolution?.state ?? "NONE";
 
-              const candidates =
+              const bookingCandidates =
                 state === "UNIQUE_STRONG" ||
                 state === "AMBIGUOUS_STRONG"
                   ? resolution?.strongCandidates ?? []
@@ -307,6 +310,30 @@ export default async function AfstemmingPage({ params }: Props) {
                       transaction.id
                     ) ?? [];
 
+              const crossLayer = combineBankReconciliationCandidates(
+                bookingCandidates,
+                eventCandidates,
+              );
+              const confirmedReceiptIds = new Set(
+                confirmedEventLinks.flatMap(
+                  (link) => link.primaryReceiptIds,
+                ),
+              );
+              const candidates =
+                crossLayer.standaloneBookingCandidates.filter(
+                  (candidate) =>
+                    !confirmedReceiptIds.has(candidate.receiptId),
+                );
+              const eventGroups = crossLayer.eventGroups;
+              const hasCrossLayerCandidate = eventGroups.some(
+                (group) => group.bookingCandidates.length > 0,
+              );
+              const allEventGroupsCrossLayer =
+                eventGroups.length > 0 &&
+                eventGroups.every(
+                  (group) => group.bookingCandidates.length > 0,
+                );
+
               const badge =
                 confirmedEventLinks.length > 0
                   ? {
@@ -314,29 +341,41 @@ export default async function AfstemmingPage({ params }: Props) {
                       className:
                         "bg-emerald-100 text-emerald-800",
                     }
-                  : state === "UNIQUE_STRONG"
-                  ? {
-                      text: t.strongBadge,
-                      className:
-                        "bg-green-100 text-green-700",
-                    }
-                  : state === "POSSIBLE"
+                  : hasCrossLayerCandidate
                     ? {
-                        text: t.possibleBadge,
+                        text: t.obligationPaymentCandidateBadge,
                         className:
-                          "bg-amber-100 text-amber-800",
+                          "bg-indigo-100 text-indigo-800",
                       }
-                    : state === "AMBIGUOUS_STRONG"
+                    : state === "UNIQUE_STRONG"
                       ? {
-                          text: t.ambiguousBadge,
+                          text: t.strongBadge,
                           className:
-                            "bg-orange-100 text-orange-800",
+                            "bg-green-100 text-green-700",
                         }
-                      : {
-                          text: t.noneBadge,
-                          className:
-                            "bg-gray-100 text-gray-700",
-                        };
+                      : state === "POSSIBLE"
+                        ? {
+                            text: t.possibleBadge,
+                            className:
+                              "bg-amber-100 text-amber-800",
+                          }
+                        : state === "AMBIGUOUS_STRONG"
+                          ? {
+                              text: t.ambiguousBadge,
+                              className:
+                                "bg-orange-100 text-orange-800",
+                            }
+                          : eventGroups.length > 0
+                            ? {
+                                text: t.financialEventCandidateBadge,
+                                className:
+                                  "bg-indigo-100 text-indigo-800",
+                              }
+                            : {
+                                text: t.noneBadge,
+                                className:
+                                  "bg-gray-100 text-gray-700",
+                              };
 
               return (
                 <div
@@ -435,6 +474,13 @@ export default async function AfstemmingPage({ params }: Props) {
                                 {t.reference}: {link.externalReference}
                               </p>
                             ) : null}
+                            {link.primaryReceiptIds.length > 0 ? (
+                              <p className="mt-1 text-gray-600">
+                                {t.sourceReceipt}: {link.primaryReceiptIds
+                                  .map((receiptId) => `#${receiptId}`)
+                                  .join(", ")}
+                              </p>
+                            ) : null}
                             {link.confirmedAt ? (
                               <p className="mt-2 font-medium text-emerald-800">
                                 {t.confirmedOn}: {formatReconciliationDate(link.confirmedAt)}
@@ -444,64 +490,127 @@ export default async function AfstemmingPage({ params }: Props) {
                         ))}
                       </div>
                     </div>
-                  ) : eventCandidates.length > 0 ? (
+                  ) : eventGroups.length > 0 ? (
                     <div className="mt-3 rounded-lg border border-indigo-200 bg-indigo-50 p-3">
                       <p className="text-sm font-semibold text-indigo-900">
-                        {t.financialEventCandidates}
+                        {allEventGroupsCrossLayer
+                          ? t.obligationPaymentCandidateTitle
+                          : t.financialEventCandidates}
                       </p>
                       <p className="mt-1 text-xs text-indigo-800">
-                        {t.financialEventCandidateHelp}
+                        {allEventGroupsCrossLayer
+                          ? t.obligationPaymentCandidateHelp
+                          : t.financialEventCandidateHelp}
                       </p>
 
                       <div className="mt-3 space-y-2">
-                        {eventCandidates.map((candidate) => (
-                          <div
-                            key={`${candidate.bankTransactionId}-${candidate.eventId}`}
-                            className="rounded-lg border border-indigo-200 bg-white p-3 text-sm"
-                          >
-                            <div className="flex flex-wrap items-start justify-between gap-3">
-                              <div>
-                                <p className="font-medium">
-                                  {t.financialEvent} #{candidate.eventId}
-                                  {" · "}
-                                  {candidate.eventType === "CHARGE"
-                                    ? t.eventCharge
-                                    : t.eventCredit}
-                                </p>
-                                <p className="mt-1 text-gray-700">
-                                  {eventReasonText(candidate.reason)}
-                                </p>
-                                <p className="mt-1 text-gray-600">
-                                  {formatReconciliationDate(candidate.eventDate)}
-                                  {" · "}
-                                  {candidate.eventAmount} kr.
-                                </p>
-                                {candidate.externalReference ? (
+                        {eventGroups.map((group) => {
+                          const candidate = group.eventCandidate;
+
+                          return (
+                            <div
+                              key={`${candidate.bankTransactionId}-${candidate.eventId}`}
+                              className="rounded-lg border border-indigo-200 bg-white p-3 text-sm"
+                            >
+                              <div className="flex flex-wrap items-start justify-between gap-3">
+                                <div className="min-w-0 flex-1">
+                                  <p className="font-medium">
+                                    {t.financialEvent} #{candidate.eventId}
+                                    {" · "}
+                                    {candidate.eventType === "CHARGE"
+                                      ? t.eventCharge
+                                      : t.eventCredit}
+                                  </p>
+                                  <p className="mt-1 text-gray-700">
+                                    {eventReasonText(candidate.reason)}
+                                  </p>
                                   <p className="mt-1 text-gray-600">
-                                    {t.reference}: {candidate.externalReference}
+                                    {formatReconciliationDate(
+                                      candidate.eventDate,
+                                    )}
+                                    {" · "}
+                                    {formatFinancialEventAmount(
+                                      candidate.eventAmount,
+                                      "ISK",
+                                    )}
                                   </p>
-                                ) : null}
-                                {candidate.evidence.includes(
-                                  "EXACT_EVENT_REFERENCE"
-                                ) ? (
-                                  <p className="mt-1 font-medium text-indigo-800">
-                                    {t.referenceAlsoMatches}
-                                  </p>
+                                  {candidate.externalReference ? (
+                                    <p className="mt-1 text-gray-600">
+                                      {t.reference}: {candidate.externalReference}
+                                    </p>
+                                  ) : null}
+                                  {group.sharedReceiptIds.length > 0 ? (
+                                    <p className="mt-1 font-medium text-indigo-800">
+                                      {t.sourceReceipt}: {group.sharedReceiptIds
+                                        .map((receiptId) => `#${receiptId}`)
+                                        .join(", ")}
+                                    </p>
+                                  ) : null}
+                                  {candidate.evidence.includes(
+                                    "EXACT_EVENT_REFERENCE"
+                                  ) ? (
+                                    <p className="mt-1 font-medium text-indigo-800">
+                                      {t.referenceAlsoMatches}
+                                    </p>
+                                  ) : null}
+
+                                  {group.bookingCandidates.length > 0 ? (
+                                    <div className="mt-3 rounded-lg border border-gray-200 bg-gray-50 p-3">
+                                      <p className="font-medium text-gray-800">
+                                        {t.bookingEvidence}
+                                      </p>
+                                      <div className="mt-2 space-y-2">
+                                        {group.bookingCandidates.map(
+                                          (bookingCandidate) => (
+                                            <div
+                                              key={bookingCandidate.receiptEntryId}
+                                              className="text-gray-700"
+                                            >
+                                              <p>
+                                                {bookingCandidate.entryText ||
+                                                  bookingCandidate.description ||
+                                                  "—"}
+                                              </p>
+                                              <p className="mt-1 text-gray-600">
+                                                {t.account}: {" "}
+                                                <strong>
+                                                  {bookingCandidate.account}
+                                                </strong>
+                                                {" · "}
+                                                {formatNumber(
+                                                  bookingCandidate.bookingAmount,
+                                                )}{" "}
+                                                kr.
+                                              </p>
+                                            </div>
+                                          ),
+                                        )}
+                                      </div>
+                                    </div>
+                                  ) : null}
+                                </div>
+
+                                {access.canReconcileBookkeeping ? (
+                                  <ConfirmFinancialEventMatchForm
+                                    companyId={activeCompanyId}
+                                    bankTransactionId={transaction.id}
+                                    eventId={candidate.eventId}
+                                    confirmLabel={
+                                      group.bookingCandidates.length > 0
+                                        ? t.confirmObligationPayment
+                                        : t.confirmEventMatch
+                                    }
+                                    pendingLabel={
+                                      group.bookingCandidates.length > 0
+                                        ? t.confirmingObligationPayment
+                                        : t.confirmingEventMatch
+                                    }
+                                  />
                                 ) : null}
                               </div>
-
-                              {access.canReconcileBookkeeping ? (
-                                <ConfirmFinancialEventMatchForm
-                                  companyId={activeCompanyId}
-                                  bankTransactionId={transaction.id}
-                                  eventId={candidate.eventId}
-                                  confirmLabel={t.confirmEventMatch}
-                                  pendingLabel={t.confirmingEventMatch}
-                                />
-                              ) : null}
                             </div>
-                          </div>
-                        ))}
+                          );
+                        })}
                       </div>
                     </div>
                   ) : null}
