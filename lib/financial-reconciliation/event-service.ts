@@ -3,10 +3,14 @@ import {
   buildBankFinancialEventCandidates,
   type BankFinancialEventCandidate,
 } from "./event-candidates";
+import type {
+  FinancialEventSourceDocumentContext,
+} from "./document-context";
 
 export type BankFinancialEventCandidateProjection =
   BankFinancialEventCandidate & {
     primaryReceiptIds: number[];
+    sourceDocuments: FinancialEventSourceDocumentContext[];
   };
 
 export type ConfirmedBankFinancialEventLink = {
@@ -21,6 +25,7 @@ export type ConfirmedBankFinancialEventLink = {
   externalReference: string | null;
   confirmedAt: Date | null;
   primaryReceiptIds: number[];
+  sourceDocuments: FinancialEventSourceDocumentContext[];
 };
 
 /** Internal read-only service. The caller must authorize access to companyId. */
@@ -51,18 +56,56 @@ export async function getBankFinancialEventCandidates(bankAccountId: number, com
         eventDate: true, externalReference: true, currency: true,
         documentLinks: {
           where: { role: "PRIMARY" },
-          select: { receiptId: true },
+          select: {
+            receiptId: true,
+            receipt: {
+              select: { status: true },
+            },
+            document: {
+              select: {
+                id: true,
+                reviewedAt: true,
+                approvedAt: true,
+                documentType: true,
+                documentRole: true,
+                bookingEntries: {
+                  select: {
+                    id: true,
+                    account: true,
+                    text: true,
+                    debit: true,
+                    credit: true,
+                  },
+                  orderBy: { id: "asc" },
+                },
+              },
+            },
+          },
         },
       },
       orderBy: { id: "asc" },
     }),
   ]);
-  const primaryReceiptIdsByEventId = new Map(
+  const sourceDocumentsByEventId = new Map(
     events.map((event) => [
       event.id,
-      [...new Set(event.documentLinks.map((link) => link.receiptId))].sort(
-        (a, b) => a - b,
-      ),
+      event.documentLinks
+        .map((link) => ({
+          receiptId: link.receiptId,
+          receiptStatus: link.receipt.status,
+          documentId: link.document?.id ?? null,
+          reviewedAt: link.document?.reviewedAt ?? null,
+          approvedAt: link.document?.approvedAt ?? null,
+          documentType: link.document?.documentType ?? null,
+          documentRole: link.document?.documentRole ?? null,
+          bookingEntries: link.document?.bookingEntries ?? [],
+        }))
+        .sort(
+          (a, b) =>
+            a.receiptId - b.receiptId ||
+            (a.documentId ?? Number.MAX_SAFE_INTEGER) -
+              (b.documentId ?? Number.MAX_SAFE_INTEGER),
+        ),
     ]),
   );
 
@@ -82,11 +125,18 @@ export async function getBankFinancialEventCandidates(bankAccountId: number, com
         externalReference: event.externalReference,
         currency: event.currency,
       })),
-    ).map((candidate) => ({
-      ...candidate,
-      primaryReceiptIds:
-        primaryReceiptIdsByEventId.get(candidate.eventId) ?? [],
-    }));
+    ).map((candidate) => {
+      const sourceDocuments =
+        sourceDocumentsByEventId.get(candidate.eventId) ?? [];
+
+      return {
+        ...candidate,
+        primaryReceiptIds: [
+          ...new Set(sourceDocuments.map((source) => source.receiptId)),
+        ].sort((a, b) => a - b),
+        sourceDocuments,
+      };
+    });
 
   // No status filtering: OPEN does not establish an unpaid balance.
   return {
@@ -162,7 +212,31 @@ export async function getConfirmedBankFinancialEventLinks(
             externalReference: true,
             documentLinks: {
               where: { role: "PRIMARY" },
-              select: { receiptId: true },
+              select: {
+                receiptId: true,
+                receipt: {
+                  select: { status: true },
+                },
+                document: {
+                  select: {
+                    id: true,
+                    reviewedAt: true,
+                    approvedAt: true,
+                    documentType: true,
+                    documentRole: true,
+                    bookingEntries: {
+                      select: {
+                        id: true,
+                        account: true,
+                        text: true,
+                        debit: true,
+                        credit: true,
+                      },
+                      orderBy: { id: "asc" },
+                    },
+                  },
+                },
+              },
             },
           },
         },
@@ -256,6 +330,24 @@ export async function getConfirmedBankFinancialEventLinks(
       continue;
     }
 
+    const sourceDocuments = payment.event.documentLinks
+      .map((link) => ({
+        receiptId: link.receiptId,
+        receiptStatus: link.receipt.status,
+        documentId: link.document?.id ?? null,
+        reviewedAt: link.document?.reviewedAt ?? null,
+        approvedAt: link.document?.approvedAt ?? null,
+        documentType: link.document?.documentType ?? null,
+        documentRole: link.document?.documentRole ?? null,
+        bookingEntries: link.document?.bookingEntries ?? [],
+      }))
+      .sort(
+        (a, b) =>
+          a.receiptId - b.receiptId ||
+          (a.documentId ?? Number.MAX_SAFE_INTEGER) -
+            (b.documentId ?? Number.MAX_SAFE_INTEGER),
+      );
+
     links.push({
       bankTransactionId: payment.bankTransactionId,
       eventId: payment.eventId,
@@ -268,10 +360,9 @@ export async function getConfirmedBankFinancialEventLinks(
       externalReference: payment.event.externalReference,
       confirmedAt: reconciliation.confirmedAt ?? payment.confirmedAt,
       primaryReceiptIds: [
-        ...new Set(
-          payment.event.documentLinks.map((link) => link.receiptId),
-        ),
+        ...new Set(sourceDocuments.map((source) => source.receiptId)),
       ].sort((a, b) => a - b),
+      sourceDocuments,
     });
   }
 

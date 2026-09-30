@@ -10,6 +10,10 @@ import {
 import {
   combineBankReconciliationCandidates,
 } from "@/lib/financial-reconciliation/cross-layer";
+import {
+  getSourceDocumentBookingState,
+  hasPendingSourceDocumentBooking,
+} from "@/lib/financial-reconciliation/document-context";
 import { getBankBookingReconciliation } from "@/lib/financial-reconciliation/service";
 import { getCompanyAccess } from "@/lib/core/access-control";
 import { getCurrentInterfaceLanguage } from "@/lib/i18n/current-language";
@@ -325,13 +329,23 @@ export default async function AfstemmingPage({ params }: Props) {
                     !confirmedReceiptIds.has(candidate.receiptId),
                 );
               const eventGroups = crossLayer.eventGroups;
-              const hasCrossLayerCandidate = eventGroups.some(
-                (group) => group.bookingCandidates.length > 0,
+              const hasObligationContextCandidate = eventGroups.some(
+                (group) =>
+                  group.bookingCandidates.length > 0 ||
+                  group.eventCandidate.sourceDocuments.some(
+                    (sourceDocument) =>
+                      sourceDocument.bookingEntries.length > 0,
+                  ),
               );
-              const allEventGroupsCrossLayer =
+              const allEventGroupsHaveObligationContext =
                 eventGroups.length > 0 &&
                 eventGroups.every(
-                  (group) => group.bookingCandidates.length > 0,
+                  (group) =>
+                    group.bookingCandidates.length > 0 ||
+                    group.eventCandidate.sourceDocuments.some(
+                      (sourceDocument) =>
+                        sourceDocument.bookingEntries.length > 0,
+                    ),
                 );
 
               const badge =
@@ -341,7 +355,7 @@ export default async function AfstemmingPage({ params }: Props) {
                       className:
                         "bg-emerald-100 text-emerald-800",
                     }
-                  : hasCrossLayerCandidate
+                  : hasObligationContextCandidate
                     ? {
                         text: t.obligationPaymentCandidateBadge,
                         className:
@@ -450,7 +464,13 @@ export default async function AfstemmingPage({ params }: Props) {
                       </p>
 
                       <div className="mt-3 space-y-2">
-                        {confirmedEventLinks.map((link) => (
+                        {confirmedEventLinks.map((link) => {
+                          const pendingSourceDocuments =
+                            link.sourceDocuments.filter(
+                              hasPendingSourceDocumentBooking,
+                            );
+
+                          return (
                           <div
                             key={`${link.reconciliationId}-${link.paymentId}`}
                             className="rounded-lg border border-emerald-200 bg-white p-3 text-sm"
@@ -486,19 +506,74 @@ export default async function AfstemmingPage({ params }: Props) {
                                 {t.confirmedOn}: {formatReconciliationDate(link.confirmedAt)}
                               </p>
                             ) : null}
+
+                            {pendingSourceDocuments.length > 0 ? (
+                              <div className="mt-3 rounded-lg border border-amber-200 bg-amber-50 p-3 text-amber-950">
+                                <p className="font-semibold">
+                                  {t.bookingPendingAfterPayment}
+                                </p>
+                                <p className="mt-1 text-xs text-amber-800">
+                                  {t.bookingPendingAfterPaymentHelp}
+                                </p>
+                                <div className="mt-2 space-y-2">
+                                  {pendingSourceDocuments.map(
+                                    (sourceDocument) => {
+                                      const bookingState =
+                                        getSourceDocumentBookingState(
+                                          sourceDocument,
+                                        );
+                                      const statusText =
+                                        bookingState ===
+                                        "REVIEWED_NOT_BOOKED"
+                                          ? t.reviewedNotBooked
+                                          : t.notBooked;
+
+                                      return (
+                                        <div
+                                          key={`${sourceDocument.receiptId}-${sourceDocument.documentId ?? "none"}`}
+                                          className="rounded border border-amber-200 bg-white p-2"
+                                        >
+                                          <p className="font-medium">
+                                            {t.sourceReceipt} #{sourceDocument.receiptId}
+                                            {" · "}
+                                            {statusText}
+                                          </p>
+                                          <div className="mt-2 space-y-1 text-gray-700">
+                                            {sourceDocument.bookingEntries.map(
+                                              (entry) => (
+                                                <p key={entry.id}>
+                                                  <strong>{entry.account}</strong>
+                                                  {" · "}
+                                                  {entry.text}
+                                                  {" · "}
+                                                  {entry.debit > 0
+                                                    ? `${t.debit} ${formatNumber(entry.debit)} kr.`
+                                                    : `${t.credit} ${formatNumber(entry.credit)} kr.`}
+                                                </p>
+                                              ),
+                                            )}
+                                          </div>
+                                        </div>
+                                      );
+                                    },
+                                  )}
+                                </div>
+                              </div>
+                            ) : null}
                           </div>
-                        ))}
+                          );
+                        })}
                       </div>
                     </div>
                   ) : eventGroups.length > 0 ? (
                     <div className="mt-3 rounded-lg border border-indigo-200 bg-indigo-50 p-3">
                       <p className="text-sm font-semibold text-indigo-900">
-                        {allEventGroupsCrossLayer
+                        {allEventGroupsHaveObligationContext
                           ? t.obligationPaymentCandidateTitle
                           : t.financialEventCandidates}
                       </p>
                       <p className="mt-1 text-xs text-indigo-800">
-                        {allEventGroupsCrossLayer
+                        {allEventGroupsHaveObligationContext
                           ? t.obligationPaymentCandidateHelp
                           : t.financialEventCandidateHelp}
                       </p>
@@ -506,6 +581,15 @@ export default async function AfstemmingPage({ params }: Props) {
                       <div className="mt-3 space-y-2">
                         {eventGroups.map((group) => {
                           const candidate = group.eventCandidate;
+                          const sourceDocumentsWithBooking =
+                            candidate.sourceDocuments.filter(
+                              (sourceDocument) =>
+                                sourceDocument.bookingEntries.length > 0,
+                            );
+                          const hasPendingDocumentBooking =
+                            sourceDocumentsWithBooking.some(
+                              hasPendingSourceDocumentBooking,
+                            );
 
                           return (
                             <div
@@ -588,6 +672,77 @@ export default async function AfstemmingPage({ params }: Props) {
                                       </div>
                                     </div>
                                   ) : null}
+
+                                  {group.bookingCandidates.length === 0 &&
+                                  sourceDocumentsWithBooking.length > 0 ? (
+                                    <div
+                                      className={`mt-3 rounded-lg border p-3 ${
+                                        hasPendingDocumentBooking
+                                          ? "border-amber-200 bg-amber-50"
+                                          : "border-gray-200 bg-gray-50"
+                                      }`}
+                                    >
+                                      <p
+                                        className={`font-medium ${
+                                          hasPendingDocumentBooking
+                                            ? "text-amber-950"
+                                            : "text-gray-800"
+                                        }`}
+                                      >
+                                        {t.documentBookingEvidence}
+                                      </p>
+                                      <div className="mt-2 space-y-2">
+                                        {sourceDocumentsWithBooking.map(
+                                          (sourceDocument) => {
+                                            const bookingState =
+                                              getSourceDocumentBookingState(
+                                                sourceDocument,
+                                              );
+                                            const statusText =
+                                              bookingState === "BOOKED"
+                                                ? t.booked
+                                                : bookingState ===
+                                                    "REVIEWED_NOT_BOOKED"
+                                                  ? t.reviewedNotBooked
+                                                  : t.notBooked;
+
+                                            return (
+                                              <div
+                                                key={`${sourceDocument.receiptId}-${sourceDocument.documentId ?? "none"}`}
+                                                className="rounded border border-amber-200 bg-white p-2 text-gray-700"
+                                              >
+                                                <p className="font-medium text-gray-900">
+                                                  {t.sourceReceipt} #{sourceDocument.receiptId}
+                                                  {" · "}
+                                                  {statusText}
+                                                </p>
+                                                <div className="mt-2 space-y-1">
+                                                  {sourceDocument.bookingEntries.map(
+                                                    (entry) => (
+                                                      <p key={entry.id}>
+                                                        <strong>{entry.account}</strong>
+                                                        {" · "}
+                                                        {entry.text}
+                                                        {" · "}
+                                                        {entry.debit > 0
+                                                          ? `${t.debit} ${formatNumber(entry.debit)} kr.`
+                                                          : `${t.credit} ${formatNumber(entry.credit)} kr.`}
+                                                      </p>
+                                                    ),
+                                                  )}
+                                                </div>
+                                              </div>
+                                            );
+                                          },
+                                        )}
+                                      </div>
+                                      {hasPendingDocumentBooking ? (
+                                        <p className="mt-2 text-xs font-medium text-amber-900">
+                                          {t.paymentConfirmationDoesNotBook}
+                                        </p>
+                                      ) : null}
+                                    </div>
+                                  ) : null}
                                 </div>
 
                                 {access.canReconcileBookkeeping ? (
@@ -596,12 +751,14 @@ export default async function AfstemmingPage({ params }: Props) {
                                     bankTransactionId={transaction.id}
                                     eventId={candidate.eventId}
                                     confirmLabel={
-                                      group.bookingCandidates.length > 0
+                                      group.bookingCandidates.length > 0 ||
+                                      sourceDocumentsWithBooking.length > 0
                                         ? t.confirmObligationPayment
                                         : t.confirmEventMatch
                                     }
                                     pendingLabel={
-                                      group.bookingCandidates.length > 0
+                                      group.bookingCandidates.length > 0 ||
+                                      sourceDocumentsWithBooking.length > 0
                                         ? t.confirmingObligationPayment
                                         : t.confirmingEventMatch
                                     }
