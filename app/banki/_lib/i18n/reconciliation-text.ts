@@ -41,6 +41,12 @@ const text = {
     reference: "Tilvísun",
     referenceAlsoMatches: "Tilvísun bankafærslu stemmir einnig.",
     confirmEventMatch: "Staðfesta tengingu",
+    confirmingEventMatch: "Staðfesti…",
+    eventMatchConfirmedBadge: "Tenging staðfest",
+    eventMatchConfirmed: "Tenging staðfest",
+    eventMatchConfirmedHelp:
+      "Þessi bankafærsla er staðfest tengd við fjárhagsatburð.",
+    confirmedOn: "Staðfest",
   },
 
   en: {
@@ -83,6 +89,12 @@ const text = {
     reference: "Reference",
     referenceAlsoMatches: "The bank-transaction reference also matches.",
     confirmEventMatch: "Confirm link",
+    confirmingEventMatch: "Confirming…",
+    eventMatchConfirmedBadge: "Link confirmed",
+    eventMatchConfirmed: "Link confirmed",
+    eventMatchConfirmedHelp:
+      "This bank transaction is confirmed as linked to a financial event.",
+    confirmedOn: "Confirmed",
   },
 
   pl: {
@@ -125,6 +137,12 @@ const text = {
     reference: "Referencja",
     referenceAlsoMatches: "Referencja transakcji bankowej również jest zgodna.",
     confirmEventMatch: "Potwierdź powiązanie",
+    confirmingEventMatch: "Potwierdzanie…",
+    eventMatchConfirmedBadge: "Powiązanie potwierdzone",
+    eventMatchConfirmed: "Powiązanie potwierdzone",
+    eventMatchConfirmedHelp:
+      "Ta transakcja bankowa jest potwierdzona jako powiązana ze zdarzeniem finansowym.",
+    confirmedOn: "Potwierdzono",
   },
 
   sr: {
@@ -167,6 +185,12 @@ const text = {
     reference: "Референца",
     referenceAlsoMatches: "Референца банковне трансакције се такође поклапа.",
     confirmEventMatch: "Потврди везу",
+    confirmingEventMatch: "Потврђивање…",
+    eventMatchConfirmedBadge: "Веза потврђена",
+    eventMatchConfirmed: "Веза потврђена",
+    eventMatchConfirmedHelp:
+      "Ова банкарска трансакција је потврђено повезана са финансијским догађајем.",
+    confirmedOn: "Потврђено",
   },
 } as const satisfies Record<UiLanguage, object>;
 

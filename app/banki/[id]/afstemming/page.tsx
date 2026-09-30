@@ -1,15 +1,16 @@
-import { confirmBankFinancialEventPayment } from "@/app/banki/actions";
+import { ConfirmFinancialEventMatchForm } from "@/app/banki/[id]/afstemming/ConfirmFinancialEventMatchForm";
 import { bankReconciliationText } from "@/app/banki/_lib/i18n/reconciliation-text";
 import type { CandidateReason } from "@/lib/financial-reconciliation/candidates";
 import type { BankFinancialEventCandidate } from "@/lib/financial-reconciliation/event-candidates";
-import { getBankFinancialEventCandidates } from "@/lib/financial-reconciliation/event-service";
+import {
+  getBankFinancialEventCandidates,
+  getConfirmedBankFinancialEventLinks,
+  type ConfirmedBankFinancialEventLink,
+} from "@/lib/financial-reconciliation/event-service";
 import { getBankBookingReconciliation } from "@/lib/financial-reconciliation/service";
 import { getCompanyAccess } from "@/lib/core/access-control";
 import { getCurrentInterfaceLanguage } from "@/lib/i18n/current-language";
-import {
-  formatDate,
-  formatNumber,
-} from "@/lib/locale";
+import { formatNumber } from "@/lib/locale";
 import { cookies } from "next/headers";
 import { notFound } from "next/navigation";
 import { prisma } from "@/lib/prisma";
@@ -19,6 +20,21 @@ type Props = {
     id: string;
   }>;
 };
+
+function formatReconciliationDate(value: Date) {
+  return new Intl.DateTimeFormat("is-IS", {
+    day: "2-digit",
+    month: "2-digit",
+    year: "numeric",
+  }).format(value);
+}
+
+function formatFinancialEventAmount(amount: string, currency: string) {
+  const formattedAmount = formatNumber(Number(amount));
+  return currency === "ISK"
+    ? `${formattedAmount} kr.`
+    : `${formattedAmount} ${currency}`;
+}
 
 export default async function AfstemmingPage({ params }: Props) {
   const { id } = await params;
@@ -57,17 +73,24 @@ export default async function AfstemmingPage({ params }: Props) {
 
   const t = bankReconciliationText(language);
 
-  const [reconciliation, eventCandidateResult] =
-    await Promise.all([
-      getBankBookingReconciliation(
-        bankAccountId,
-        activeCompanyId
-      ),
-      getBankFinancialEventCandidates(
-        bankAccountId,
-        activeCompanyId
-      ),
-    ]);
+  const [
+    reconciliation,
+    eventCandidateResult,
+    confirmedEventLinkResult,
+  ] = await Promise.all([
+    getBankBookingReconciliation(
+      bankAccountId,
+      activeCompanyId
+    ),
+    getBankFinancialEventCandidates(
+      bankAccountId,
+      activeCompanyId
+    ),
+    getConfirmedBankFinancialEventLinks(
+      bankAccountId,
+      activeCompanyId
+    ),
+  ]);
 
   if (!reconciliation.ok) {
     const isNotLinked =
@@ -125,6 +148,22 @@ export default async function AfstemmingPage({ params }: Props) {
           candidate.bankTransactionId
         ) ?? []),
         candidate,
+      ]);
+    }
+  }
+
+  const confirmedEventLinksByTransactionId = new Map<
+    number,
+    ConfirmedBankFinancialEventLink[]
+  >();
+
+  if (confirmedEventLinkResult.ok) {
+    for (const link of confirmedEventLinkResult.links) {
+      confirmedEventLinksByTransactionId.set(link.bankTransactionId, [
+        ...(confirmedEventLinksByTransactionId.get(
+          link.bankTransactionId
+        ) ?? []),
+        link,
       ]);
     }
   }
@@ -256,13 +295,26 @@ export default async function AfstemmingPage({ params }: Props) {
                     ? resolution?.possibleCandidates ?? []
                     : [];
 
-              const eventCandidates =
-                eventCandidatesByTransactionId.get(
+              const confirmedEventLinks =
+                confirmedEventLinksByTransactionId.get(
                   transaction.id
                 ) ?? [];
 
+              const eventCandidates =
+                confirmedEventLinks.length > 0
+                  ? []
+                  : eventCandidatesByTransactionId.get(
+                      transaction.id
+                    ) ?? [];
+
               const badge =
-                state === "UNIQUE_STRONG"
+                confirmedEventLinks.length > 0
+                  ? {
+                      text: t.eventMatchConfirmedBadge,
+                      className:
+                        "bg-emerald-100 text-emerald-800",
+                    }
+                  : state === "UNIQUE_STRONG"
                   ? {
                       text: t.strongBadge,
                       className:
@@ -298,7 +350,7 @@ export default async function AfstemmingPage({ params }: Props) {
                       </p>
 
                       <p className="mt-1 text-sm text-gray-600">
-                        {formatDate(transaction.date)}
+                        {formatReconciliationDate(transaction.date)}
                       </p>
                     </div>
 
@@ -349,7 +401,50 @@ export default async function AfstemmingPage({ params }: Props) {
                     </div>
                   ) : null}
 
-                  {eventCandidates.length > 0 ? (
+                  {confirmedEventLinks.length > 0 ? (
+                    <div className="mt-3 rounded-lg border border-emerald-200 bg-emerald-50 p-3">
+                      <p className="text-sm font-semibold text-emerald-900">
+                        {t.eventMatchConfirmed}
+                      </p>
+                      <p className="mt-1 text-xs text-emerald-800">
+                        {t.eventMatchConfirmedHelp}
+                      </p>
+
+                      <div className="mt-3 space-y-2">
+                        {confirmedEventLinks.map((link) => (
+                          <div
+                            key={`${link.reconciliationId}-${link.paymentId}`}
+                            className="rounded-lg border border-emerald-200 bg-white p-3 text-sm"
+                          >
+                            <p className="font-medium text-emerald-950">
+                              {t.financialEvent} #{link.eventId}
+                              {" · "}
+                              {link.eventType === "CHARGE"
+                                ? t.eventCharge
+                                : t.eventCredit}
+                            </p>
+                            <p className="mt-1 text-gray-600">
+                              {link.eventDate
+                                ? formatReconciliationDate(link.eventDate)
+                                : "—"}
+                              {" · "}
+                              {formatFinancialEventAmount(link.amount, link.currency)}
+                            </p>
+                            {link.externalReference ? (
+                              <p className="mt-1 text-gray-600">
+                                {t.reference}: {link.externalReference}
+                              </p>
+                            ) : null}
+                            {link.confirmedAt ? (
+                              <p className="mt-2 font-medium text-emerald-800">
+                                {t.confirmedOn}: {formatReconciliationDate(link.confirmedAt)}
+                              </p>
+                            ) : null}
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  ) : eventCandidates.length > 0 ? (
                     <div className="mt-3 rounded-lg border border-indigo-200 bg-indigo-50 p-3">
                       <p className="text-sm font-semibold text-indigo-900">
                         {t.financialEventCandidates}
@@ -377,7 +472,7 @@ export default async function AfstemmingPage({ params }: Props) {
                                   {eventReasonText(candidate.reason)}
                                 </p>
                                 <p className="mt-1 text-gray-600">
-                                  {formatDate(candidate.eventDate)}
+                                  {formatReconciliationDate(candidate.eventDate)}
                                   {" · "}
                                   {candidate.eventAmount} kr.
                                 </p>
@@ -396,31 +491,13 @@ export default async function AfstemmingPage({ params }: Props) {
                               </div>
 
                               {access.canReconcileBookkeeping ? (
-                                <form
-                                  action={confirmBankFinancialEventPayment}
-                                >
-                                  <input
-                                    type="hidden"
-                                    name="companyId"
-                                    value={activeCompanyId}
-                                  />
-                                  <input
-                                    type="hidden"
-                                    name="bankTransactionId"
-                                    value={transaction.id}
-                                  />
-                                  <input
-                                    type="hidden"
-                                    name="eventId"
-                                    value={candidate.eventId}
-                                  />
-                                  <button
-                                    type="submit"
-                                    className="rounded-lg bg-indigo-700 px-3 py-2 text-sm font-semibold text-white hover:bg-indigo-800"
-                                  >
-                                    {t.confirmEventMatch}
-                                  </button>
-                                </form>
+                                <ConfirmFinancialEventMatchForm
+                                  companyId={activeCompanyId}
+                                  bankTransactionId={transaction.id}
+                                  eventId={candidate.eventId}
+                                  confirmLabel={t.confirmEventMatch}
+                                  pendingLabel={t.confirmingEventMatch}
+                                />
                               ) : null}
                             </div>
                           </div>
