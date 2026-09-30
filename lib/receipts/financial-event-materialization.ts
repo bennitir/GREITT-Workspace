@@ -3,6 +3,17 @@ import {
   extractSourceDocumentTemporalContext,
 } from "@/lib/financial-reconciliation/source-document-temporal";
 
+export const MATERIALIZATION_REJECTION = {
+  DOCUMENT_ROLE_INELIGIBLE: "DOCUMENT_ROLE_INELIGIBLE",
+  MANUAL_CLASSIFICATION_EXCLUDED: "MANUAL_CLASSIFICATION_EXCLUDED",
+  DOCUMENT_AMOUNT_INVALID: "DOCUMENT_AMOUNT_INVALID",
+  PAYMENT_SCHEDULE_SEPARATE_FLOW: "PAYMENT_SCHEDULE_SEPARATE_FLOW",
+  INVOICE_LINK_COUNT_NOT_ONE: "INVOICE_LINK_COUNT_NOT_ONE",
+  DOCUMENT_TYPE_UNSUPPORTED: "DOCUMENT_TYPE_UNSUPPORTED",
+} as const;
+export type MaterializationRejection = typeof MATERIALIZATION_REJECTION[keyof typeof MATERIALIZATION_REJECTION];
+const D = MATERIALIZATION_REJECTION;
+
 type BookingEntry = { account: string; text?: string | null; debit: number; credit: number };
 type Entity = { id: number; entityType: string; identifierValue?: string | null };
 
@@ -23,25 +34,25 @@ export type ReviewedFinancialDocument = {
 
 const nonEmpty = (value?: string | null) => value?.trim() || null;
 
-export function decideReviewedFinancialEvent(document: ReviewedFinancialDocument) {
-  if (
-    document.documentRole !== "BOOKABLE" ||
-    document.classificationSource === "MANUAL" ||
-    typeof document.totalAmount !== "number" ||
-    !Number.isFinite(document.totalAmount) ||
-    Math.abs(document.totalAmount) === 0
-  ) return null;
+type MaterializationDecision = { eventType: "CHARGE" | "CREDIT"; amount: number; externalReference: string | null; counterpartyId: number | null };
+export function evaluateReviewedFinancialDocument(document: ReviewedFinancialDocument): {
+  decision: MaterializationDecision | null; reason: MaterializationRejection | null;
+} {
+  if (document.documentRole !== "BOOKABLE") return { decision: null, reason: D.DOCUMENT_ROLE_INELIGIBLE };
+  if (document.classificationSource === "MANUAL") return { decision: null, reason: D.MANUAL_CLASSIFICATION_EXCLUDED };
+  if (typeof document.totalAmount !== "number" || !Number.isFinite(document.totalAmount) || Math.abs(document.totalAmount) === 0)
+    return { decision: null, reason: D.DOCUMENT_AMOUNT_INVALID };
 
   const schedule = document.paymentSchedule;
   if (schedule && typeof schedule === "object" && !Array.isArray(schedule) &&
     "installments" in schedule && Array.isArray(schedule.installments) &&
-    schedule.installments.length > 0) return null;
+    schedule.installments.length > 0) return { decision: null, reason: D.PAYMENT_SCHEDULE_SEPARATE_FLOW };
 
   let eventType: "CHARGE" | "CREDIT";
   let externalReference: string | null;
   if (document.documentType === "ACCOUNTING_DOCUMENT") {
     const invoices = document.entityLinks.filter(({ entity }) => entity.entityType === "INVOICE");
-    if (invoices.length !== 1) return null;
+    if (invoices.length !== 1) return { decision: null, reason: D.INVOICE_LINK_COUNT_NOT_ONE };
     eventType = "CHARGE";
     externalReference = nonEmpty(invoices[0].entity.identifierValue);
   } else if (document.documentType === "CREDIT_NOTE") {
@@ -52,18 +63,22 @@ export function decideReviewedFinancialEvent(document: ReviewedFinancialDocument
     externalReference = credits.size === 1
       ? nonEmpty([...credits.values()][0].identifierValue)
       : nonEmpty(document.receiptNumber);
-  } else return null;
+  } else return { decision: null, reason: D.DOCUMENT_TYPE_UNSUPPORTED };
 
   const organizations = new Set(document.entityLinks
     .filter(({ entity }) => entity.entityType === "ORGANIZATION")
     .map(({ entity }) => entity.id));
 
-  return {
+  return { reason: null, decision: {
     eventType,
     amount: (eventType === "CREDIT" ? -1 : 1) * Math.abs(document.totalAmount),
     externalReference,
     counterpartyId: organizations.size === 1 ? [...organizations][0] : null,
-  };
+  } };
+}
+
+export function decideReviewedFinancialEvent(document: ReviewedFinancialDocument) {
+  return evaluateReviewedFinancialDocument(document).decision;
 }
 
 export async function findReviewedLiabilityAccount(

@@ -1,3 +1,4 @@
+import { MATCH_REJECTION as D, rejected, type RuleResult } from "./domain-rule-result";
 export type BankCandidateInput = {
   id: number;
   date: Date;
@@ -122,82 +123,88 @@ function partiesMatch(
   );
 }
 
+export function bookingBankRejection(bank: BankCandidateInput) {
+  return toMinorUnits(bank.amount) === null ? D.BANK_AMOUNT_INVALID : null;
+}
+
+export function evaluateBankBookingPair(bank: BankCandidateInput, booking: BookingCandidateInput): RuleResult<BankBookingCandidate> {
+  const bankMinor = toMinorUnits(bank.amount);
+  if (bankMinor === null) return rejected(D.BANK_AMOUNT_INVALID);
+  // Fyrir eignareikning banka:
+  // debit = innstreymi (+), credit = útstreymi (-).
+  // Þetta kemur í veg fyrir að mótbókunarlínan með gagnstæðu formerki
+  // verði tekin sem sami bankahreyfingarkandídat.
+  const bookingAmount = booking.debit - booking.credit;
+  const bookingMinor = toMinorUnits(bookingAmount);
+
+  if (bookingMinor === null) return rejected(D.BOOKING_AMOUNT_INVALID);
+  if (bookingMinor !== bankMinor) return rejected(D.BOOKING_SIGNED_AMOUNT_MISMATCH);
+
+  const partyMatch = partiesMatch(
+    bank.text,
+    booking.partyText
+  );
+  const distance = booking.date
+    ? daysBetween(bank.date, booking.date)
+    : null;
+
+  let strength: CandidateStrength | null = null;
+  let reason: CandidateReason | null = null;
+
+  if (distance === 0 && partyMatch) {
+    strength = "STRONG";
+    reason = "EXACT_DATE_AMOUNT_PARTY";
+  } else if (distance === 0) {
+    strength = "POSSIBLE";
+    reason = "EXACT_DATE_AMOUNT";
+  } else if (distance !== null && distance <= 3 && partyMatch) {
+    strength = "POSSIBLE";
+    reason = "NEAR_DATE_AMOUNT_PARTY";
+  } else if (
+    distance !== null &&
+    distance >= 4 &&
+    distance <= 30 &&
+    partyMatch
+  ) {
+    strength = "POSSIBLE";
+    reason = "EXTENDED_DATE_AMOUNT_PARTY";
+  } else if (distance === null && partyMatch) {
+    strength = "POSSIBLE";
+    reason = "NO_DATE_AMOUNT_PARTY";
+  }
+
+  if (!strength || !reason) return rejected(D.BOOKING_DATE_PARTY_REJECTED);
+
+  return {
+    candidate: {
+      bankTransactionId: bank.id,
+      receiptEntryId: booking.entryId,
+      receiptId: booking.receiptId,
+      voucherNumber: booking.voucherNumber,
+      account: booking.account,
+      entryText: booking.entryText,
+      description: booking.description,
+      bankAmount: Number(bank.amount),
+      bookingAmount,
+      dateDistanceDays: distance,
+      partyMatch,
+      strength,
+      reason,
+      mutuallyUnique: false,
+    },
+    rejection: null,
+  };
+}
+
 export function buildBankBookingCandidateGraph(
   bankTransactions: BankCandidateInput[],
   bookingEntries: BookingCandidateInput[]
 ): BankCandidateResolution[] {
   const rawCandidates: BankBookingCandidate[] = [];
-
   for (const bank of bankTransactions) {
-    const bankMinor = toMinorUnits(bank.amount);
-    if (bankMinor === null) continue;
-
     for (const booking of bookingEntries) {
-      // Fyrir eignareikning banka:
-      // debit = innstreymi (+), credit = útstreymi (-).
-      // Þetta kemur í veg fyrir að mótbókunarlínan með gagnstæðu formerki
-      // verði tekin sem sami bankahreyfingarkandídat.
-      const bookingAmount = booking.debit - booking.credit;
-      const bookingMinor = toMinorUnits(bookingAmount);
-
-      if (
-        bookingMinor === null ||
-        bookingMinor !== bankMinor
-      ) {
-        continue;
-      }
-
-      const partyMatch = partiesMatch(
-        bank.text,
-        booking.partyText
-      );
-      const distance = booking.date
-        ? daysBetween(bank.date, booking.date)
-        : null;
-
-      let strength: CandidateStrength | null = null;
-      let reason: CandidateReason | null = null;
-
-      if (distance === 0 && partyMatch) {
-        strength = "STRONG";
-        reason = "EXACT_DATE_AMOUNT_PARTY";
-      } else if (distance === 0) {
-        strength = "POSSIBLE";
-        reason = "EXACT_DATE_AMOUNT";
-      } else if (distance !== null && distance <= 3 && partyMatch) {
-        strength = "POSSIBLE";
-        reason = "NEAR_DATE_AMOUNT_PARTY";
-      } else if (
-        distance !== null &&
-        distance >= 4 &&
-        distance <= 30 &&
-        partyMatch
-      ) {
-        strength = "POSSIBLE";
-        reason = "EXTENDED_DATE_AMOUNT_PARTY";
-      } else if (distance === null && partyMatch) {
-        strength = "POSSIBLE";
-        reason = "NO_DATE_AMOUNT_PARTY";
-      }
-
-      if (!strength || !reason) continue;
-
-      rawCandidates.push({
-        bankTransactionId: bank.id,
-        receiptEntryId: booking.entryId,
-        receiptId: booking.receiptId,
-        voucherNumber: booking.voucherNumber,
-        account: booking.account,
-        entryText: booking.entryText,
-        description: booking.description,
-        bankAmount: Number(bank.amount),
-        bookingAmount,
-        dateDistanceDays: distance,
-        partyMatch,
-        strength,
-        reason,
-        mutuallyUnique: false,
-      });
+      const result = evaluateBankBookingPair(bank, booking);
+      if (result.candidate) rawCandidates.push(result.candidate);
     }
   }
 
