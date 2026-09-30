@@ -14,12 +14,20 @@ export type FinancialEventCandidateInput = {
   eventDate: Date | null;
   externalReference: string | null;
   currency: string;
+  primarySourceDocumentDates?: readonly Date[];
+  sourceDueDate?: Date | null;
+  sourceFinalDueDate?: Date | null;
 };
 
 export type FinancialEventCandidateReason =
   | "EXACT_EVENT_AMOUNT_NEAR_DATE"
   | "EXACT_EVENT_AMOUNT_EXTENDED_DATE"
   | "EXACT_EVENT_REFERENCE";
+
+export type BankFinancialEventCandidateEvidence =
+  | "EXACT_EVENT_REFERENCE"
+  | "BANK_DATE_EQUALS_DUE_DATE"
+  | "BANK_DATE_EQUALS_FINAL_DUE_DATE";
 
 export type BankFinancialEventCandidate = {
   bankTransactionId: number;
@@ -34,7 +42,7 @@ export type BankFinancialEventCandidate = {
   externalReference: string | null;
   bankReference: string | null;
   reason: Exclude<FinancialEventCandidateReason, "EXACT_EVENT_REFERENCE">;
-  evidence: Array<"EXACT_EVENT_REFERENCE">;
+  evidence: BankFinancialEventCandidateEvidence[];
   strength: "POSSIBLE";
 };
 
@@ -82,9 +90,39 @@ export function buildBankFinancialEventCandidates(
         (event.eventType === "CHARGE" && eventMinor <= BigInt(0)) ||
         (event.eventType === "CREDIT" && eventMinor >= BigInt(0))) continue;
 
-      const dateDistanceDays = Math.abs(dayOrdinal(bank.date) - dayOrdinal(event.eventDate));
+      const bankDay = dayOrdinal(bank.date);
+      const eventDay = dayOrdinal(event.eventDate);
+      const dateDistanceDays = Math.abs(bankDay - eventDay);
       if (dateDistanceDays > 30) continue;
+
       const reference = normalizeReference(event.externalReference);
+      const exactReference = Boolean(
+        reference && reference === normalizeReference(bank.reference),
+      );
+      const primarySourceDocumentDates = (event.primarySourceDocumentDates ?? [])
+        .filter((date) => Number.isFinite(date.getTime()));
+
+      // A reviewed CHARGE cannot ordinarily be paid before every known PRIMARY
+      // source document exists. Exact external-reference evidence is the one
+      // conservative exception because it can represent a documented prepayment.
+      if (
+        event.eventType === "CHARGE" &&
+        primarySourceDocumentDates.length > 0 &&
+        primarySourceDocumentDates.every((date) => dayOrdinal(date) > bankDay) &&
+        !exactReference
+      ) continue;
+
+      const evidence: BankFinancialEventCandidateEvidence[] = [];
+      if (exactReference) evidence.push("EXACT_EVENT_REFERENCE");
+      if (event.sourceDueDate && Number.isFinite(event.sourceDueDate.getTime()) &&
+        dayOrdinal(event.sourceDueDate) === bankDay) {
+        evidence.push("BANK_DATE_EQUALS_DUE_DATE");
+      }
+      if (event.sourceFinalDueDate && Number.isFinite(event.sourceFinalDueDate.getTime()) &&
+        dayOrdinal(event.sourceFinalDueDate) === bankDay) {
+        evidence.push("BANK_DATE_EQUALS_FINAL_DUE_DATE");
+      }
+
       candidates.push({
         bankTransactionId: bank.id,
         eventId: event.id,
@@ -99,8 +137,7 @@ export function buildBankFinancialEventCandidates(
         reason: dateDistanceDays <= 3
           ? "EXACT_EVENT_AMOUNT_NEAR_DATE"
           : "EXACT_EVENT_AMOUNT_EXTENDED_DATE",
-        evidence: reference && reference === normalizeReference(bank.reference)
-          ? ["EXACT_EVENT_REFERENCE"] : [],
+        evidence,
         strength: "POSSIBLE",
       });
     }

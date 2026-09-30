@@ -1,5 +1,8 @@
 import { Prisma, type PrismaClient } from "../../app/generated/prisma/client";
 import { buildBankFinancialEventCandidates } from "./event-candidates";
+import {
+  collectSourceDocumentTemporalContext,
+} from "./source-document-temporal";
 
 export type ConfirmBankFinancialEventInput = {
   companyId: number;
@@ -8,7 +11,7 @@ export type ConfirmBankFinancialEventInput = {
   eventId: number;
 };
 
-const VERSION = "bank-to-financial-event-v1";
+const VERSION = "bank-to-financial-event-v2";
 
 /** Internal service: caller must authorize userId to reconcile companyId.
  * Accepts IDs only, never a previously computed candidate or payment amount.
@@ -28,14 +31,60 @@ export async function confirmBankFinancialEventPayment(
         const bank = await tx.bankTransaction.findUnique({
           where: { id: bankTransactionId }, include: { bankAccount: true },
         });
-        const event = await tx.financialEvent.findUnique({ where: { id: eventId } });
+        const event = await tx.financialEvent.findUnique({
+          where: { id: eventId },
+          include: {
+            documentLinks: {
+              where: { role: "PRIMARY" },
+              select: {
+                source: true,
+                document: {
+                  select: {
+                    date: true,
+                    summary: true,
+                    bookingEntries: {
+                      select: { text: true },
+                    },
+                  },
+                },
+              },
+            },
+          },
+        });
         if (!bank || !event || bank.bankAccount.companyId !== companyId || event.companyId !== companyId) {
           throw new Error("PAIR_NOT_FOUND_IN_COMPANY");
         }
         // BankAccount has no currency field; this flow only accepts ISK events.
-        const candidate = buildBankFinancialEventCandidates(bank.bankAccount,
+        // Rebuild source-document temporal evidence inside the same serializable
+        // transaction; never trust a candidate computed by the UI earlier.
+        const temporal = collectSourceDocumentTemporalContext(
+          (event.documentLinks ?? [])
+            .filter(
+              (link) =>
+                link.source === "REVIEWED_DOCUMENT" &&
+                link.document !== null,
+            )
+            .map((link) => ({
+              documentDate: link.document?.date ?? null,
+              summary: link.document?.summary ?? null,
+              bookingEntries: link.document?.bookingEntries ?? [],
+            })),
+        );
+        const candidate = buildBankFinancialEventCandidates(
+          bank.bankAccount,
           [{ ...bank, amount: bank.amount.toString() }],
-          [{ ...event, amount: event.amount?.toString() ?? null }],
+          [{
+            id: event.id,
+            companyId: event.companyId,
+            eventType: event.eventType,
+            amount: event.amount?.toString() ?? null,
+            eventDate: event.eventDate,
+            externalReference: event.externalReference,
+            currency: event.currency,
+            primarySourceDocumentDates: temporal.documentDates,
+            sourceDueDate: temporal.dueDate,
+            sourceFinalDueDate: temporal.finalDueDate,
+          }],
         )[0];
         if (!candidate || !event.amount) throw new Error("PAIR_NO_LONGER_VALID");
 

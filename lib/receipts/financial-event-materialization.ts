@@ -1,6 +1,9 @@
 import type { Prisma } from "@/app/generated/prisma/client";
+import {
+  extractSourceDocumentTemporalContext,
+} from "@/lib/financial-reconciliation/source-document-temporal";
 
-type BookingEntry = { account: string; debit: number; credit: number };
+type BookingEntry = { account: string; text?: string | null; debit: number; credit: number };
 type Entity = { id: number; entityType: string; identifierValue?: string | null };
 
 export type ReviewedFinancialDocument = {
@@ -10,6 +13,7 @@ export type ReviewedFinancialDocument = {
   documentType: string | null;
   totalAmount?: number | null;
   receiptNumber?: string | null;
+  summary?: string | null;
   merchantName?: string | null;
   date?: Date | null;
   paymentSchedule?: unknown;
@@ -100,6 +104,17 @@ export async function materializeReviewedFinancialDocument(
   const liabilityAccount = await findReviewedLiabilityAccount(
     tx, companyId, document.bookingEntries, decision.eventType === "CREDIT",
   );
+  const temporal = extractSourceDocumentTemporalContext({
+    documentDate: document.date ?? null,
+    summary: document.summary ?? null,
+    bookingEntries: document.bookingEntries ?? [],
+  });
+  const paymentTerms = temporal.dueDate || temporal.finalDueDate
+    ? {
+        dueDate: temporal.dueDate?.toISOString() ?? null,
+        finalDueDate: temporal.finalDueDate?.toISOString() ?? null,
+      }
+    : null;
   const event = await tx.financialEvent.create({
     data: {
       companyId,
@@ -107,11 +122,19 @@ export async function materializeReviewedFinancialDocument(
       status: "OPEN",
       title: [nonEmpty(document.merchantName), decision.externalReference].filter(Boolean).join(" · ") || null,
       eventDate: document.date ?? null,
+      ...(temporal.periodStart && temporal.periodEnd
+        ? { periodStart: temporal.periodStart, periodEnd: temporal.periodEnd }
+        : {}),
       amount: decision.amount,
       currency: "ISK",
       externalReference: decision.externalReference,
       liabilityAccountId: liabilityAccount?.id ?? null,
-      metadata: { source: "REVIEWED_DOCUMENT", sourceDocumentId: document.id, documentType: document.documentType },
+      metadata: {
+        source: "REVIEWED_DOCUMENT",
+        sourceDocumentId: document.id,
+        documentType: document.documentType,
+        ...(paymentTerms ? { paymentTerms } : {}),
+      },
     },
   });
   await tx.documentFinancialEvent.create({

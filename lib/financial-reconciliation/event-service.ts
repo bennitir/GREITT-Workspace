@@ -6,6 +6,9 @@ import {
 import type {
   FinancialEventSourceDocumentContext,
 } from "./document-context";
+import {
+  collectSourceDocumentTemporalContext,
+} from "./source-document-temporal";
 
 export type BankFinancialEventCandidateProjection =
   BankFinancialEventCandidate & {
@@ -58,12 +61,15 @@ export async function getBankFinancialEventCandidates(bankAccountId: number, com
           where: { role: "PRIMARY" },
           select: {
             receiptId: true,
+            source: true,
             receipt: {
               select: { status: true },
             },
             document: {
               select: {
                 id: true,
+                date: true,
+                summary: true,
                 reviewedAt: true,
                 approvedAt: true,
                 documentType: true,
@@ -116,15 +122,34 @@ export async function getBankFinancialEventCandidates(bankAccountId: number, com
         ...bank,
         amount: bank.amount.toString(),
       })),
-      events.map((event) => ({
-        id: event.id,
-        companyId: event.companyId,
-        eventType: event.eventType,
-        amount: event.amount?.toString() ?? null,
-        eventDate: event.eventDate,
-        externalReference: event.externalReference,
-        currency: event.currency,
-      })),
+      events.map((event) => {
+        const temporal = collectSourceDocumentTemporalContext(
+          event.documentLinks
+            .filter(
+              (link) =>
+                link.source === "REVIEWED_DOCUMENT" &&
+                link.document !== null,
+            )
+            .map((link) => ({
+              documentDate: link.document?.date ?? null,
+              summary: link.document?.summary ?? null,
+              bookingEntries: link.document?.bookingEntries ?? [],
+            })),
+        );
+
+        return {
+          id: event.id,
+          companyId: event.companyId,
+          eventType: event.eventType,
+          amount: event.amount?.toString() ?? null,
+          eventDate: event.eventDate,
+          externalReference: event.externalReference,
+          currency: event.currency,
+          primarySourceDocumentDates: temporal.documentDates,
+          sourceDueDate: temporal.dueDate,
+          sourceFinalDueDate: temporal.finalDueDate,
+        };
+      }),
     ).map((candidate) => {
       const sourceDocuments =
         sourceDocumentsByEventId.get(candidate.eventId) ?? [];

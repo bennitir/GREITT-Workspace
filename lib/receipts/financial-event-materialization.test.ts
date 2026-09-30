@@ -96,3 +96,39 @@ test("materialization creates one primary event and idempotent counterparty; pre
   await materializeReviewedFinancialDocument(tx, params);
   assert.equal(events.length, 1);
 });
+
+test("materialization persists deterministic period and payment terms from reviewed source text", async () => {
+  const events: any[] = [];
+  const tx = {
+    documentFinancialEvent: {
+      findFirst: async () => null,
+      create: async () => ({}),
+    },
+    financialEvent: {
+      create: async ({ data }: any) => {
+        events.push(data);
+        return { id: 31 };
+      },
+    },
+    financialEventEntity: { upsert: async () => ({}) },
+  } as unknown as Prisma.TransactionClient;
+
+  await materializeReviewedFinancialDocument(tx, {
+    companyId: 12,
+    receiptId: 11,
+    document: {
+      ...base,
+      date: new Date("2026-07-29T00:00:00.000Z"),
+      summary:
+        "Kílómetragjald júlí 2026. Gjalddagi 01.08.2026, eindagi 17.08.2026.",
+    },
+  });
+
+  assert.equal(events.length, 1);
+  assert.equal(events[0].periodStart.toISOString(), "2026-07-01T12:00:00.000Z");
+  assert.equal(events[0].periodEnd.toISOString(), "2026-07-31T12:00:00.000Z");
+  assert.deepEqual(events[0].metadata.paymentTerms, {
+    dueDate: "2026-08-01T12:00:00.000Z",
+    finalDueDate: "2026-08-17T12:00:00.000Z",
+  });
+});

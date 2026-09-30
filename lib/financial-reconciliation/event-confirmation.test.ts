@@ -13,7 +13,8 @@ function fixture() {
   const bank = { id: 3, bankAccountId: 1, bankAccount: { id: 1, companyId: 2 },
     amount: decimal(-36027), date: new Date("2026-01-12Z"), reference: "INV-1", status: "UNRECONCILED" };
   const event = { id: 4, companyId: 2, amount: decimal(36027), eventDate: new Date("2026-01-01Z"),
-    eventType: "CHARGE", currency: "ISK", externalReference: "INV-1", status: "OPEN" };
+    eventType: "CHARGE", currency: "ISK", externalReference: "INV-1", status: "OPEN",
+    documentLinks: [] as any[] };
   let state = { bank, event, payments: [] as any[], reconciliations: [] as any[], audits: [] as any[] };
   let transactions = 0;
   let conflictOnce = false;
@@ -119,7 +120,7 @@ for (const [eventType, eventAmount, bankAmount, day, reason] of [
       bankTransactionId: 3, eventId: 4, paymentId: 10, reconciliationId: 20,
       amount: String(Math.abs(bankAmount)), reason, dateDistanceDays: day - 1,
       eventExternalReference: "INV-1", bankReference: "INV-1", evidence: ["EXACT_EVENT_REFERENCE"],
-      reconciliationVersion: "bank-to-financial-event-v1",
+      reconciliationVersion: "bank-to-financial-event-v2",
     });
   });
 }
@@ -253,6 +254,35 @@ test("ambiguity with another event does not prohibit an explicit pair", async ()
   assert.equal(buildBankFinancialEventCandidates(f.state.bank.bankAccount,
     [{ ...f.state.bank, amount: "-36027" }], [candidateEvent, { ...candidateEvent, id: 99 }]).length, 2);
   assert.equal((await confirm(input, f.db)).eventId, 4);
+});
+
+
+test("confirmation recomputes future source-document plausibility inside the transaction", async () => {
+  const blocked = fixture();
+  blocked.state.bank.reference = "OTHER";
+  blocked.state.event.documentLinks = [{
+    source: "REVIEWED_DOCUMENT",
+    document: {
+      date: new Date("2026-01-20T12:00:00.000Z"),
+      summary: "Gjalddagi 21.01.2026",
+      bookingEntries: [],
+    },
+  }];
+  await assert.rejects(confirm(input, blocked.db), /PAIR_NO_LONGER_VALID/);
+  assert.equal(blocked.state.payments.length, 0);
+  assert.equal(blocked.state.reconciliations.length, 0);
+  assert.equal(blocked.state.audits.length, 0);
+
+  const exactReference = fixture();
+  exactReference.state.event.documentLinks = [{
+    source: "REVIEWED_DOCUMENT",
+    document: {
+      date: new Date("2026-01-20T12:00:00.000Z"),
+      summary: null,
+      bookingEntries: [],
+    },
+  }];
+  assert.equal((await confirm(input, exactReference.db)).eventId, 4);
 });
 
 test("serialization conflict rolls back and retries the full transaction", async () => {

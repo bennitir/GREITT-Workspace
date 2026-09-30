@@ -94,3 +94,50 @@ test("decimal comparison is exact, never rounded or coerced through Number", () 
   assert.deepEqual(build(account, [bank], [{ ...event, amount: Infinity }]), []);
   assert.deepEqual(build(account, [bank], [{ ...event, amount: Number.MAX_SAFE_INTEGER }]), []);
 });
+
+test("future reviewed source document excludes CHARGE without exact reference", () => {
+  const result = build(account, [bank], [{
+    ...event,
+    externalReference: "INV-2",
+    primarySourceDocumentDates: [new Date("2026-01-20T12:00:00.000Z")],
+  }]);
+  assert.deepEqual(result, []);
+});
+
+test("exact reference preserves a documented prepayment candidate", () => {
+  const result = build(account, [{ ...bank, reference: "INV-2" }], [{
+    ...event,
+    externalReference: " inv-2 ",
+    primarySourceDocumentDates: [new Date("2026-01-20T12:00:00.000Z")],
+  }]);
+  assert.equal(result.length, 1);
+  assert.deepEqual(result[0].evidence, ["EXACT_EVENT_REFERENCE"]);
+});
+
+test("future source-date guard is CHARGE-specific and fails closed on mixed source dates", () => {
+  const future = new Date("2026-01-20T12:00:00.000Z");
+  const past = new Date("2026-01-05T12:00:00.000Z");
+  assert.equal(build(account, [{ ...bank, amount: "11427" }], [{
+    ...event,
+    eventType: "CREDIT",
+    amount: "-11427",
+    primarySourceDocumentDates: [future],
+  }]).length, 1);
+  assert.equal(build(account, [bank], [{
+    ...event,
+    externalReference: "INV-2",
+    primarySourceDocumentDates: [past, future],
+  }]).length, 1);
+});
+
+test("due-date and final-due-date matches are retained as deterministic evidence", () => {
+  const result = build(account, [bank], [{
+    ...event,
+    sourceDueDate: new Date("2026-01-12T23:59:59.000Z"),
+    sourceFinalDueDate: new Date("2026-01-12T00:00:00.000Z"),
+  }]);
+  assert.deepEqual(result[0].evidence, [
+    "BANK_DATE_EQUALS_DUE_DATE",
+    "BANK_DATE_EQUALS_FINAL_DUE_DATE",
+  ]);
+});
