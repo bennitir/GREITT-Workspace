@@ -64,6 +64,7 @@ model Company {
   aiUsage      AiUsage[]
   auditEvents  AuditEvent[]
   modules      CompanyModule[]
+  groupMemberships CompanyGroupMembership[]
   featureSettings CompanyFeatureSetting[]
   imports      ImportBatch[]
   receipts     Receipt[]
@@ -911,8 +912,10 @@ model OperationalLocation {
   incomingRoutes OperationalTravelRoute[] @relation("OperationalTravelRouteTo")
   outgoingPlanLegs WorkTravelPlanLeg[] @relation("WorkTravelPlanLegFrom")
   incomingPlanLegs WorkTravelPlanLeg[] @relation("WorkTravelPlanLegTo")
+  salesBranch SalesBranch?
 
   @@unique([companyId, code])
+  @@unique([id, companyId])
   @@index([companyId, isActive])
   @@index([companyId, zoneCode])
 }
@@ -1485,6 +1488,77 @@ model CompanyModule {
   @@unique([companyId, moduleId])
   @@index([companyId])
 }
+
+// Sameiginlegt fyrirtækjahópa-/keðjusamhengi fyrir Heim og kjarna GLÖGGT.
+// Sala má nota hópinn, en hópurinn tilheyrir ekki Sölu sérstaklega.
+model CompanyGroup {
+  id        Int      @id @default(autoincrement())
+  name      String
+  isActive  Boolean  @default(true)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  companies CompanyGroupMembership[]
+}
+
+model CompanyGroupMembership {
+  id        Int      @id @default(autoincrement())
+  groupId   Int
+  companyId Int
+  createdAt DateTime @default(now())
+
+  group   CompanyGroup @relation(fields: [groupId], references: [id], onDelete: Cascade)
+  company Company      @relation(fields: [companyId], references: [id], onDelete: Cascade)
+
+  @@unique([groupId, companyId])
+  @@index([companyId])
+}
+
+// SalesBranch er söluhlutverk á sameiginlegri OperationalLocation.
+// Heimilisfang, staðsetning og fyrirtækjasamhengi eru því ekki tvítekin í Sölu.
+model SalesBranch {
+  id                    Int      @id @default(autoincrement())
+  companyId             Int
+  operationalLocationId Int
+  isActive              Boolean  @default(true)
+  createdAt             DateTime @default(now())
+  updatedAt             DateTime @updatedAt
+
+  operationalLocation OperationalLocation @relation(fields: [operationalLocationId, companyId], references: [id, companyId], onDelete: Restrict)
+  terminals           SalesTerminal[]
+
+  @@unique([id, companyId])
+  @@unique([operationalLocationId, companyId])
+  @@index([companyId, isActive])
+}
+
+enum SalesTerminalType {
+  POS
+  MOBILE
+  WEB
+  OTHER
+}
+
+// Einstök sölustöð/kassi/sími/tablet innan útibús.
+// Kóðinn er einstakur innan fyrirtækis, óháð útibúi.
+model SalesTerminal {
+  id           Int               @id @default(autoincrement())
+  companyId    Int
+  branchId     Int
+  code         String
+  name         String
+  terminalType SalesTerminalType @default(POS)
+  isActive     Boolean           @default(true)
+  createdAt    DateTime          @default(now())
+  updatedAt    DateTime          @updatedAt
+
+  branch SalesBranch @relation(fields: [branchId, companyId], references: [id, companyId], onDelete: Restrict)
+
+  @@unique([companyId, code])
+  @@index([companyId, isActive])
+  @@index([branchId, isActive])
+}
+
 
 model CompanyFeatureSetting {
   id         Int      @id @default(autoincrement())
