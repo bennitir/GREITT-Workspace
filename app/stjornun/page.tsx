@@ -5,7 +5,11 @@ import { getCompanyAccess, getEffectiveUser, requireActiveCompanyReadAccess } fr
 import { getCompanyModuleSettings } from "@/lib/core/company-module-repository";
 import { isCompanyModuleEnabled } from "@/lib/core/company-modules";
 import { GLOGGT_MODULE_LIST, type GloggtModuleId } from "@/lib/core/modules";
-import { SALES_PERMISSION_FIELDS, SALES_PERMISSIONS } from "@/lib/core/sales-permissions";
+import {
+  SALES_PERMISSION_FIELDS,
+  SALES_PERMISSIONS,
+  hasSalesPermission,
+} from "@/lib/core/sales-permissions";
 import {
   MOBILE_FEATURE_LIST,
   isMobileFeatureAvailable,
@@ -17,6 +21,7 @@ import {
   getUserMobileFeatureSettings,
 } from "@/lib/core/mobile-feature-repository";
 import { companyManagementText } from "@/lib/i18n/company-management";
+import { salesManagementText } from "@/lib/i18n/sales-management";
 import { salesPermissionsText } from "@/lib/i18n/sales-permissions";
 import { uiText } from "@/lib/i18n/ui";
 import { prisma } from "@/lib/prisma";
@@ -87,6 +92,7 @@ export default async function CompanyManagementPage({
   const language = userSettings?.interfaceLanguage ?? "is";
   const t = companyManagementText(language);
   const tSales = salesPermissionsText(language);
+  const tSalesManagement = salesManagementText(language);
   const ui = uiText(language);
   const accessRoleText = (role: string) =>
     role === "OWNER"
@@ -191,6 +197,14 @@ export default async function CompanyManagementPage({
             <h2 className="text-lg font-bold text-slate-950">{t.companyRulesTitle}</h2>
             <p className="mt-2 text-sm leading-6 text-slate-600">{t.companyRulesHelp}</p>
             <div className="mt-4 text-sm font-semibold text-blue-700">{t.open} →</div>
+          </Link>
+        ) : null}
+
+        {isCompanyModuleEnabled("sala", moduleSettings) && hasSalesPermission(access, "SALE_SETTINGS_MANAGE") ? (
+          <Link href="/stjornun/sala" className="rounded-2xl border bg-white p-6 shadow-sm transition hover:border-emerald-300 hover:bg-emerald-50/30">
+            <h2 className="text-lg font-bold text-slate-950">{tSalesManagement.cardTitle}</h2>
+            <p className="mt-2 text-sm leading-6 text-slate-600">{tSalesManagement.cardHelp}</p>
+            <div className="mt-4 text-sm font-semibold text-emerald-700">{t.open} →</div>
           </Link>
         ) : null}
       </section>

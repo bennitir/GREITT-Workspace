@@ -24,10 +24,22 @@ function createTransactionAdapter(
 ): SalesTransaction {
   return {
     async getBranch(companyId, branchId) {
-      return tx.salesBranch.findUnique({
+      const branch = await tx.salesBranch.findUnique({
         where: { id_companyId: { id: branchId, companyId } },
-        select: { id: true, companyId: true, isActive: true },
+        select: {
+          id: true,
+          companyId: true,
+          isActive: true,
+          operationalLocation: { select: { isActive: true } },
+        },
       });
+
+      if (!branch) return null;
+      return {
+        id: branch.id,
+        companyId: branch.companyId,
+        isActive: branch.isActive && branch.operationalLocation.isActive,
+      };
     },
 
     async getTerminal(companyId, branchId, terminalId) {
