@@ -1567,10 +1567,136 @@ model SalesTerminal {
   updatedAt    DateTime          @updatedAt
 
   branch SalesBranch @relation(fields: [branchId, companyId], references: [id, companyId], onDelete: Restrict)
+  sales  Sale[]
 
   @@unique([companyId, code])
+  @@unique([id, branchId, companyId])
   @@index([companyId, isActive])
   @@index([branchId, isActive])
+}
+
+enum SaleStatus {
+  DRAFT
+  HELD
+  FINALIZED
+  CANCELLED
+  RETURNED
+}
+
+enum SaleLineSource {
+  QUICK_BUTTON
+  BARCODE
+  SEARCH
+  FREE_LINE
+  WORK
+  QUOTE
+  ORDER
+}
+
+enum PaymentStatus {
+  PENDING
+  AUTHORIZED
+  CONFIRMED
+  FAILED
+  CANCELLED
+  REFUNDED
+}
+
+// Sale er rekstrarstaðreynd Sölu. Formlegur reikningur, birgðahreyfing og
+// bókhaldsfærsla eru aðskilin lög sem tengjast síðar við sömu sölu.
+// branchId er varðveitt á sölunni og composite FK tryggir að terminal tilheyri
+// sama branch og company þegar salan er stofnuð.
+model Sale {
+  id         Int        @id @default(autoincrement())
+  companyId  Int
+  branchId   Int
+  terminalId Int
+
+  status   SaleStatus @default(DRAFT)
+  currency String     @default("ISK")
+
+  // Samtölur eru snapshot af línunum og eiga að uppfærast transactionally.
+  subtotalAmount Decimal @default(0)
+  discountAmount Decimal @default(0)
+  netAmount      Decimal @default(0)
+  vatAmount      Decimal @default(0)
+  totalAmount    Decimal @default(0)
+
+  heldAt      DateTime?
+  finalizedAt DateTime?
+  cancelledAt DateTime?
+  returnedAt  DateTime?
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+
+  terminal SalesTerminal @relation(fields: [terminalId, branchId, companyId], references: [id, branchId, companyId], onDelete: Restrict)
+  lines    SaleLine[]
+  payments Payment[]
+
+  @@unique([id, companyId])
+  @@index([companyId, status, createdAt])
+  @@index([branchId, status, createdAt])
+  @@index([terminalId, status, createdAt])
+}
+
+model SaleLine {
+  id        Int @id @default(autoincrement())
+  companyId Int
+  saleId    Int
+  position  Int
+
+  description String
+  quantity    Decimal
+  unit        String
+  unitPrice   Decimal
+
+  subtotalAmount Decimal
+  discountAmount Decimal @default(0)
+  netAmount      Decimal
+  vatRate        Decimal
+  vatAmount      Decimal
+  totalAmount    Decimal
+
+  source          SaleLineSource
+  sourceReference String?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  sale Sale @relation(fields: [saleId, companyId], references: [id, companyId], onDelete: Restrict)
+
+  @@unique([saleId, position])
+  @@index([companyId, saleId])
+  @@index([companyId, source])
+}
+
+// Greiðsla er aðskilin frá Sale svo split-payment og ólík greiðslustaða séu
+// möguleg án þess að breyta sölustöðunni sjálfri. methodCode verður síðar hægt
+// að tengja við fyrirtækissértæka PaymentMethod stillingu.
+model Payment {
+  id        Int @id @default(autoincrement())
+  companyId Int
+  saleId    Int
+  sequence  Int
+
+  methodCode   String
+  amount       Decimal
+  currency     String   @default("ISK")
+  exchangeRate Decimal?
+
+  reference              String?
+  authorizationReference String?
+  status                 PaymentStatus @default(PENDING)
+  confirmedAt            DateTime?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  sale Sale @relation(fields: [saleId, companyId], references: [id, companyId], onDelete: Restrict)
+
+  @@unique([saleId, sequence])
+  @@index([companyId, status, createdAt])
+  @@index([saleId, status])
 }
 
 
