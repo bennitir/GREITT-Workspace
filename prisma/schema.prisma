@@ -1540,6 +1540,7 @@ model SalesBranch {
 
   operationalLocation OperationalLocation @relation(fields: [operationalLocationId, companyId], references: [id, companyId], onDelete: Restrict)
   terminals           SalesTerminal[]
+  sales               Sale[]
 
   @@unique([id, companyId])
   @@unique([operationalLocationId, companyId])
