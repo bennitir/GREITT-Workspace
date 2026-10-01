@@ -1,8 +1,16 @@
 import ModulePrototype from "@/components/modules/ModulePrototype";
+import { redirect } from "next/navigation";
+import { getCompanyAccess } from "@/lib/core/access-control";
 import { requireCompanyModule } from "@/lib/core/require-company-module";
+import { hasSalesPermission } from "@/lib/core/sales-permissions";
 
 export default async function SalaPage() {
-  await requireCompanyModule("sala");
+  const companyId = await requireCompanyModule("sala");
+  const access = await getCompanyAccess(companyId);
+
+  if (!hasSalesPermission(access, "SALE_USE")) {
+    redirect("/");
+  }
 
   return (
     <ModulePrototype

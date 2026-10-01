@@ -5,6 +5,7 @@ import { getCompanyAccess, getEffectiveUser, requireActiveCompanyReadAccess } fr
 import { getCompanyModuleSettings } from "@/lib/core/company-module-repository";
 import { isCompanyModuleEnabled } from "@/lib/core/company-modules";
 import { GLOGGT_MODULE_LIST, type GloggtModuleId } from "@/lib/core/modules";
+import { SALES_PERMISSION_FIELDS, SALES_PERMISSIONS } from "@/lib/core/sales-permissions";
 import {
   MOBILE_FEATURE_LIST,
   isMobileFeatureAvailable,
@@ -16,9 +17,10 @@ import {
   getUserMobileFeatureSettings,
 } from "@/lib/core/mobile-feature-repository";
 import { companyManagementText } from "@/lib/i18n/company-management";
+import { salesPermissionsText } from "@/lib/i18n/sales-permissions";
 import { uiText } from "@/lib/i18n/ui";
 import { prisma } from "@/lib/prisma";
-import { saveUserMobileFeatureVisibility } from "./actions";
+import { saveSalesUserPermissions, saveUserMobileFeatureVisibility } from "./actions";
 
 const serviceHref: Partial<Record<GloggtModuleId, string>> = {
   bokhald: "/stillingar/fyrirtaeki",
@@ -32,7 +34,7 @@ const serviceHref: Partial<Record<GloggtModuleId, string>> = {
 export default async function CompanyManagementPage({
   searchParams,
 }: {
-  searchParams: Promise<{ mobileUserId?: string; saved?: string }>;
+  searchParams: Promise<{ userId?: string; mobileUserId?: string; saved?: string; salesSaved?: string }>;
 }) {
   const companyId = await requireActiveCompanyReadAccess();
   const user = await getEffectiveUser();
@@ -49,7 +51,22 @@ export default async function CompanyManagementPage({
         name: true,
         users: {
           where: { isActive: true },
-          select: { accessRole: true, user: { select: { id: true, name: true, email: true } } },
+          select: {
+            accessRole: true,
+            canSaleUse: true,
+            canSaleHold: true,
+            canSaleDiscount: true,
+            canSaleChangePrice: true,
+            canSaleInvoice: true,
+            canSaleRefund: true,
+            canSaleVoid: true,
+            canSaleSettlementView: true,
+            canSaleSettlementCreate: true,
+            canSaleSettlementFinalize: true,
+            canSaleCustomerManage: true,
+            canSaleSettingsManage: true,
+            user: { select: { id: true, name: true, email: true } },
+          },
           orderBy: { user: { name: "asc" } },
         },
       },
@@ -69,6 +86,7 @@ export default async function CompanyManagementPage({
 
   const language = userSettings?.interfaceLanguage ?? "is";
   const t = companyManagementText(language);
+  const tSales = salesPermissionsText(language);
   const ui = uiText(language);
   const accessRoleText = (role: string) =>
     role === "OWNER"
@@ -87,16 +105,16 @@ export default async function CompanyManagementPage({
     isMobileFeatureAvailable(feature.key as MobileFeatureKey, moduleSettings),
   );
 
-  const requestedMobileUserId = Number(params.mobileUserId || 0);
-  const defaultMobileUserId =
+  const requestedUserId = Number(params.userId || params.mobileUserId || 0);
+  const defaultUserId =
     company.users.find((link) => link.user.id === user.id)?.user.id ?? company.users[0]?.user.id ?? null;
-  const selectedMobileUser =
-    company.users.find((link) => link.user.id === requestedMobileUserId) ??
-    company.users.find((link) => link.user.id === defaultMobileUserId) ??
+  const selectedUser =
+    company.users.find((link) => link.user.id === requestedUserId) ??
+    company.users.find((link) => link.user.id === defaultUserId) ??
     null;
 
-  const selectedUserOverrides = selectedMobileUser
-    ? await getUserMobileFeatureSettings(companyId, selectedMobileUser.user.id)
+  const selectedUserOverrides = selectedUser
+    ? await getUserMobileFeatureSettings(companyId, selectedUser.user.id)
     : {};
   const selectedUserMobileSettings = { ...companyMobileSettings, ...selectedUserOverrides };
 
@@ -137,11 +155,11 @@ export default async function CompanyManagementPage({
           <p className="mt-2 text-sm leading-6 text-slate-600">{t.usersHelp}</p>
           <div className="mt-4 space-y-2">
             {company.users.map((link) => {
-              const selected = selectedMobileUser?.user.id === link.user.id;
+              const selected = selectedUser?.user.id === link.user.id;
               return (
                 <Link
                   key={link.user.id}
-                  href={`/stjornun?mobileUserId=${link.user.id}#mobile`}
+                  href={`/stjornun?userId=${link.user.id}#user-settings`}
                   className={`flex items-center justify-between gap-3 rounded-xl border px-3 py-2 transition ${
                     selected
                       ? "border-blue-300 bg-blue-50"
@@ -177,17 +195,70 @@ export default async function CompanyManagementPage({
         ) : null}
       </section>
 
-      <section id="mobile" className="rounded-2xl border bg-white p-6 shadow-sm scroll-mt-6">
+      <div id="user-settings" className="space-y-6 scroll-mt-6">
+        {isCompanyModuleEnabled("sala", moduleSettings) ? (
+          <section className="rounded-2xl border bg-white p-6 shadow-sm">
+            <h2 className="text-xl font-bold text-slate-950">{tSales.title}</h2>
+            <p className="mt-2 text-sm leading-6 text-slate-600">{tSales.help}</p>
+
+            {selectedUser ? (
+              <>
+                <div className="mt-5 rounded-xl border border-blue-200 bg-blue-50 p-4">
+                  <div className="text-xs font-semibold uppercase tracking-wide text-blue-700">{tSales.settingsFor}</div>
+                  <div className="mt-1 font-bold text-slate-950">{selectedUser.user.name}</div>
+                  <div className="text-sm text-slate-600">{selectedUser.user.email}</div>
+                </div>
+
+                {params.salesSaved === "1" ? (
+                  <div className="mt-4 rounded-xl border border-emerald-200 bg-emerald-50 px-4 py-3 text-sm font-semibold text-emerald-800">
+                    {tSales.saved}
+                  </div>
+                ) : null}
+
+                <form
+                  key={`sales-permissions-${selectedUser.user.id}`}
+                  action={saveSalesUserPermissions}
+                  className="mt-5 space-y-3"
+                >
+                  <input type="hidden" name="targetUserId" value={selectedUser.user.id} />
+                  <div className="grid gap-3 md:grid-cols-2">
+                    {SALES_PERMISSIONS.map((permission) => {
+                      const field = SALES_PERMISSION_FIELDS[permission];
+                      return (
+                        <label key={permission} className="flex gap-3 rounded-xl border bg-slate-50 p-4">
+                          <input
+                            type="checkbox"
+                            name={field}
+                            defaultChecked={Boolean(selectedUser[field])}
+                            className="mt-1 h-4 w-4"
+                          />
+                          <span className="font-semibold text-slate-900">{tSales.permissions[permission]}</span>
+                        </label>
+                      );
+                    })}
+                  </div>
+                  <button type="submit" className="rounded-xl bg-slate-900 px-5 py-3 font-semibold text-white">
+                    {tSales.save}
+                  </button>
+                </form>
+              </>
+            ) : (
+              <p className="mt-5 rounded-xl bg-slate-50 p-4 text-sm text-slate-600">{tSales.noUsers}</p>
+            )}
+          </section>
+        ) : null}
+
+      <section id="mobile" className="rounded-2xl border bg-white p-6 shadow-sm">
         <h2 className="text-xl font-bold text-slate-950">{t.mobileTitle}</h2>
         <p className="mt-2 text-sm leading-6 text-slate-600">{t.mobileHelp}</p>
         <p className="mt-1 text-xs leading-5 text-slate-500">{t.mobileSubscriptionNote}</p>
 
-        {selectedMobileUser ? (
+        {selectedUser ? (
           <>
             <div className="mt-5 rounded-xl border border-blue-200 bg-blue-50 p-4">
               <div className="text-xs font-semibold uppercase tracking-wide text-blue-700">{t.mobileSettingsFor}</div>
-              <div className="mt-1 font-bold text-slate-950">{selectedMobileUser.user.name}</div>
-              <div className="text-sm text-slate-600">{selectedMobileUser.user.email}</div>
+              <div className="mt-1 font-bold text-slate-950">{selectedUser.user.name}</div>
+              <div className="text-sm text-slate-600">{selectedUser.user.email}</div>
             </div>
 
             {params.saved === "1" ? (
@@ -197,11 +268,11 @@ export default async function CompanyManagementPage({
             ) : null}
 
             <form
-              key={`mobile-settings-${selectedMobileUser.user.id}`}
+              key={`mobile-settings-${selectedUser.user.id}`}
               action={saveUserMobileFeatureVisibility}
               className="mt-5 space-y-3"
             >
-              <input type="hidden" name="targetUserId" value={selectedMobileUser.user.id} />
+              <input type="hidden" name="targetUserId" value={selectedUser.user.id} />
               {mobileFeatures.map((feature) => {
                 const featureText = t.mobileFeatures[feature.key as keyof typeof t.mobileFeatures];
                 return (
@@ -230,6 +301,7 @@ export default async function CompanyManagementPage({
           <p className="mt-5 rounded-xl bg-slate-50 p-4 text-sm text-slate-600">{t.noMobileUsers}</p>
         )}
       </section>
+      </div>
     </main>
   );
 }

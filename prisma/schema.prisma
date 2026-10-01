@@ -677,6 +677,20 @@ model UserCompany {
   canBookEntries Boolean @default(false)
   canManageCompanySettings Boolean @default(false)
 
+  // Sales permissions are action-specific and do not grant legacy general write access.
+  canSaleUse Boolean @default(false)
+  canSaleHold Boolean @default(false)
+  canSaleDiscount Boolean @default(false)
+  canSaleChangePrice Boolean @default(false)
+  canSaleInvoice Boolean @default(false)
+  canSaleRefund Boolean @default(false)
+  canSaleVoid Boolean @default(false)
+  canSaleSettlementView Boolean @default(false)
+  canSaleSettlementCreate Boolean @default(false)
+  canSaleSettlementFinalize Boolean @default(false)
+  canSaleCustomerManage Boolean @default(false)
+  canSaleSettingsManage Boolean @default(false)
+
   // Tölvupósttilkynningar eru stilltar á tengingu notanda og fyrirtækis.
   // Sama manneskja getur því fengið tilkynningar fyrir eitt fyrirtæki en ekki annað.
   emailNotificationsEnabled Boolean @default(false)
