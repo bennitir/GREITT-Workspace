@@ -6,6 +6,7 @@ import {
   saleLineUsesDiscount,
   salesPermissionsForAction,
 } from "@/lib/core/sales-action-policy";
+import { calculateSaleLineAmounts } from "@/lib/core/sales-domain";
 import {
   assertSalesPermission,
   requireActiveSalesPermissions,
@@ -66,6 +67,45 @@ export async function createDraftSaleAction(input: {
 
   revalidateSale(sale.id);
   return sale;
+}
+
+export async function addFreeSaleLineAction(input: {
+  saleId: number;
+  description: string;
+  quantity: string;
+  unit: string;
+  unitPrice: string;
+  discountAmount?: string;
+  vatRate: string;
+}) {
+  const context = await requireActiveSalesPermissions(
+    salesPermissionsForAction("ADD_LINE"),
+  );
+  const discountAmount = input.discountAmount?.trim() || "0";
+
+  if (saleLineUsesDiscount(discountAmount)) {
+    assertSalesPermission(context.access, "SALE_DISCOUNT");
+  }
+
+  const amounts = calculateSaleLineAmounts({
+    quantity: input.quantity,
+    unitPrice: input.unitPrice,
+    discountAmount,
+    vatRate: input.vatRate,
+  });
+  const result = await createPrismaSalesService().addSaleLine({
+    companyId: context.companyId,
+    saleId: input.saleId,
+    line: {
+      description: input.description,
+      unit: input.unit,
+      ...amounts,
+      source: "FREE_LINE",
+    },
+  });
+
+  revalidateSale(input.saleId);
+  return result;
 }
 
 export async function addSaleLineAction(input: {

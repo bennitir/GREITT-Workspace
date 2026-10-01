@@ -2,11 +2,13 @@ import assert from "node:assert/strict";
 import test from "node:test";
 
 import {
+  calculateSaleLineAmounts,
   calculateSaleTotals,
   canTransitionPaymentStatus,
   canTransitionSaleStatus,
   decimalAdd,
   decimalMultiply,
+  decimalPercent,
   isPositivePaymentAmount,
   validateSaleLineAmounts,
 } from "./sales-domain";
@@ -41,6 +43,29 @@ test("decimal helpers keep money arithmetic exact without floating point drift",
   assert.equal(decimalAdd("0.1", "0.2"), "0.3");
   assert.equal(decimalMultiply("3", "199.95"), "599.85");
   assert.equal(decimalMultiply("2.5", "4.20"), "10.5");
+  assert.equal(decimalPercent("500", "24"), "120");
+  assert.equal(decimalPercent("0.2", "24"), "0.048");
+});
+
+test("sale line calculator derives exact VAT amounts", () => {
+  assert.deepEqual(
+    calculateSaleLineAmounts({
+      quantity: "2",
+      unitPrice: "100",
+      discountAmount: "20",
+      vatRate: "24",
+    }),
+    {
+      quantity: "2",
+      unitPrice: "100",
+      subtotalAmount: "200",
+      discountAmount: "20",
+      netAmount: "180",
+      vatRate: "24",
+      vatAmount: "43.2",
+      totalAmount: "223.2",
+    },
+  );
 });
 
 test("sale line amount validation accepts a consistent line", () => {

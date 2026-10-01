@@ -168,6 +168,20 @@ export function decimalMultiply(
   );
 }
 
+export function decimalPercent(
+  amount: ExactDecimalInput,
+  rate: ExactDecimalInput,
+): string {
+  const product = parseDecimal(decimalMultiply(amount, rate));
+
+  return formatDecimal(
+    normalizeDecimal({
+      coefficient: product.coefficient,
+      scale: product.scale + 2,
+    }),
+  );
+}
+
 export function decimalCompare(
   left: ExactDecimalInput,
   right: ExactDecimalInput,
@@ -193,6 +207,27 @@ export type SaleLineAmounts = {
   vatAmount: ExactDecimalInput;
   totalAmount: ExactDecimalInput;
 };
+
+export type SaleLinePriceInput = Pick<
+  SaleLineAmounts,
+  "quantity" | "unitPrice" | "discountAmount" | "vatRate"
+>;
+
+// Reiknar nákvæm Decimal-gildi. Gjaldmiðils-/kvittunarrúnnun verður sér regla síðar.
+export function calculateSaleLineAmounts(input: SaleLinePriceInput): SaleLineAmounts {
+  const subtotalAmount = decimalMultiply(input.quantity, input.unitPrice);
+  const netAmount = decimalSubtract(subtotalAmount, input.discountAmount);
+  const vatAmount = decimalPercent(netAmount, input.vatRate);
+  const totalAmount = decimalAdd(netAmount, vatAmount);
+
+  return {
+    ...input,
+    subtotalAmount,
+    netAmount,
+    vatAmount,
+    totalAmount,
+  };
+}
 
 export type SaleLineAmountError =
   | "LINE_QUANTITY_MUST_BE_POSITIVE"
