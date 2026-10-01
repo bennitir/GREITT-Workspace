@@ -1604,13 +1604,14 @@ enum PaymentStatus {
 
 // Sale er rekstrarstaðreynd Sölu. Formlegur reikningur, birgðahreyfing og
 // bókhaldsfærsla eru aðskilin lög sem tengjast síðar við sömu sölu.
-// branchId er varðveitt á sölunni og composite FK tryggir að terminal tilheyri
-// sama branch og company þegar salan er stofnuð.
+// branchId er alltaf varðveitt á sölunni. terminalId er valkvætt svo sala sem
+// kemur t.d. úr Work/Quote/Order þurfi ekki tilbúna sölustöð. Ef terminal er
+// til staðar tryggir composite FK að hann tilheyri sama branch og company.
 model Sale {
   id         Int        @id @default(autoincrement())
   companyId  Int
   branchId   Int
-  terminalId Int
+  terminalId Int?
 
   status   SaleStatus @default(DRAFT)
   currency String     @default("ISK")
@@ -1629,7 +1630,8 @@ model Sale {
   createdAt   DateTime  @default(now())
   updatedAt   DateTime  @updatedAt
 
-  terminal SalesTerminal @relation(fields: [terminalId, branchId, companyId], references: [id, branchId, companyId], onDelete: Restrict)
+  branch   SalesBranch    @relation(fields: [branchId, companyId], references: [id, companyId], onDelete: Restrict)
+  terminal SalesTerminal? @relation(fields: [terminalId, branchId, companyId], references: [id, branchId, companyId], onDelete: Restrict)
   lines    SaleLine[]
   payments Payment[]
 
