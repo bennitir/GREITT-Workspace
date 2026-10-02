@@ -51,7 +51,7 @@ function fake() {
       const tx: IdentityServiceTransaction = {
         async $queryRaw(strings, ...values) {
           trace.push(`${name}:lock-wait`);
-          assert.deepEqual([...strings], ["SELECT pg_advisory_xact_lock(", "::integer, ", "::integer)"]);
+          assert.deepEqual([...strings], ["SELECT 1::integer AS locked FROM pg_advisory_xact_lock(", "::integer, ", "::integer)"]);
           assert.deepEqual(values, [DOCUMENT_IDENTITY_LOCK_NAMESPACE, 8]);
           if (options.lockFails) throw new Error("lock failed");
           const previous = tail;

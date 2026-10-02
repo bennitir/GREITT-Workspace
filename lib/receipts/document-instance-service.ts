@@ -11,7 +11,10 @@ export type CompanyLockTransaction = {
 };
 export async function lockDocumentIdentityCompany(tx: CompanyLockTransaction, companyId: number) {
   if (!positiveId(companyId)) throw new Error("INVALID_COMPANY_SCOPE");
-  await tx.$queryRaw`SELECT pg_advisory_xact_lock(${DOCUMENT_IDENTITY_LOCK_NAMESPACE}::integer, ${companyId}::integer)`;
+  // pg_advisory_xact_lock returns PostgreSQL void. Prisma cannot deserialize a
+  // void result column, so execute the function in FROM and return only a
+  // supported integer column while preserving the same transaction-scoped lock.
+  await tx.$queryRaw`SELECT 1::integer AS locked FROM pg_advisory_xact_lock(${DOCUMENT_IDENTITY_LOCK_NAMESPACE}::integer, ${companyId}::integer)`;
 }
 
 export type IdentityServiceDocument = {
