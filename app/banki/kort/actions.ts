@@ -4,6 +4,7 @@ import * as XLSX from "xlsx";
 import { cookies } from "next/headers";
 import { redirect } from "next/navigation";
 import { prisma } from "@/lib/prisma";
+import { sourceFileSha256, sourceFileSize } from "@/lib/bank/import-provenance";
 import {
   cardRowFingerprint,
   normalizePaymentCardFingerprintDate,
@@ -169,7 +170,10 @@ export async function previewPaymentCardStatement(formData: FormData) {
     throw new Error("Kortayfirlitið þarf að vera XLSX eða XLS skrá.");
   }
 
-  const workbook = XLSX.read(Buffer.from(await file.arrayBuffer()), {
+  const fileBuffer = Buffer.from(await file.arrayBuffer());
+  const fileSha256 = sourceFileSha256(fileBuffer);
+  const fileSize = sourceFileSize(fileBuffer);
+  const workbook = XLSX.read(fileBuffer, {
     type: "buffer",
     cellDates: true,
   });
@@ -212,6 +216,8 @@ export async function previewPaymentCardStatement(formData: FormData) {
       paymentCardId,
       fileName: file.name,
       sourceType: CARD_STATEMENT_SOURCE,
+      sourceFileSha256: fileSha256,
+      sourceFileSize: fileSize,
       status: "PREVIEW",
     },
   });
@@ -483,9 +489,10 @@ export async function confirmPaymentCardImport(formData: FormData) {
     await tx.importBatch.update({
       where: { id: batch.id },
       data: {
-        status: duplicates > 0
-          ? `IMPORTED:${imported}:DUPLICATES:${duplicates}`
-          : `IMPORTED:${imported}`,
+        status: "IMPORTED",
+        importedCount: imported,
+        duplicateCount: duplicates,
+        completedAt: new Date(),
       },
     });
 

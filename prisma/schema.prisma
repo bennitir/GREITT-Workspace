@@ -1534,11 +1534,16 @@ model ImportBatch {
   companyId     Int
   bankAccountId Int?
   paymentCardId Int?
-  fileName      String
-  sourceType    String   @default("CSV")
-  status        String   @default("NEW")
-  createdAt     DateTime @default(now())
-  updatedAt     DateTime @updatedAt
+  fileName         String
+  sourceType       String    @default("CSV")
+  sourceFileSha256 String?
+  sourceFileSize   Int?
+  status           String    @default("NEW")
+  importedCount    Int?
+  duplicateCount   Int?
+  completedAt      DateTime?
+  createdAt        DateTime  @default(now())
+  updatedAt        DateTime  @updatedAt
 
   company     Company      @relation(fields: [companyId], references: [id], onDelete: Cascade)
   bankAccount BankAccount? @relation(fields: [bankAccountId], references: [id], onDelete: Cascade)
@@ -1548,6 +1553,7 @@ model ImportBatch {
   @@index([companyId])
   @@index([bankAccountId])
   @@index([paymentCardId])
+  @@index([companyId, sourceType, sourceFileSha256])
 }
 
 model ImportRow {

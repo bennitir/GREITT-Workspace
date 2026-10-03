@@ -11,6 +11,7 @@ import {
   confirmBankFinancialEventPayment as confirmBankFinancialEventPaymentCore,
 } from "@/lib/financial-reconciliation/event-confirmation";
 import { prisma } from "@/lib/prisma";
+import { sourceFileSha256, sourceFileSize } from "@/lib/bank/import-provenance";
 
 async function bankContext(requestedCompanyId?: number) {
   const store = await cookies();
@@ -165,7 +166,10 @@ export async function previewBankStatement(formData: FormData) {
   if (!(file instanceof File)) throw new Error("Engin skrá valin.");
   if (!/\.(xlsx|xls)$/i.test(file.name)) throw new Error("Bankayfirlitið þarf að vera XLSX eða XLS skrá.");
 
-  const workbook = XLSX.read(Buffer.from(await file.arrayBuffer()), { type: "buffer", cellDates: true });
+  const fileBuffer = Buffer.from(await file.arrayBuffer());
+  const fileSha256 = sourceFileSha256(fileBuffer);
+  const fileSize = sourceFileSize(fileBuffer);
+  const workbook = XLSX.read(fileBuffer, { type: "buffer", cellDates: true });
   const firstSheetName = workbook.SheetNames[0];
   if (!firstSheetName) throw new Error("Engin vinnublöð fundust í skránni.");
 
@@ -193,7 +197,15 @@ export async function previewBankStatement(formData: FormData) {
   ) as unknown[][];
 
   const batch = await prisma.importBatch.create({
-    data: { companyId, bankAccountId, fileName: file.name, sourceType: "BANK_STATEMENT_XLSX", status: "PREVIEW" },
+    data: {
+      companyId,
+      bankAccountId,
+      fileName: file.name,
+      sourceType: "BANK_STATEMENT_XLSX",
+      sourceFileSha256: fileSha256,
+      sourceFileSize: fileSize,
+      status: "PREVIEW",
+    },
   });
 
   const preparedRows = dataRows.map((row, index) => {
@@ -313,7 +325,12 @@ export async function confirmBankImport(formData: FormData) {
 
   await prisma.importBatch.update({
     where: { id: batch.id },
-    data: { status: duplicates > 0 ? `IMPORTED:${imported}:DUPLICATES:${duplicates}` : `IMPORTED:${imported}` },
+    data: {
+      status: "IMPORTED",
+      importedCount: imported,
+      duplicateCount: duplicates,
+      completedAt: new Date(),
+    },
   });
   redirect(`/banki/${batch.bankAccountId}`);
 }
