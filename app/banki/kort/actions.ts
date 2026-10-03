@@ -1,10 +1,14 @@
 "use server";
 
-import { createHash } from "crypto";
 import * as XLSX from "xlsx";
 import { cookies } from "next/headers";
 import { redirect } from "next/navigation";
 import { prisma } from "@/lib/prisma";
+import {
+  cardRowFingerprint,
+  normalizePaymentCardFingerprintDate,
+  storedPaymentCardTransactionFingerprint,
+} from "@/lib/bank/payment-card-fingerprint";
 
 const CARD_STATEMENT_SOURCE = "PAYMENT_CARD_STATEMENT_XLSX";
 
@@ -118,28 +122,6 @@ function parseCardDate(value: unknown): Date | null {
   );
 }
 
-function cardRowFingerprint(
-  paymentCardId: number,
-  date: Date,
-  raw: Record<string, unknown>,
-  amount: number,
-) {
-  const source = [
-    paymentCardId,
-    date.toISOString(),
-    raw.merchantText ?? "",
-    raw.merchantCategory ?? "",
-    raw.foreignAmount ?? "",
-    raw.currency ?? "",
-    raw.exchangeRate ?? "",
-    amount,
-    raw.explanation ?? "",
-    raw.cardPeriod ?? "",
-  ].join("|");
-
-  return createHash("sha256").update(source).digest("hex");
-}
-
 export async function createPaymentCard(formData: FormData) {
   const { companyId } = await cardContext();
   const name = text(formData.get("name"));
@@ -235,7 +217,8 @@ export async function previewPaymentCardStatement(formData: FormData) {
   });
 
   const preparedRows = dataRows.map((row, index) => {
-    const date = parseCardDate(cell(row, headers, "Dagsetning", "Date"));
+    const parsedDate = parseCardDate(cell(row, headers, "Dagsetning", "Date"));
+    const date = parsedDate ? normalizePaymentCardFingerprintDate(parsedDate) : null;
     const amount = parseNumber(cell(row, headers, "Upphæð(ISK)", "Upphæð", "Amount"));
     const merchantText = text(
       cell(row, headers, "Söluaðili eða skýring", "Merchant", "Description"),
@@ -274,17 +257,35 @@ export async function previewPaymentCardStatement(formData: FormData) {
     };
   });
 
-  const fingerprints = preparedRows.flatMap((row) => row.fingerprint ? [row.fingerprint] : []);
-  const existingTransactions = fingerprints.length
+  const preparedDates = preparedRows.flatMap((row) => row.date ? [row.date.getTime()] : []);
+  const existingTransactions = preparedDates.length
     ? await prisma.paymentCardTransaction.findMany({
-        where: { paymentCardId, fingerprint: { in: fingerprints } },
-        select: { fingerprint: true },
+        where: {
+          paymentCardId,
+          date: {
+            gte: new Date(Math.min(...preparedDates) - 1000),
+            lte: new Date(Math.max(...preparedDates) + 1000),
+          },
+        },
+        select: {
+          date: true,
+          merchantText: true,
+          merchantCategory: true,
+          foreignAmount: true,
+          currency: true,
+          exchangeRate: true,
+          amount: true,
+          explanation: true,
+          cardPeriod: true,
+          sourceRawData: true,
+        },
       })
     : [];
   const existingFingerprints = new Set(
-    existingTransactions.flatMap((transaction) =>
-      transaction.fingerprint ? [transaction.fingerprint] : []
-    ),
+    existingTransactions.flatMap((transaction) => {
+      const fingerprint = storedPaymentCardTransactionFingerprint(paymentCardId, transaction);
+      return fingerprint ? [fingerprint] : [];
+    }),
   );
 
   const importRows = preparedRows.map(({ index, date, amount, merchantText, raw, fingerprint }) => {
@@ -356,7 +357,8 @@ export async function confirmPaymentCardImport(formData: FormData) {
   if (!batch?.paymentCardId || !batch.paymentCard) {
     throw new Error("Kortainnflutningur fannst ekki.");
   }
-  await requirePaymentCard(batch.paymentCardId, companyId);
+  const paymentCardId = batch.paymentCardId;
+  await requirePaymentCard(paymentCardId, companyId);
 
   let imported = 0;
   let duplicates = 0;
@@ -370,18 +372,49 @@ export async function confirmPaymentCardImport(formData: FormData) {
 
     const raw = JSON.parse(row.rawData) as Record<string, unknown>;
     const amount = parseNumber(raw.amount);
-    const fingerprint = text(raw.fingerprint);
-    if (amount === null || !fingerprint) continue;
+    if (amount === null) continue;
+    const date = normalizePaymentCardFingerprintDate(row.date);
+    const fingerprint = cardRowFingerprint(paymentCardId, date, raw, amount);
 
-    const existing = await prisma.paymentCardTransaction.findUnique({
+    const exactExisting = await prisma.paymentCardTransaction.findUnique({
       where: {
         paymentCardId_fingerprint: {
-          paymentCardId: batch.paymentCardId,
+          paymentCardId: paymentCardId,
           fingerprint,
         },
       },
       select: { id: true },
     });
+
+    let existing = Boolean(exactExisting);
+    if (!existing) {
+      const nearbyTransactions = await prisma.paymentCardTransaction.findMany({
+        where: {
+          paymentCardId: paymentCardId,
+          date: {
+            gte: new Date(date.getTime() - 1000),
+            lte: new Date(date.getTime() + 1000),
+          },
+        },
+        select: {
+          date: true,
+          merchantText: true,
+          merchantCategory: true,
+          foreignAmount: true,
+          currency: true,
+          exchangeRate: true,
+          amount: true,
+          explanation: true,
+          cardPeriod: true,
+          sourceRawData: true,
+        },
+      });
+      existing = nearbyTransactions.some(
+        (transaction) =>
+          storedPaymentCardTransactionFingerprint(paymentCardId, transaction) === fingerprint,
+      );
+    }
+
     if (existing) {
       duplicates++;
       continue;
@@ -389,8 +422,8 @@ export async function confirmPaymentCardImport(formData: FormData) {
 
     await prisma.paymentCardTransaction.create({
       data: {
-        paymentCardId: batch.paymentCardId,
-        date: row.date,
+        paymentCardId: paymentCardId,
+        date,
         merchantText: row.text,
         merchantCategory: text(raw.merchantCategory) || null,
         foreignAmount: parseNumber(raw.foreignAmount),
@@ -418,5 +451,5 @@ export async function confirmPaymentCardImport(formData: FormData) {
     },
   });
 
-  redirect(`/banki/kort/${batch.paymentCardId}`);
+  redirect(`/banki/kort/${paymentCardId}`);
 }
