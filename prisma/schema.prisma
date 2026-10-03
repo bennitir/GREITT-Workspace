@@ -64,6 +64,7 @@ model Company {
   aiUsage      AiUsage[]
   auditEvents  AuditEvent[]
   modules      CompanyModule[]
+  groupMemberships CompanyGroupMembership[]
   featureSettings CompanyFeatureSetting[]
   imports      ImportBatch[]
   receipts     Receipt[]
@@ -676,6 +677,20 @@ model UserCompany {
   canBookEntries Boolean @default(false)
   canManageCompanySettings Boolean @default(false)
 
+  // Sales permissions are action-specific and do not grant legacy general write access.
+  canSaleUse Boolean @default(false)
+  canSaleHold Boolean @default(false)
+  canSaleDiscount Boolean @default(false)
+  canSaleChangePrice Boolean @default(false)
+  canSaleInvoice Boolean @default(false)
+  canSaleRefund Boolean @default(false)
+  canSaleVoid Boolean @default(false)
+  canSaleSettlementView Boolean @default(false)
+  canSaleSettlementCreate Boolean @default(false)
+  canSaleSettlementFinalize Boolean @default(false)
+  canSaleCustomerManage Boolean @default(false)
+  canSaleSettingsManage Boolean @default(false)
+
   // Tölvupósttilkynningar eru stilltar á tengingu notanda og fyrirtækis.
   // Sama manneskja getur því fengið tilkynningar fyrir eitt fyrirtæki en ekki annað.
   emailNotificationsEnabled Boolean @default(false)
@@ -911,8 +926,10 @@ model OperationalLocation {
   incomingRoutes OperationalTravelRoute[] @relation("OperationalTravelRouteTo")
   outgoingPlanLegs WorkTravelPlanLeg[] @relation("WorkTravelPlanLegFrom")
   incomingPlanLegs WorkTravelPlanLeg[] @relation("WorkTravelPlanLegTo")
+  salesBranch SalesBranch?
 
   @@unique([companyId, code])
+  @@unique([id, companyId])
   @@index([companyId, isActive])
   @@index([companyId, zoneCode])
 }
@@ -1485,6 +1502,206 @@ model CompanyModule {
   @@unique([companyId, moduleId])
   @@index([companyId])
 }
+
+// Sameiginlegt fyrirtækjahópa-/keðjusamhengi fyrir Heim og kjarna GLÖGGT.
+// Sala má nota hópinn, en hópurinn tilheyrir ekki Sölu sérstaklega.
+model CompanyGroup {
+  id        Int      @id @default(autoincrement())
+  name      String
+  isActive  Boolean  @default(true)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  companies CompanyGroupMembership[]
+}
+
+model CompanyGroupMembership {
+  id        Int      @id @default(autoincrement())
+  groupId   Int
+  companyId Int
+  createdAt DateTime @default(now())
+
+  group   CompanyGroup @relation(fields: [groupId], references: [id], onDelete: Cascade)
+  company Company      @relation(fields: [companyId], references: [id], onDelete: Cascade)
+
+  @@unique([groupId, companyId])
+  @@index([companyId])
+}
+
+// SalesBranch er söluhlutverk á sameiginlegri OperationalLocation.
+// Heimilisfang, staðsetning og fyrirtækjasamhengi eru því ekki tvítekin í Sölu.
+model SalesBranch {
+  id                    Int      @id @default(autoincrement())
+  companyId             Int
+  operationalLocationId Int
+  isActive              Boolean  @default(true)
+  createdAt             DateTime @default(now())
+  updatedAt             DateTime @updatedAt
+
+  operationalLocation OperationalLocation @relation(fields: [operationalLocationId, companyId], references: [id, companyId], onDelete: Restrict)
+  terminals           SalesTerminal[]
+  sales               Sale[]
+
+  @@unique([id, companyId])
+  @@unique([operationalLocationId, companyId])
+  @@index([companyId, isActive])
+}
+
+enum SalesTerminalType {
+  POS
+  MOBILE
+  WEB
+  OTHER
+}
+
+// Einstök sölustöð/kassi/sími/tablet innan útibús.
+// Kóðinn er einstakur innan fyrirtækis, óháð útibúi.
+model SalesTerminal {
+  id           Int               @id @default(autoincrement())
+  companyId    Int
+  branchId     Int
+  code         String
+  name         String
+  terminalType SalesTerminalType @default(POS)
+  isActive     Boolean           @default(true)
+  createdAt    DateTime          @default(now())
+  updatedAt    DateTime          @updatedAt
+
+  branch SalesBranch @relation(fields: [branchId, companyId], references: [id, companyId], onDelete: Restrict)
+  sales  Sale[]
+
+  @@unique([companyId, code])
+  @@unique([id, branchId, companyId])
+  @@index([companyId, isActive])
+  @@index([branchId, isActive])
+}
+
+enum SaleStatus {
+  DRAFT
+  HELD
+  FINALIZED
+  CANCELLED
+  RETURNED
+}
+
+enum SaleLineSource {
+  QUICK_BUTTON
+  BARCODE
+  SEARCH
+  FREE_LINE
+  WORK
+  QUOTE
+  ORDER
+}
+
+enum PaymentStatus {
+  PENDING
+  AUTHORIZED
+  CONFIRMED
+  FAILED
+  CANCELLED
+  REFUNDED
+}
+
+// Sale er rekstrarstaðreynd Sölu. Formlegur reikningur, birgðahreyfing og
+// bókhaldsfærsla eru aðskilin lög sem tengjast síðar við sömu sölu.
+// branchId er alltaf varðveitt á sölunni. terminalId er valkvætt svo sala sem
+// kemur t.d. úr Work/Quote/Order þurfi ekki tilbúna sölustöð. Ef terminal er
+// til staðar tryggir composite FK að hann tilheyri sama branch og company.
+model Sale {
+  id         Int        @id @default(autoincrement())
+  companyId  Int
+  branchId   Int
+  terminalId Int?
+
+  status   SaleStatus @default(DRAFT)
+  currency String     @default("ISK")
+
+  // Samtölur eru snapshot af línunum og eiga að uppfærast transactionally.
+  subtotalAmount Decimal @default(0)
+  discountAmount Decimal @default(0)
+  netAmount      Decimal @default(0)
+  vatAmount      Decimal @default(0)
+  totalAmount    Decimal @default(0)
+
+  heldAt      DateTime?
+  finalizedAt DateTime?
+  cancelledAt DateTime?
+  returnedAt  DateTime?
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+
+  branch   SalesBranch    @relation(fields: [branchId, companyId], references: [id, companyId], onDelete: Restrict)
+  terminal SalesTerminal? @relation(fields: [terminalId, branchId, companyId], references: [id, branchId, companyId], onDelete: Restrict)
+  lines    SaleLine[]
+  payments Payment[]
+
+  @@unique([id, companyId])
+  @@index([companyId, status, createdAt])
+  @@index([branchId, status, createdAt])
+  @@index([terminalId, status, createdAt])
+}
+
+model SaleLine {
+  id        Int @id @default(autoincrement())
+  companyId Int
+  saleId    Int
+  position  Int
+
+  description String
+  quantity    Decimal
+  unit        String
+  unitPrice   Decimal
+
+  subtotalAmount Decimal
+  discountAmount Decimal @default(0)
+  netAmount      Decimal
+  vatRate        Decimal
+  vatAmount      Decimal
+  totalAmount    Decimal
+
+  source          SaleLineSource
+  sourceReference String?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  sale Sale @relation(fields: [saleId, companyId], references: [id, companyId], onDelete: Restrict)
+
+  @@unique([saleId, position])
+  @@index([companyId, saleId])
+  @@index([companyId, source])
+}
+
+// Greiðsla er aðskilin frá Sale svo split-payment og ólík greiðslustaða séu
+// möguleg án þess að breyta sölustöðunni sjálfri. methodCode verður síðar hægt
+// að tengja við fyrirtækissértæka PaymentMethod stillingu.
+model Payment {
+  id        Int @id @default(autoincrement())
+  companyId Int
+  saleId    Int
+  sequence  Int
+
+  methodCode   String
+  amount       Decimal
+  currency     String   @default("ISK")
+  exchangeRate Decimal?
+
+  reference              String?
+  authorizationReference String?
+  status                 PaymentStatus @default(PENDING)
+  confirmedAt            DateTime?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  sale Sale @relation(fields: [saleId, companyId], references: [id, companyId], onDelete: Restrict)
+
+  @@unique([saleId, sequence])
+  @@index([companyId, status, createdAt])
+  @@index([saleId, status])
+}
+
 
 model CompanyFeatureSetting {
   id         Int      @id @default(autoincrement())
