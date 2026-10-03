@@ -9,6 +9,7 @@ import {
   holdSaleAction,
   removeSaleLineAction,
   resumeSaleAction,
+  voidSaleAction,
 } from "@/app/sala/actions";
 import type { SaleStatus } from "@/lib/core/sales-domain";
 
@@ -68,6 +69,10 @@ type Text = {
   resuming: string;
   finalize: string;
   finalizing: string;
+  voidSale: string;
+  voidingSale: string;
+  voidConfirm: string;
+  voidedHelp: string;
   finalizedHelp: string;
   heldHelp: string;
   discountPermission: string;
@@ -86,7 +91,7 @@ export default function SaleWorkspaceClient({
   text,
 }: {
   sale: SaleView;
-  permissions: { canHold: boolean; canDiscount: boolean };
+  permissions: { canHold: boolean; canDiscount: boolean; canVoid: boolean };
   text: Text;
 }) {
   const router = useRouter();
@@ -175,6 +180,9 @@ export default function SaleWorkspaceClient({
       {sale.status === "FINALIZED" ? (
         <p className="rounded-xl border border-emerald-200 bg-emerald-50 p-3 text-sm text-emerald-900">{text.finalizedHelp}</p>
       ) : null}
+      {sale.status === "CANCELLED" ? (
+        <p className="rounded-xl border border-red-200 bg-red-50 p-3 text-sm text-red-900">{text.voidedHelp}</p>
+      ) : null}
       {error ? <p className="rounded-xl border border-red-200 bg-red-50 p-3 text-sm font-medium text-red-800">{error}</p> : null}
 
       <section className="rounded-2xl border border-slate-200 bg-white shadow-sm">
@@ -192,6 +200,7 @@ export default function SaleWorkspaceClient({
                   <th className="px-4 py-3">#</th>
                   <th className="px-4 py-3">{text.description}</th>
                   <th className="px-4 py-3">{text.quantity}</th>
+                  <th className="px-4 py-3">{text.unit}</th>
                   <th className="px-4 py-3">{text.unitPrice}</th>
                   <th className="px-4 py-3">{text.discount}</th>
                   <th className="px-4 py-3">{text.vat}</th>
@@ -204,7 +213,8 @@ export default function SaleWorkspaceClient({
                   <tr key={line.id}>
                     <td className="px-4 py-3 text-slate-500">{line.position}</td>
                     <td className="px-4 py-3 font-medium text-slate-900">{line.description}</td>
-                    <td className="px-4 py-3">{line.quantity} {line.unit}</td>
+                    <td className="px-4 py-3">{line.quantity}</td>
+                    <td className="px-4 py-3">{line.unit}</td>
                     <td className="px-4 py-3">{money(line.unitPrice, sale.currency)}</td>
                     <td className="px-4 py-3">{money(line.discountAmount, sale.currency)}</td>
                     <td className="px-4 py-3">{money(line.vatAmount, sale.currency)} ({line.vatRate}%)</td>
@@ -323,6 +333,19 @@ export default function SaleWorkspaceClient({
               className="rounded-xl border border-slate-300 bg-white px-4 py-2.5 font-semibold disabled:opacity-50"
             >
               {pending ? text.resuming : text.resume}
+            </button>
+          ) : null}
+          {permissions.canVoid ? (
+            <button
+              type="button"
+              disabled={pending}
+              onClick={() => {
+                if (!window.confirm(text.voidConfirm)) return;
+                refreshAfter(() => voidSaleAction({ saleId: sale.id }));
+              }}
+              className="rounded-xl border border-red-300 bg-white px-4 py-2.5 font-semibold text-red-700 disabled:opacity-50"
+            >
+              {pending ? text.voidingSale : text.voidSale}
             </button>
           ) : null}
           <button

@@ -49,6 +49,7 @@ export default async function SaleDetailPage({ params }: Props) {
           permissions={{
             canHold: hasSalesPermission(access, "SALE_HOLD"),
             canDiscount: hasSalesPermission(access, "SALE_DISCOUNT"),
+            canVoid: hasSalesPermission(access, "SALE_VOID"),
           }}
           text={{
             status: t.status,
@@ -77,6 +78,10 @@ export default async function SaleDetailPage({ params }: Props) {
             resuming: t.resuming,
             finalize: t.finalize,
             finalizing: t.finalizing,
+            voidSale: t.voidSale,
+            voidingSale: t.voidingSale,
+            voidConfirm: t.voidConfirm,
+            voidedHelp: t.voidedHelp,
             finalizedHelp: t.finalizedHelp,
             heldHelp: t.heldHelp,
             discountPermission: t.discountPermission,

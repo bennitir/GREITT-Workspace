@@ -12,6 +12,7 @@ export const SALES_ACTIONS = [
   "HOLD",
   "RESUME",
   "RECORD_PAYMENT",
+  "VOID",
   "FINALIZE",
 ] as const;
 
@@ -25,6 +26,7 @@ const SALES_ACTION_PERMISSIONS = {
   HOLD: ["SALE_USE", "SALE_HOLD"],
   RESUME: ["SALE_USE", "SALE_HOLD"],
   RECORD_PAYMENT: ["SALE_USE"],
+  VOID: ["SALE_USE", "SALE_VOID"],
   FINALIZE: ["SALE_USE"],
 } as const satisfies Record<SalesAction, readonly SalesPermission[]>;
 

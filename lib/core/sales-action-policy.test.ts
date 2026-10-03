@@ -22,6 +22,10 @@ test("hold and resume also require SALE_HOLD", () => {
   assert.deepEqual(salesPermissionsForAction("RESUME"), ["SALE_USE", "SALE_HOLD"]);
 });
 
+test("void also requires SALE_VOID", () => {
+  assert.deepEqual(salesPermissionsForAction("VOID"), ["SALE_USE", "SALE_VOID"]);
+});
+
 test("ordinary sale mutations do not inherit unrelated elevated permissions", () => {
   for (const action of [
     "CREATE_DRAFT",

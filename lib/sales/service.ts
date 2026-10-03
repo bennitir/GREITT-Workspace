@@ -154,6 +154,7 @@ export interface SalesTransaction {
       status: SaleStatus;
       heldAt?: Date | null;
       finalizedAt?: Date | null;
+      cancelledAt?: Date | null;
     },
   ): Promise<SaleRecord>;
 
@@ -177,6 +178,7 @@ export interface SalesTransaction {
     lineId: number,
   ): Promise<void>;
 
+  hasSalePayments(companyId: number, saleId: number): Promise<boolean>;
   nextPaymentSequence(companyId: number, saleId: number): Promise<number>;
   createPayment(input: CreatePaymentRecordInput): Promise<PaymentRecord>;
   getPayment(
@@ -210,6 +212,7 @@ export type SaleSnapshot = {
   totalAmount: string;
   heldAt: Date | null;
   finalizedAt: Date | null;
+  cancelledAt: Date | null;
 };
 
 export type PaymentSnapshot = {
@@ -292,6 +295,7 @@ function saleSnapshot(sale: SaleRecord): SaleSnapshot {
     totalAmount: sale.totalAmount.toString(),
     heldAt: sale.heldAt,
     finalizedAt: sale.finalizedAt,
+    cancelledAt: sale.cancelledAt,
   };
 }
 
@@ -560,6 +564,36 @@ export class SalesService {
         heldAt: null,
       });
       return saleSnapshot(updated);
+    });
+  }
+
+  async voidSale(input: {
+    companyId: number;
+    saleId: number;
+    now?: Date;
+  }): Promise<SaleSnapshot & { idempotent: boolean }> {
+    return this.repository.transaction(async (tx) => {
+      const sale = await requireSale(tx, input.companyId, input.saleId);
+      if (sale.status === "CANCELLED") {
+        return { ...saleSnapshot(sale), idempotent: true };
+      }
+
+      assertSaleStatusTransition(sale.status, "CANCELLED");
+
+      if (await tx.hasSalePayments(input.companyId, input.saleId)) {
+        throw new Error("SALE_WITH_PAYMENTS_CANNOT_BE_VOIDED");
+      }
+      const cancelled = await tx.updateSaleStatus(
+        input.companyId,
+        input.saleId,
+        {
+          status: "CANCELLED",
+          heldAt: null,
+          cancelledAt: input.now ?? new Date(),
+        },
+      );
+
+      return { ...saleSnapshot(cancelled), idempotent: false };
     });
   }
 

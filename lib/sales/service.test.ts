@@ -188,6 +188,11 @@ class MemoryRepository implements SalesRepository {
         state.lines.splice(index, 1);
       },
 
+      hasSalePayments: async (companyId, saleId) =>
+        state.payments.some(
+          (row) => row.companyId === companyId && row.saleId === saleId,
+        ),
+
       nextPaymentSequence: async (companyId, saleId) => {
         const sequences = state.payments
           .filter(
@@ -421,6 +426,71 @@ test("held sales freeze lines until resumed", async () => {
     line: sampleLine(),
   });
   assert.equal(repository.state.lines.length, 1);
+});
+
+test("void cancels draft and held sales and is idempotent", async () => {
+  const repository = new MemoryRepository();
+  const service = new SalesService(repository);
+  const draft = await service.createDraftSale({
+    companyId: 7,
+    branchId: 11,
+  });
+  const cancelledAt = new Date("2026-10-03T22:45:00Z");
+
+  const cancelledDraft = await service.voidSale({
+    companyId: 7,
+    saleId: draft.id,
+    now: cancelledAt,
+  });
+  assert.equal(cancelledDraft.status, "CANCELLED");
+  assert.equal(cancelledDraft.cancelledAt?.toISOString(), cancelledAt.toISOString());
+  assert.equal(cancelledDraft.heldAt, null);
+  assert.equal(cancelledDraft.idempotent, false);
+
+  const repeated = await service.voidSale({
+    companyId: 7,
+    saleId: draft.id,
+  });
+  assert.equal(repeated.status, "CANCELLED");
+  assert.equal(repeated.idempotent, true);
+
+  const held = await service.createDraftSale({
+    companyId: 7,
+    branchId: 11,
+  });
+  await service.holdSale({
+    companyId: 7,
+    saleId: held.id,
+    now: new Date("2026-10-03T22:46:00Z"),
+  });
+  const cancelledHeld = await service.voidSale({
+    companyId: 7,
+    saleId: held.id,
+    now: new Date("2026-10-03T22:47:00Z"),
+  });
+  assert.equal(cancelledHeld.status, "CANCELLED");
+  assert.equal(cancelledHeld.heldAt, null);
+});
+
+test("void rejects sales that already have payments", async () => {
+  const repository = new MemoryRepository();
+  const service = new SalesService(repository);
+  const sale = await service.createDraftSale({
+    companyId: 7,
+    branchId: 11,
+  });
+
+  await service.recordPayment({
+    companyId: 7,
+    saleId: sale.id,
+    methodCode: "CARD",
+    amount: "100",
+  });
+
+  await assert.rejects(
+    () => service.voidSale({ companyId: 7, saleId: sale.id }),
+    /SALE_WITH_PAYMENTS_CANNOT_BE_VOIDED/,
+  );
 });
 
 test("payments have independent sequence and lifecycle", async () => {

@@ -148,6 +148,14 @@ function createTransactionAdapter(
       });
     },
 
+    async hasSalePayments(companyId, saleId) {
+      const payment = await tx.payment.findFirst({
+        where: { companyId, saleId },
+        select: { id: true },
+      });
+      return payment !== null;
+    },
+
     async nextPaymentSequence(companyId, saleId) {
       const aggregate = await tx.payment.aggregate({
         where: { companyId, saleId },

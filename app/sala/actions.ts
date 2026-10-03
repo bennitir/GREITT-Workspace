@@ -183,6 +183,19 @@ export async function resumeSaleAction(input: { saleId: number }) {
   return sale;
 }
 
+export async function voidSaleAction(input: { saleId: number }) {
+  const { companyId } = await requireActiveSalesPermissions(
+    salesPermissionsForAction("VOID"),
+  );
+  const sale = await createPrismaSalesService().voidSale({
+    companyId,
+    saleId: input.saleId,
+  });
+
+  revalidateSale(input.saleId);
+  return sale;
+}
+
 export async function recordPaymentAction(input: {
   saleId: number;
   methodCode: string;
