@@ -4,7 +4,7 @@ import { extractTextFromPdfBuffer } from "@/lib/core/pdf-text";
 import { inspectCanonicalReceiptKnowledge } from "@/lib/insight/reconciliation";
 
 export const RECEIPT_PROCESSING_VERSION = "receipt-v5-data-first-page-split";
-export const DETERMINISTIC_RECEIPT_PURCHASE_LINE_VERSION = "pos-lines-v4-fuel-decimals";
+export const DETERMINISTIC_RECEIPT_PURCHASE_LINE_VERSION = "document-lines-v5-template-aware";
 
 export type ReceiptSourceSnapshot = {
   sourceText: string | null;
@@ -567,6 +567,7 @@ export function tryParseDeterministicLabeledPurchaseInvoice(input: {
 
   const vat = findVatBreakdown(text, totalAmount);
   const paymentInfo = findPaymentInfo(text);
+  const purchaseLines = extractDeterministicLabeledPurchaseInvoiceLines(text);
   const summaryParts = [
     `Reikningur ${receiptNumber} frá ${seller.merchantName}.`,
     `Dagsetning ${issueDate}.`,
@@ -595,7 +596,7 @@ export function tryParseDeterministicLabeledPurchaseInvoice(input: {
     insurancePolicies: [],
     paymentSchedule: null,
     paymentInfo,
-    purchaseLines: [],
+    purchaseLines,
     bookingEntries: [],
     pageNumber: 1,
   };
@@ -873,6 +874,152 @@ function parseReceiptBundleTableProductRow(
     stockCandidate: true,
     confidence: 0.97,
   };
+}
+
+
+/**
+ * 0-AI línulesari fyrir einfaldan, merktann innkaupareikning.
+ *
+ * Hann er sniðbundinn en ekki birgjasértækur. Hann leitar að töflu með
+ * lýsingu/þjónustu + magni/fjölda + samtölu og skilar aðeins línum þegar
+ * summan stemmir við prentaða heild reikningsins. Þannig má aldrei búa til
+ * t.d. 1.189 kr. úr 189 kr. línu ef heildarjöfnan stenst ekki.
+ */
+export function extractDeterministicLabeledPurchaseInvoiceLines(
+  pageText: string,
+): PurchaseLineLike[] {
+  const text = pageText.replace(/\r\n?/g, "\n");
+  const lines = text
+    .split("\n")
+    .map((line) => normalizeWhitespace(line))
+    .filter(Boolean);
+
+  const normalizedLines = lines.map((line) => normalizeIdentityText(line));
+  let headerStart = -1;
+  let headerEnd = -1;
+
+  for (let index = 0; index < normalizedLines.length; index += 1) {
+    let joined = "";
+    for (let end = index; end < Math.min(lines.length, index + 4); end += 1) {
+      joined = `${joined} ${normalizedLines[end]}`.trim();
+      const hasDescription = /\b(thjonusta|lysing|heiti|vara)\b/.test(joined);
+      const hasQuantity = /\b(fjoldi|magn)\b/.test(joined);
+      const hasTotal = /\bsamtals\b/.test(joined);
+      if (hasDescription && hasQuantity && hasTotal) {
+        headerStart = index;
+        headerEnd = end;
+        break;
+      }
+    }
+    if (headerStart >= 0) break;
+  }
+
+  if (headerStart < 0) return [];
+
+  const parseCandidate = (candidate: string): PurchaseLineLike | null => {
+    const cleaned = normalizeWhitespace(candidate);
+    if (!cleaned) return null;
+    const normalized = normalizeIdentityText(cleaned);
+    if (/^(samtals|samantekt|skattstofn|vsk|eindagi|gjalddagi)\b/.test(normalized)) {
+      return null;
+    }
+
+    const match = cleaned.match(
+      /^(.+?)\s+(\d+(?:[.,]\d+)?)\s+([0-9][0-9.\s]*(?:,[0-9]{1,2})?)\s*(?:kr\.?|isk)?$/i,
+    );
+    if (!match) return null;
+
+    const description = normalizeWhitespace(match[1]);
+    const quantity = Number(match[2].replace(",", "."));
+    const lineTotal = parseIcelandicAmount(match[3]);
+    if (
+      description.length < 2 ||
+      !/[A-Za-zÁÉÍÓÚÝÞÆÖÐáéíóúýþæöð]/.test(description) ||
+      !Number.isFinite(quantity) ||
+      quantity <= 0 ||
+      lineTotal == null ||
+      lineTotal <= 0
+    ) {
+      return null;
+    }
+
+    return {
+      description,
+      quantity,
+      lineTotal,
+      stockCandidate: false,
+      confidence: 0.99,
+    };
+  };
+
+  const purchaseLines: PurchaseLineLike[] = [];
+  let index = headerEnd + 1;
+
+  while (index < lines.length) {
+    const line = lines[index];
+    const normalized = normalizedLines[index];
+    if (/^(samtals|samantekt)\b/.test(normalized)) break;
+
+    const direct = parseCandidate(line);
+    if (direct) {
+      purchaseLines.push(direct);
+      index += 1;
+      continue;
+    }
+
+    // Algengt PDF-textalag skiptir dálkum í 2–3 línur. Sameinum aðeins mjög
+    // stutt look-ahead og samþykkjum það því aðeins að niðurstaðan líti út
+    // eins og full vörulína.
+    let parsed: PurchaseLineLike | null = null;
+    let consumed = 0;
+    for (let count = 2; count <= 3 && index + count <= lines.length; count += 1) {
+      const candidateParts = lines.slice(index, index + count);
+      if (candidateParts.slice(1).some((part) => /^(samtals|samantekt)\b/.test(normalizeIdentityText(part)))) {
+        break;
+      }
+      const candidate = candidateParts.join(" ");
+      parsed = parseCandidate(candidate);
+      if (parsed) {
+        consumed = count;
+        break;
+      }
+    }
+
+    if (parsed) {
+      purchaseLines.push(parsed);
+      index += consumed;
+      continue;
+    }
+
+    index += 1;
+  }
+
+  if (purchaseLines.length === 0) return [];
+
+  const invoiceTotal = findLabeledTotalAmount(text);
+  if (invoiceTotal == null) return [];
+  const lineTotal = roundMoney(
+    purchaseLines.reduce((sum, line) => sum + Number(line.lineTotal ?? 0), 0),
+  );
+
+  // Fail-closed: línurnar eru aðeins notaðar sem deterministic bókunargrunnur
+  // þegar þær skýra alla prentaða heildina.
+  if (Math.abs(lineTotal - roundMoney(invoiceTotal)) > 0.01) return [];
+
+  return purchaseLines;
+}
+
+export function extractDeterministicPurchaseLinesForTemplate(
+  pageText: string,
+  templateId: string | null | undefined,
+): PurchaseLineLike[] {
+  if (templateId === "LABELED_PURCHASE_INVOICE_V1") {
+    return extractDeterministicLabeledPurchaseInvoiceLines(pageText);
+  }
+  if (templateId === "LABELED_POS_RECEIPT_BUNDLE_V1") {
+    return extractDeterministicReceiptBundlePurchaseLines(pageText);
+  }
+  return [];
 }
 
 export function extractDeterministicReceiptBundlePurchaseLines(

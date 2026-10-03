@@ -20,7 +20,7 @@ import {
   tryParseDeterministicKontoSalesInvoice,
   tryParseDeterministicLabeledPurchaseInvoice,
   tryParseDeterministicPageReceiptBundle,
-  extractDeterministicReceiptBundlePurchaseLines,
+  extractDeterministicPurchaseLinesForTemplate,
 } from "@/lib/receipts/ingestion";
 import {
   requireActiveCompanyWriteAccess,
@@ -63,6 +63,9 @@ import {
   learnGlobalProductKnowledgeFromReview,
   readCanonicalPurchaseLines,
 } from "@/lib/receipts/product-knowledge";
+import {
+  findStableRecurringBookingTemplate,
+} from "@/lib/receipts/recurring-booking";
 
 async function isInventoryModuleEnabled(companyId: number) {
   const moduleSettings = await getCompanyModuleSettings(companyId);
@@ -2508,6 +2511,12 @@ if (hasInvalidDate) {
                   purchaseLines: Array.isArray(document.purchaseLines)
                     ? document.purchaseLines
                     : [],
+                  purchaseLineParserVersion:
+                    analysisSource === "DETERMINISTIC_TEMPLATE" &&
+                    Array.isArray(document.purchaseLines) &&
+                    document.purchaseLines.length > 0
+                      ? DETERMINISTIC_RECEIPT_PURCHASE_LINE_VERSION
+                      : null,
                   paymentInfo:
                     document.paymentInfo &&
                     typeof document.paymentInfo === "object" &&
@@ -4696,6 +4705,37 @@ function readCachedDeterministicReceiptContext(
     : null;
 }
 
+function readDeterministicTemplateId(extractionMetadata: unknown) {
+  const metadata = receiptSuggestionJsonRecord(extractionMetadata);
+  return typeof metadata?.deterministicTemplateId === "string"
+    ? metadata.deterministicTemplateId
+    : null;
+}
+
+function readCanonicalPaymentMethod(extractionMetadata: unknown) {
+  const metadata = receiptSuggestionJsonRecord(extractionMetadata);
+  const canonicalExtraction = receiptSuggestionJsonRecord(
+    metadata?.canonicalExtraction,
+  );
+  const paymentInfo = receiptSuggestionJsonRecord(
+    canonicalExtraction?.paymentInfo,
+  );
+  return typeof paymentInfo?.method === "string"
+    ? normalizeAccountingPatternPart(paymentInfo.method)
+    : null;
+}
+
+function adaptRecurringBookingText(
+  text: string,
+  sourceReceiptNumber: string | null,
+  currentReceiptNumber: string | null,
+) {
+  if (!sourceReceiptNumber || !currentReceiptNumber || sourceReceiptNumber === currentReceiptNumber) {
+    return text;
+  }
+  return text.split(sourceReceiptNumber).join(currentReceiptNumber);
+}
+
 function readCanonicalCardIdentity(extractionMetadata: unknown) {
   const metadata = receiptSuggestionJsonRecord(extractionMetadata);
   const canonicalExtraction = receiptSuggestionJsonRecord(
@@ -4846,9 +4886,16 @@ export async function applyConfirmedBookingSuggestions(
             (refreshCurrentPurchaseLines && sibling.id === document.id) ||
             storedParserVersion !== DETERMINISTIC_RECEIPT_PURCHASE_LINE_VERSION ||
             existingPurchaseLines.length === 0;
-          const purchaseLines = shouldRefreshThisDocument
-            ? extractDeterministicReceiptBundlePurchaseLines(pageText)
-            : existingPurchaseLines;
+          const parsedPurchaseLines = shouldRefreshThisDocument
+            ? extractDeterministicPurchaseLinesForTemplate(
+                pageText,
+                readDeterministicTemplateId(existing),
+              )
+            : [];
+          const purchaseLines =
+            parsedPurchaseLines.length > 0
+              ? parsedPurchaseLines
+              : existingPurchaseLines;
 
           const nextMetadata = toPrismaInputJsonValue({
             ...existing,
@@ -4857,7 +4904,9 @@ export async function applyConfirmedBookingSuggestions(
               ...canonicalExtraction,
               purchaseLines,
               purchaseLineParserVersion:
-                DETERMINISTIC_RECEIPT_PURCHASE_LINE_VERSION,
+                parsedPurchaseLines.length > 0
+                  ? DETERMINISTIC_RECEIPT_PURCHASE_LINE_VERSION
+                  : storedParserVersion,
             },
           });
           metadataByDocumentId.set(sibling.id, nextMetadata);
@@ -4898,7 +4947,9 @@ export async function applyConfirmedBookingSuggestions(
 
   const currentCard = readCanonicalCardIdentity(workingExtractionMetadata);
   const currentMerchant = normalizeAccountingPatternPart(document.merchantName);
-  const currentDocumentType = normalizeAccountingPatternPart(document.documentType);
+  const currentDeterministicTemplateId = readDeterministicTemplateId(
+    workingExtractionMetadata,
+  );
 
   const priorDocumentSelect = {
     id: true,
@@ -4906,7 +4957,13 @@ export async function applyConfirmedBookingSuggestions(
     pageNumber: true,
     merchantName: true,
     documentType: true,
+    receiptNumber: true,
+    totalAmount: true,
+    reviewedAt: true,
     extractionMetadata: true,
+    receipt: {
+      select: { storagePath: true, filePath: true },
+    },
     bookingEntries: {
       select: { account: true, text: true, debit: true, credit: true },
     },
@@ -4950,9 +5007,107 @@ export async function applyConfirmedBookingSuggestions(
     ).values(),
   ];
 
-  const currentProductLines = readCanonicalPurchaseLines(
+  const currentCanonicalPurchaseLines = readCanonicalPurchaseLines(
     workingExtractionMetadata,
-  )
+  );
+
+  const recurringMerchantDocuments = priorDocuments.filter(
+    (prior) =>
+      Boolean(currentMerchant) &&
+      normalizeAccountingPatternPart(prior.merchantName) === currentMerchant,
+  );
+
+  // Eldri merkt innkaupareikningsskjöl gátu fengið POS-línulesara við
+  // endurbyggingu. Endurlesum aðeins nýleg sambærileg frum-PDF í minni með
+  // rétta deterministic template-lesaranum. Við breytum EKKI eldri skjölum
+  // bara til þess að byggja tillögu fyrir núverandi skjal. Þetta er 0-AI.
+  const recurringPurchaseLinesByDocumentId = new Map<
+    number,
+    ReturnType<typeof readCanonicalPurchaseLines>
+  >();
+
+  for (const prior of recurringMerchantDocuments) {
+    recurringPurchaseLinesByDocumentId.set(
+      prior.id,
+      readCanonicalPurchaseLines(prior.extractionMetadata),
+    );
+  }
+
+  for (const prior of recurringMerchantDocuments.slice(0, 12)) {
+    const existing = receiptSuggestionJsonRecord(prior.extractionMetadata) ?? {};
+    const canonical = receiptSuggestionJsonRecord(existing.canonicalExtraction) ?? {};
+    const parserVersion =
+      typeof canonical.purchaseLineParserVersion === "string"
+        ? canonical.purchaseLineParserVersion
+        : null;
+    const priorTemplateId = readDeterministicTemplateId(existing);
+    const storedPurchaseLines =
+      recurringPurchaseLinesByDocumentId.get(prior.id) ?? [];
+
+    // Eldri skjöl geta verið lesin með AI eða eldri template og því annaðhvort
+    // vantað purchaseLines eða borið rangar POS-línur. Þegar NÚVERANDI skjal
+    // hefur öruggt deterministic template má endurlesa sambærilegt eldri PDF
+    // í minni með sama parser. Exact merchant + heild + línusignature + a.m.k.
+    // tvær jafnar staðfestar bókanir ráða svo hvort bókun má endurnýta.
+    const priorPageNumber = prior.pageNumber;
+    const shouldReparseWithCurrentTemplate =
+      priorPageNumber != null &&
+      Boolean(currentDeterministicTemplateId) &&
+      (priorTemplateId !== currentDeterministicTemplateId ||
+        parserVersion !== DETERMINISTIC_RECEIPT_PURCHASE_LINE_VERSION ||
+        storedPurchaseLines.length === 0);
+
+    if (!shouldReparseWithCurrentTemplate || priorPageNumber == null) continue;
+
+    try {
+      const priorBuffer = await downloadReceiptBuffer(prior.receipt);
+      const priorPages = await extractTextPagesFromPdfBuffer(priorBuffer);
+      const priorPageText = priorPages[priorPageNumber - 1] ?? "";
+      const repairedPurchaseLines = extractDeterministicPurchaseLinesForTemplate(
+        priorPageText,
+        currentDeterministicTemplateId,
+      );
+      if (repairedPurchaseLines.length === 0) continue;
+
+      recurringPurchaseLinesByDocumentId.set(
+        prior.id,
+        repairedPurchaseLines.map((line, lineIndex) =>
+          normalizePurchaseLine(line, lineIndex),
+        ),
+      );
+    } catch (error) {
+      console.error(
+        `Mistókst að endurlesa endurtekið skjal ${prior.id} með núverandi deterministic template:`,
+        error,
+      );
+    }
+  }
+
+  const recurringTemplate = findStableRecurringBookingTemplate({
+    totalAmount: Number(document.totalAmount ?? 0),
+    purchaseLines: currentCanonicalPurchaseLines.map((line) => ({
+      description: line.description,
+      lineTotal: line.lineTotal,
+    })),
+    priorDocuments: recurringMerchantDocuments.map((prior) => ({
+      receiptNumber: prior.receiptNumber,
+      totalAmount: prior.totalAmount,
+      purchaseLines: (recurringPurchaseLinesByDocumentId.get(prior.id) ?? []).map(
+        (line) => ({
+          description: line.description,
+          lineTotal: line.lineTotal,
+        }),
+      ),
+      bookingEntries: prior.bookingEntries.map((entry) => ({
+        account: entry.account,
+        text: entry.text,
+        debit: Number(entry.debit),
+        credit: Number(entry.credit),
+      })),
+    })),
+  });
+
+  const currentProductLines = currentCanonicalPurchaseLines
     .map((line) => ({
       line,
       canonicalKey: buildGlobalProductCanonicalKey(line.description),
@@ -5062,12 +5217,14 @@ export async function applyConfirmedBookingSuggestions(
           const pageText = pages[prior.pageNumber - 1] ?? "";
           if (!pageText.trim()) continue;
 
-          const purchaseLines =
-            extractDeterministicReceiptBundlePurchaseLines(pageText);
-          if (purchaseLines.length === 0) continue;
-
           const existing =
             receiptSuggestionJsonRecord(prior.extractionMetadata) ?? {};
+          const purchaseLines = extractDeterministicPurchaseLinesForTemplate(
+            pageText,
+            readDeterministicTemplateId(existing),
+          );
+          if (purchaseLines.length === 0) continue;
+
           const canonicalExtraction =
             receiptSuggestionJsonRecord(existing.canonicalExtraction) ?? {};
           const nextMetadata = toPrismaInputJsonValue({
@@ -5202,12 +5359,7 @@ export async function applyConfirmedBookingSuggestions(
     },
   );
 
-  const matchingMerchantDocuments = priorDocuments.filter(
-    (prior) =>
-      Boolean(currentMerchant) &&
-      normalizeAccountingPatternPart(prior.merchantName) === currentMerchant &&
-      normalizeAccountingPatternPart(prior.documentType) === currentDocumentType,
-  );
+  const matchingMerchantDocuments = recurringMerchantDocuments;
 
   // Fyrirtækjasértæk mapping frá almennu transaction-context yfir í
   // reikningslykil. Þannig er t.d. CONSUMABLE/FOOD_SERVICE sameiginleg
@@ -5265,6 +5417,9 @@ export async function applyConfirmedBookingSuggestions(
         ) ?? null
       : null;
 
+  const currentPaymentMethod = readCanonicalPaymentMethod(
+    workingExtractionMetadata,
+  );
   const paymentMatchedPriorDocuments = currentCard
     ? priorDocuments.filter((prior) => {
         const priorCard = readCanonicalCardIdentity(prior.extractionMetadata);
@@ -5273,12 +5428,29 @@ export async function applyConfirmedBookingSuggestions(
           priorCard?.lastFour === currentCard.lastFour
         );
       })
-    : [];
+    : currentPaymentMethod === "bank_claim"
+      ? matchingMerchantDocuments.filter(
+          (prior) =>
+            readCanonicalPaymentMethod(prior.extractionMetadata) ===
+            "bank_claim",
+        )
+      : [];
 
   const creditCandidates = paymentMatchedPriorDocuments
     .flatMap((prior) => prior.bookingEntries)
     .filter((entry) => Number(entry.credit) > 0 && Number(entry.debit) === 0)
-    .filter((entry) => accountByNumber.has(String(entry.account).trim()));
+    .filter((entry) => {
+      const account = accountByNumber.get(String(entry.account).trim());
+      if (!account) return false;
+      if (currentCard) return true;
+      return (
+        currentPaymentMethod === "bank_claim" &&
+        (account.type === "ACCOUNTS_PAYABLE" ||
+          account.type === "BANK" ||
+          account.type === "CASH" ||
+          account.entryRole === "PAYMENT")
+      );
+    });
   const creditAccountNumbers = Array.from(
     new Set<string>(creditCandidates.map((entry) => String(entry.account).trim())),
   );
@@ -5371,19 +5543,49 @@ export async function applyConfirmedBookingSuggestions(
     credit: number;
   }> = [];
 
-  for (const suggestion of productDebitSuggestions) {
-    suggestedEntries.push({
-      documentId: suggestion.documentId,
-      account: suggestion.account,
-      text: suggestion.text,
-      debit: suggestion.debit,
-      credit: suggestion.credit,
-    });
+  const recurringDebitEntries = recurringTemplate.debitEntries.filter((entry) =>
+    accountByNumber.has(String(entry.account).trim()),
+  );
+  const recurringCreditEntries = recurringTemplate.creditEntries.filter((entry) =>
+    accountByNumber.has(String(entry.account).trim()),
+  );
+  const useRecurringDebit =
+    recurringDebitEntries.length > 0 &&
+    recurringDebitEntries.length === recurringTemplate.debitEntries.length;
+  const useRecurringCredit =
+    recurringCreditEntries.length > 0 &&
+    recurringCreditEntries.length === recurringTemplate.creditEntries.length;
+
+  if (useRecurringDebit) {
+    for (const entry of recurringDebitEntries) {
+      suggestedEntries.push({
+        documentId: document.id,
+        account: String(entry.account).trim(),
+        text: adaptRecurringBookingText(
+          entry.text,
+          recurringTemplate.sourceReceiptNumber,
+          document.receiptNumber,
+        ),
+        debit: Number(entry.debit),
+        credit: 0,
+      });
+    }
+  } else {
+    for (const suggestion of productDebitSuggestions) {
+      suggestedEntries.push({
+        documentId: suggestion.documentId,
+        account: suggestion.account,
+        text: suggestion.text,
+        debit: suggestion.debit,
+        credit: suggestion.credit,
+      });
+    }
   }
 
-  // Heildar-kostnaðartillaga á aðeins við þegar engin línusértæk vara hefur
-  // þegar fundið sinn reikning. Annars myndi GLÖGGT tvítelja blandaða kvittun.
+  // Heildar-kostnaðartillaga á aðeins við þegar hvorki endurtekið staðfest
+  // bókunarsnið né línusértæk vara hefur þegar fundið sinn reikning.
   if (
+    !useRecurringDebit &&
     productDebitSuggestions.length === 0 &&
     debitAccountNumber &&
     debitExample
@@ -5401,7 +5603,21 @@ export async function applyConfirmedBookingSuggestions(
     });
   }
 
-  if (creditAccountNumber && creditExample) {
+  if (useRecurringCredit) {
+    for (const entry of recurringCreditEntries) {
+      suggestedEntries.push({
+        documentId: document.id,
+        account: String(entry.account).trim(),
+        text: adaptRecurringBookingText(
+          entry.text,
+          recurringTemplate.sourceReceiptNumber,
+          document.receiptNumber,
+        ),
+        debit: 0,
+        credit: Number(entry.credit),
+      });
+    }
+  } else if (creditAccountNumber && creditExample) {
     suggestedEntries.push({
       documentId: document.id,
       account: creditAccountNumber,
@@ -5484,13 +5700,15 @@ export async function applyConfirmedBookingSuggestions(
           deterministicReceiptContext: currentContext,
           deterministicReceiptContextSource: contextSource,
           learnedProductMatchCount,
-          purchaseLineCount: currentProductLines.length,
-          purchaseLines: currentProductLines.slice(0, 20).map((item) => ({
-            description: item.line.description,
-            canonicalKey: item.canonicalKey,
-            quantity: item.line.quantity,
-            lineTotal: item.line.lineTotal,
+          purchaseLineCount: currentCanonicalPurchaseLines.length,
+          purchaseLines: currentCanonicalPurchaseLines.slice(0, 20).map((line) => ({
+            description: line.description,
+            quantity: line.quantity,
+            lineTotal: line.lineTotal,
           })),
+          recurringTemplateEvidenceCount: recurringTemplate.evidenceCount,
+          recurringDebitReused: useRecurringDebit,
+          recurringCreditReused: useRecurringCredit,
           productLineSuggestionCount: productDebitSuggestions.length,
           productLineSuggestionSources: productDebitSuggestions.map(
             (item) => item.source,
@@ -5558,11 +5776,14 @@ export async function applyConfirmedBookingSuggestions(
       const buffer = await downloadReceiptBuffer(document.receipt);
       const pages = await extractTextPagesFromPdfBuffer(buffer);
       const pageText = pages[document.pageNumber - 1] ?? "";
-      const purchaseLines = extractDeterministicReceiptBundlePurchaseLines(pageText);
+      const existing =
+        receiptSuggestionJsonRecord(extractionMetadataForLearning) ?? {};
+      const purchaseLines = extractDeterministicPurchaseLinesForTemplate(
+        pageText,
+        readDeterministicTemplateId(existing),
+      );
 
       if (purchaseLines.length > 0) {
-        const existing =
-          receiptSuggestionJsonRecord(extractionMetadataForLearning) ?? {};
         const canonicalExtraction =
           receiptSuggestionJsonRecord(existing.canonicalExtraction) ?? {};
         extractionMetadataForLearning = {
@@ -5577,6 +5798,8 @@ export async function applyConfirmedBookingSuggestions(
             purchaseLines: purchaseLines.map((line, lineIndex) =>
               normalizePurchaseLine(line, lineIndex),
             ),
+            purchaseLineParserVersion:
+              DETERMINISTIC_RECEIPT_PURCHASE_LINE_VERSION,
           },
         };
 
@@ -6512,8 +6735,10 @@ async function learnConfirmedAccountSelectionPatterns(
 
     if (
       account.type === "BANK" ||
+      account.type === "CASH" ||
+      account.type === "ACCOUNTS_PAYABLE" ||
       account.entryRole === "BANK" ||
-      account.type === "CASH"
+      account.entryRole === "PAYMENT"
     ) {
       decisionRole = "SETTLEMENT_ACCOUNT";
     } else if (

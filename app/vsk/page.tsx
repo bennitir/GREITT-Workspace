@@ -10,6 +10,10 @@ import PageHeader from "@/components/ui/PageHeader";
 import { getEffectiveUser } from "@/lib/core/access-control";
 import { getCurrentInterfaceLanguage } from "@/lib/i18n/current-language";
 import { vatMonthNames, vatText } from "@/lib/i18n/vat";
+import {
+  buildVatReceiptWhere,
+  hasDocumentLevelVatBookings,
+} from "@/lib/vat/receipt-selection";
 
 const formatKr = (amount: number) =>
   formatNumber(amount, {
@@ -239,10 +243,7 @@ export default async function VskPage({
       }),
 
       prisma.receipt.findMany({
-        where: {
-          companyId: activeCompanyId,
-          status: "APPROVED",
-        },
+        where: buildVatReceiptWhere(activeCompanyId),
 
         select: {
           id: true,
@@ -411,11 +412,14 @@ export default async function VskPage({
     }
 
     /*
-     * Ef receipt hefur samþykkt undirskjöl eru þau
-     * sannleikurinn. Þá teljum við ekki receipt sjálft
-     * aftur og forðumst tvítalningu.
+     * Skjalalínur eru authoritative þegar að minnsta kosti eitt
+     * samþykkt undirskjal hefur raunverulegar bókunarlínur.
+     *
+     * Eldri bókanir geta hins vegar haft samþykkt undirskjal án
+     * AiDetectedDocumentEntry en réttar ReceiptEntry-línur. Þá má
+     * ekki láta tómt undirskjal fela receipt-bókunina.
      */
-    if (approvedDocuments.length > 0) {
+    if (hasDocumentLevelVatBookings(approvedDocuments)) {
       continue;
     }
 
