@@ -347,109 +347,150 @@ export async function confirmPaymentCardImport(formData: FormData) {
   const batchId = Number(formData.get("batchId"));
   if (!batchId) throw new Error("Innflutningsbunki vantar.");
 
-  const batch = await prisma.importBatch.findFirst({
-    where: { id: batchId, companyId, sourceType: CARD_STATEMENT_SOURCE },
-    include: {
-      rows: { orderBy: { rowNumber: "asc" } },
-      paymentCard: true,
-    },
-  });
-  if (!batch?.paymentCardId || !batch.paymentCard) {
-    throw new Error("Kortainnflutningur fannst ekki.");
-  }
-  const paymentCardId = batch.paymentCardId;
-  await requirePaymentCard(paymentCardId, companyId);
-
-  let imported = 0;
-  let duplicates = 0;
-
-  for (const row of batch.rows) {
-    if (row.status === "DUPLICATE") {
-      duplicates++;
-      continue;
-    }
-    if (row.status !== "NEW" || !row.date || !row.text || !row.rawData) continue;
-
-    const raw = JSON.parse(row.rawData) as Record<string, unknown>;
-    const amount = parseNumber(raw.amount);
-    if (amount === null) continue;
-    const date = normalizePaymentCardFingerprintDate(row.date);
-    const fingerprint = cardRowFingerprint(paymentCardId, date, raw, amount);
-
-    const exactExisting = await prisma.paymentCardTransaction.findUnique({
+  const result = await prisma.$transaction(async (tx) => {
+    // Claim the preview inside the transaction. This serializes repeated/concurrent
+    // confirmations and rolls back the claim together with every imported row.
+    const claimed = await tx.importBatch.updateMany({
       where: {
-        paymentCardId_fingerprint: {
-          paymentCardId: paymentCardId,
-          fingerprint,
-        },
+        id: batchId,
+        companyId,
+        sourceType: CARD_STATEMENT_SOURCE,
+        status: "PREVIEW",
       },
-      select: { id: true },
+      data: { status: "IMPORTING" },
     });
 
-    let existing = Boolean(exactExisting);
-    if (!existing) {
-      const nearbyTransactions = await prisma.paymentCardTransaction.findMany({
+    if (claimed.count === 0) {
+      const existingBatch = await tx.importBatch.findFirst({
+        where: { id: batchId, companyId, sourceType: CARD_STATEMENT_SOURCE },
+        select: { paymentCardId: true, status: true },
+      });
+      if (!existingBatch?.paymentCardId) {
+        throw new Error("Kortainnflutningur fannst ekki.");
+      }
+      return {
+        paymentCardId: existingBatch.paymentCardId,
+        imported: 0,
+        duplicates: 0,
+        alreadyProcessed: existingBatch.status !== "PREVIEW",
+      };
+    }
+
+    const batch = await tx.importBatch.findFirst({
+      where: { id: batchId, companyId, sourceType: CARD_STATEMENT_SOURCE },
+      include: {
+        rows: { orderBy: { rowNumber: "asc" } },
+        paymentCard: true,
+      },
+    });
+    if (
+      !batch?.paymentCardId ||
+      !batch.paymentCard ||
+      !batch.paymentCard.isActive ||
+      batch.paymentCard.companyId !== companyId
+    ) {
+      throw new Error("Kortainnflutningur fannst ekki.");
+    }
+
+    const paymentCardId = batch.paymentCardId;
+    let imported = 0;
+    let duplicates = 0;
+
+    for (const row of batch.rows) {
+      if (row.status === "DUPLICATE") {
+        duplicates++;
+        continue;
+      }
+      if (row.status !== "NEW" || !row.date || !row.text || !row.rawData) continue;
+
+      const raw = JSON.parse(row.rawData) as Record<string, unknown>;
+      const amount = parseNumber(raw.amount);
+      if (amount === null) continue;
+      const date = normalizePaymentCardFingerprintDate(row.date);
+      const fingerprint = cardRowFingerprint(paymentCardId, date, raw, amount);
+
+      const exactExisting = await tx.paymentCardTransaction.findUnique({
         where: {
-          paymentCardId: paymentCardId,
-          date: {
-            gte: new Date(date.getTime() - 1000),
-            lte: new Date(date.getTime() + 1000),
+          paymentCardId_fingerprint: {
+            paymentCardId,
+            fingerprint,
           },
         },
-        select: {
-          date: true,
-          merchantText: true,
-          merchantCategory: true,
-          foreignAmount: true,
-          currency: true,
-          exchangeRate: true,
-          amount: true,
-          explanation: true,
-          cardPeriod: true,
-          sourceRawData: true,
-        },
+        select: { id: true },
       });
-      existing = nearbyTransactions.some(
-        (transaction) =>
-          storedPaymentCardTransactionFingerprint(paymentCardId, transaction) === fingerprint,
-      );
+
+      let existing = Boolean(exactExisting);
+      if (!existing) {
+        const nearbyTransactions = await tx.paymentCardTransaction.findMany({
+          where: {
+            paymentCardId,
+            date: {
+              gte: new Date(date.getTime() - 1000),
+              lte: new Date(date.getTime() + 1000),
+            },
+          },
+          select: {
+            date: true,
+            merchantText: true,
+            merchantCategory: true,
+            foreignAmount: true,
+            currency: true,
+            exchangeRate: true,
+            amount: true,
+            explanation: true,
+            cardPeriod: true,
+            sourceRawData: true,
+          },
+        });
+        existing = nearbyTransactions.some(
+          (transaction) =>
+            storedPaymentCardTransactionFingerprint(paymentCardId, transaction) === fingerprint,
+        );
+      }
+
+      if (existing) {
+        duplicates++;
+        continue;
+      }
+
+      // skipDuplicates makes a concurrent confirmation idempotent at the DB
+      // uniqueness boundary instead of turning the second request into an error.
+      const created = await tx.paymentCardTransaction.createMany({
+        data: [{
+          paymentCardId,
+          date,
+          merchantText: row.text,
+          merchantCategory: text(raw.merchantCategory) || null,
+          foreignAmount: parseNumber(raw.foreignAmount),
+          currency: text(raw.currency) || null,
+          exchangeRate: parseNumber(raw.exchangeRate),
+          amount,
+          explanation: text(raw.explanation) || null,
+          cardPeriod: text(raw.cardPeriod) || null,
+          fingerprint,
+          sourceType: CARD_STATEMENT_SOURCE,
+          sourceFileName: batch.fileName,
+          sourceRawData: row.rawData,
+          status: "UNRECONCILED",
+        }],
+        skipDuplicates: true,
+      });
+
+      if (created.count === 1) imported++;
+      else duplicates++;
     }
 
-    if (existing) {
-      duplicates++;
-      continue;
-    }
-
-    await prisma.paymentCardTransaction.create({
+    await tx.importBatch.update({
+      where: { id: batch.id },
       data: {
-        paymentCardId: paymentCardId,
-        date,
-        merchantText: row.text,
-        merchantCategory: text(raw.merchantCategory) || null,
-        foreignAmount: parseNumber(raw.foreignAmount),
-        currency: text(raw.currency) || null,
-        exchangeRate: parseNumber(raw.exchangeRate),
-        amount,
-        explanation: text(raw.explanation) || null,
-        cardPeriod: text(raw.cardPeriod) || null,
-        fingerprint,
-        sourceType: CARD_STATEMENT_SOURCE,
-        sourceFileName: batch.fileName,
-        sourceRawData: row.rawData,
-        status: "UNRECONCILED",
+        status: duplicates > 0
+          ? `IMPORTED:${imported}:DUPLICATES:${duplicates}`
+          : `IMPORTED:${imported}`,
       },
     });
-    imported++;
-  }
 
-  await prisma.importBatch.update({
-    where: { id: batch.id },
-    data: {
-      status: duplicates > 0
-        ? `IMPORTED:${imported}:DUPLICATES:${duplicates}`
-        : `IMPORTED:${imported}`,
-    },
-  });
+    return { paymentCardId, imported, duplicates, alreadyProcessed: false };
+  }, { timeout: 30_000 });
 
-  redirect(`/banki/kort/${paymentCardId}`);
+  redirect(`/banki/kort/${result.paymentCardId}`);
 }
