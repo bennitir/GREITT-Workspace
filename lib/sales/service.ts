@@ -398,15 +398,13 @@ export class SalesService {
   async createDraftSale(input: {
     companyId: number;
     branchId: number;
-    terminalId?: number | null;
+    terminalId: number;
     currency?: string;
   }): Promise<SaleSnapshot> {
     assertPositiveId(input.companyId, "INVALID_COMPANY_ID");
     assertPositiveId(input.branchId, "INVALID_SALES_BRANCH_ID");
 
-    if (input.terminalId !== null && input.terminalId !== undefined) {
-      assertPositiveId(input.terminalId, "INVALID_SALES_TERMINAL_ID");
-    }
+    assertPositiveId(input.terminalId, "INVALID_SALES_TERMINAL_ID");
 
     const currency = normalizeCurrency(input.currency ?? "ISK");
 
@@ -416,22 +414,19 @@ export class SalesService {
         throw new Error("ACTIVE_SALES_BRANCH_NOT_FOUND");
       }
 
-      const terminalId = input.terminalId ?? null;
-      if (terminalId !== null) {
-        const terminal = await tx.getTerminal(
-          input.companyId,
-          input.branchId,
-          terminalId,
-        );
-        if (!terminal?.isActive) {
-          throw new Error("ACTIVE_SALES_TERMINAL_NOT_FOUND");
-        }
+      const terminal = await tx.getTerminal(
+        input.companyId,
+        input.branchId,
+        input.terminalId,
+      );
+      if (!terminal?.isActive) {
+        throw new Error("ACTIVE_SALES_TERMINAL_NOT_FOUND");
       }
 
       const sale = await tx.createSale({
         companyId: input.companyId,
         branchId: input.branchId,
-        terminalId,
+        terminalId: input.terminalId,
         currency,
       });
 

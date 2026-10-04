@@ -51,7 +51,7 @@ async function requireSaleLineWriteAccess(
 
 export async function createDraftSaleAction(input: {
   branchId: number;
-  terminalId?: number | null;
+  terminalId: number;
   currency?: string;
 }) {
   const { companyId } = await requireActiveSalesPermissions(

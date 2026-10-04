@@ -39,7 +39,7 @@ export default function SalesStartClient({ branches, text }: Props) {
   const [pending, startTransition] = useTransition();
   const [error, setError] = useState<string | null>(null);
   const [branchId, setBranchId] = useState<number>(branches[0]?.id ?? 0);
-  const [terminalId, setTerminalId] = useState<number | null>(null);
+  const [terminalId, setTerminalId] = useState<number | null>(branches[0]?.terminals[0]?.id ?? null);
 
   const terminals = useMemo(
     () => branches.find((branch) => branch.id === branchId)?.terminals ?? [],
@@ -49,10 +49,16 @@ export default function SalesStartClient({ branches, text }: Props) {
   if (branches.length === 0) return null;
 
   function createSale() {
+    const selectedTerminalId = terminalId;
+    if (!branchId || !selectedTerminalId) return;
+
     setError(null);
     startTransition(async () => {
       try {
-        const sale = await createDraftSaleAction({ branchId, terminalId });
+        const sale = await createDraftSaleAction({
+          branchId,
+          terminalId: selectedTerminalId,
+        });
         router.push(`/sala/${sale.id}`);
       } catch {
         setError(text.actionFailed);
@@ -69,8 +75,10 @@ export default function SalesStartClient({ branches, text }: Props) {
           <select
             value={branchId}
             onChange={(event) => {
-              setBranchId(Number(event.target.value));
-              setTerminalId(null);
+              const nextBranchId = Number(event.target.value);
+              const nextBranch = branches.find((branch) => branch.id === nextBranchId);
+              setBranchId(nextBranchId);
+              setTerminalId(nextBranch?.terminals[0]?.id ?? null);
             }}
             className="w-full rounded-xl border border-slate-300 bg-white px-3 py-2.5"
           >
@@ -91,7 +99,7 @@ export default function SalesStartClient({ branches, text }: Props) {
             }
             className="w-full rounded-xl border border-slate-300 bg-white px-3 py-2.5"
           >
-            <option value="">{text.noTerminal}</option>
+            {terminals.length === 0 ? <option value="">{text.noTerminal}</option> : null}
             {terminals.map((terminal) => (
               <option key={terminal.id} value={terminal.id}>
                 {terminal.name} ({terminal.code})
@@ -102,7 +110,7 @@ export default function SalesStartClient({ branches, text }: Props) {
 
         <button
           type="button"
-          disabled={pending || !branchId}
+          disabled={pending || !branchId || !terminalId}
           onClick={createSale}
           className="rounded-xl bg-slate-950 px-5 py-2.5 font-semibold text-white disabled:cursor-not-allowed disabled:opacity-50"
         >

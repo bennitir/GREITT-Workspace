@@ -256,7 +256,7 @@ function sampleLine(
   };
 }
 
-test("creates a tenant-safe draft sale with optional terminal", async () => {
+test("creates a tenant-safe draft sale with required terminal", async () => {
   const repository = new MemoryRepository();
   const service = new SalesService(repository);
 
@@ -270,17 +270,22 @@ test("creates a tenant-safe draft sale with optional terminal", async () => {
   assert.equal(sale.currency, "ISK");
   assert.equal(sale.terminalId, 21);
 
-  const noTerminal = await service.createDraftSale({
-    companyId: 7,
-    branchId: 11,
-  });
-  assert.equal(noTerminal.terminalId, null);
+  await assert.rejects(
+    () =>
+      service.createDraftSale({
+        companyId: 7,
+        branchId: 11,
+        terminalId: 0,
+      }),
+    /INVALID_SALES_TERMINAL_ID/,
+  );
 
   await assert.rejects(
     () =>
       service.createDraftSale({
         companyId: 8,
         branchId: 11,
+        terminalId: 21,
       }),
     /ACTIVE_SALES_BRANCH_NOT_FOUND/,
   );
@@ -295,13 +300,13 @@ test("creates a tenant-safe draft sale with optional terminal", async () => {
     /ACTIVE_SALES_TERMINAL_NOT_FOUND/,
   );
 });
-
 test("line writes recalculate stored sale totals and append positions", async () => {
   const repository = new MemoryRepository();
   const service = new SalesService(repository);
   const sale = await service.createDraftSale({
     companyId: 7,
     branchId: 11,
+    terminalId: 21,
   });
 
   const first = await service.addSaleLine({
@@ -341,6 +346,7 @@ test("line updates and removals recalculate totals", async () => {
   const sale = await service.createDraftSale({
     companyId: 7,
     branchId: 11,
+    terminalId: 21,
   });
 
   const first = await service.addSaleLine({
@@ -395,6 +401,7 @@ test("held sales freeze lines until resumed", async () => {
   const sale = await service.createDraftSale({
     companyId: 7,
     branchId: 11,
+    terminalId: 21,
   });
 
   await service.holdSale({
@@ -434,6 +441,7 @@ test("void cancels draft and held sales and is idempotent", async () => {
   const draft = await service.createDraftSale({
     companyId: 7,
     branchId: 11,
+    terminalId: 21,
   });
   const cancelledAt = new Date("2026-10-03T22:45:00Z");
 
@@ -457,6 +465,7 @@ test("void cancels draft and held sales and is idempotent", async () => {
   const held = await service.createDraftSale({
     companyId: 7,
     branchId: 11,
+    terminalId: 21,
   });
   await service.holdSale({
     companyId: 7,
@@ -478,6 +487,7 @@ test("void rejects sales that already have payments", async () => {
   const sale = await service.createDraftSale({
     companyId: 7,
     branchId: 11,
+    terminalId: 21,
   });
 
   await service.recordPayment({
@@ -499,6 +509,7 @@ test("payments have independent sequence and lifecycle", async () => {
   const sale = await service.createDraftSale({
     companyId: 7,
     branchId: 11,
+    terminalId: 21,
   });
 
   const payment = await service.recordPayment({
@@ -553,6 +564,7 @@ test("finalization requires lines, freezes them, and is payment-independent", as
   const sale = await service.createDraftSale({
     companyId: 7,
     branchId: 11,
+    terminalId: 21,
   });
 
   await assert.rejects(
@@ -607,6 +619,7 @@ test("sale and line lookups fail closed across companies", async () => {
   const sale = await service.createDraftSale({
     companyId: 7,
     branchId: 11,
+    terminalId: 21,
   });
   const line = await service.addSaleLine({
     companyId: 7,
