@@ -1,0 +1,148 @@
+GLÖGGT – FinancialReconciliation / Gagnaþekja v1
+Dagsetning: 5. október 2026
+
+MARKMIÐ
+------
+Gagnaþekja er sameiginlegt fyrsta heilsupróf í allri afstemmingu. Hún á að svara
+ódýru spurningunni „er gagnasafnið yfirhöfuð nógu heilt til að afstemma?“ áður
+en farið er í dýrari candidate-greiningu, skjalaúrvinnslu eða AI.
+
+Þetta er EKKI Visa-sérlausn. Sama contract á að geta setið undir:
+- kortafærslur <-> fylgiskjöl,
+- bankafærslur <-> bókanir/fylgiskjöl,
+- reikningar <-> greiðslur,
+- lán/afborganir,
+- FinancialEvent <-> bankafærslur,
+- öðrum reconciliation-flæðum síðar.
+
+GRUNNREGLA
+----------
+Coverage má aldrei álykta sjálft hvort færsla sé rekstur eða prívat og má aldrei
+álykta út frá kennitölu/korti einu að fylgiskjal eigi að vera til.
+
+Mode er því skýrt samhengi frá flow/account/card/company policy:
+- REQUIRED      = mótgögn eru væntanleg og göt eru vinnufrávik,
+- INFORMATIONAL = sýna hlutföll en ekki fullyrða að gögn vanti,
+- EXCLUDED      = samhengi er utan coverage-mats.
+
+Þetta er sérstaklega mikilvægt fyrir einstaklingsrekstur/blandaða notkun. Kort
+á einkakennitölu getur innihaldið persónulegar færslur; „engin tillaga“ má ekki
+sjálfkrafa verða „fylgiskjal vantar“.
+
+CARDINALITY
+-----------
+Coverage er ekki blint 1:1. Hvert flow lýsir cardinality:
+- ONE_TO_ONE,
+- ONE_TO_MANY,
+- MANY_TO_ONE,
+- MANY_TO_MANY.
+
+Aðeins ONE_TO_ONE má nota jafnan fjölda sem vænta heilsureglu. Í öðrum flæðum
+er fjöldi sýnilegur en ekki notaður sem sjálfvirk completeness-regla.
+
+MÆLINGAR
+--------
+Sameiginlega lagið sýnir á source- og target-hlið:
+- total,
+- inScope,
+- confirmed,
+- strongUnconfirmed,
+- ambiguous,
+- unresolved,
+- excluded,
+- unknown.
+
+Fyrir hvern bucket eru sýnd:
+- fjöldi,
+- algild upphæð eftir gjaldmiðli,
+- hvort upphæðasumma sé COMPLETE eða PARTIAL.
+
+ONE_TO_ONE samanburður gefur einnig:
+- source vs target fjölda,
+- mismun,
+- target/source hlutfall í prósentum.
+
+Upphæðir eru lagðar saman deterministic með exact decimal-samlagningu í core;
+óþekktar/ógildar upphæðir eru taldar sérstaklega og aldrei fundnar upp sem 0.
+
+STATE
+-----
+Assessment er:
+- EXCLUDED,
+- NOT_EVALUATED (UNKNOWN gögn eru til),
+- INFORMATIONAL,
+- COMPLETE,
+- OPEN.
+
+OPEN í REQUIRED samhengi þýðir að enn er opin vinna, t.d. unresolved/ambiguous,
+eða 1:1 source/target fjöldi er ekki í jafnvægi. Það er ekki sjálfkrafa
+bókhaldsniðurstaða; flow-specific layer þarf áfram að skýra af hverju.
+
+KÓÐI
+----
+lib/financial-reconciliation/coverage.ts
+lib/financial-reconciliation/coverage.test.ts
+
+V1 ER MEÐVITAÐ PURE CORE
+------------------------
+- enginn Prisma import,
+- engin migration,
+- enginn UI texti,
+- engin AI,
+- engin sjálfvirk policy-inference.
+
+NÆSTA TENGING
+-------------
+Flow-specific adapterar þurfa að flokka authoritative rows í coverage-state.
+Dæmi fyrir fyrirtækjakort:
+1. deterministic non-document færslur -> EXCLUDED,
+2. confirmed reconciliation -> CONFIRMED,
+3. unique strong -> STRONG_UNCONFIRMED,
+4. multiple candidates -> AMBIGUOUS,
+5. document-required purchase án móts -> UNRESOLVED,
+6. ekki hægt að ákveða business/private/document-required -> UNKNOWN.
+
+Aðeins þegar account/card/company policy segir REQUIRED má UNKNOWN/UNRESOLVED
+verða að viðvörun um mögulega vöntun fylgiskjala.
+
+ADAPTER/UI V2 – TENGING VIÐ RAUNFLÆÐI
+--------------------------------------
+Pure core er nú tengdur í fyrsta sinn við tvö raunflæði án Prisma-breytingar:
+
+1. PaymentCardTransaction <-> reviewed AiDetectedDocument
+2. Bank diagnostic projection (booking/event/confirmed target graph)
+
+Nýjar skrár:
+- lib/financial-reconciliation/coverage-adapters.ts
+- lib/financial-reconciliation/coverage-adapters.test.ts
+- lib/i18n/reconciliation-coverage.ts
+- app/banki/_components/ReconciliationCoverageOverview.tsx
+
+Breyttar tengingar:
+- lib/financial-reconciliation/card-reviewed-document-service.ts
+- app/banki/kort/_lib/page-context.ts
+- app/banki/kort/[id]/page.tsx
+- app/banki/[id]/afstemming/page.tsx
+
+KORTA-TARGET
+------------
+Ekki bera eitt kort saman við öll reviewed skjöl fyrirtækisins.
+Target-pool er aðeins:
+- skjöl sem eru í candidate/confirmed graph þessa korts, eða
+- reviewed skjöl þar sem canonicalExtraction.paymentInfo.method == CARD.
+
+Ef bæði kort og skjal hafa lastFour er það deterministic auðkenni ásamt network.
+Network eitt og sér (t.d. VISA) er ekki nægilegt til að eigna skjal einu korti.
+Skjal með PRIMARY FinancialEvent eða staðfesta eign í öðru reconciliation-flæði
+er EXCLUDED úr direct card->document target scope.
+
+BANKI
+-----
+Bankaflæði er ekki sett í falskt ONE_TO_ONE. Adapterinn notar MANY_TO_MANY og
+projection úr sama diagnostic snapshot sem bankasíðan notar nú þegar.
+
+POLICY
+------
+V2 sýnir INFORMATIONAL coverage. REQUIRED/EXCLUDED eru ekki inferred. Þau þurfa
+síðar explicit persisted policy á account/card/company eða öðru authoritative
+samhengi. Ekki hardkóða Sturlu, Benedikt eða fyrirtækja-ID til að stjórna þessu.

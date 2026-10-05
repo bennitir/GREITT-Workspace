@@ -17,7 +17,7 @@ const receipt = { id: 11, companyId: 7, status: "APPROVED", aiDate: day, date: d
   merchantName: "Example", description: "Example receipt", voucherNumber: 1 };
 const bank = (patch: Partial<DiagnosticReadRows["bankTransaction"]> = {}): DiagnosticReadRows["bankTransaction"] => ({
   id: 1, bankAccountId: 8, bankAccount: owner, amount: "-100", date: day, reference: null,
-  text: "Example", status: "UNRECONCILED", ...patch,
+  text: "Example", sourceRawData: null, status: "UNRECONCILED", ...patch,
 });
 const event = (patch: Partial<DiagnosticReadRows["financialEvent"]> = {}): DiagnosticReadRows["financialEvent"] => ({
   id: 20, companyId: 7, eventType: "CHARGE", amount: "100", currency: "ISK", eventDate: day,
@@ -129,6 +129,77 @@ test("unsupported type/currency and null amount/date events remain before diagno
   assert.deepEqual((f.calls.find(c => c.model === "financialEvent")!.args as { where: unknown }).where, { companyId: 7 });
   assert.equal(buildBankDiagnosticSnapshotFromSource(s).transactions[0].events.eventCountBeforeFilters, 4);
   assert.equal(s.eventStatuses.length, 4);
+});
+test("source observations break down unsupported document types without changing materialization rules", async () => {
+  const f = fake();
+  f.rows.aiDetectedDocument[0].documentType = "PAYMENT_NOTICE";
+  const snapshot = buildBankDiagnosticSnapshotFromSource(await source(f.db));
+  assert.deepEqual(snapshot.source.materializationObservations.unsupportedDocumentTypes, [
+    { documentType: "PAYMENT_NOTICE", count: 1 },
+  ]);
+  assert.deepEqual(snapshot.source.materializationObservations.invoiceLinkCountsNotOne, []);
+  assert.equal(snapshot.companyDocumentInventory.documents[0].materialization.reasons[0].code, R.DOCUMENT_TYPE_UNSUPPORTED);
+});
+
+test("source observations group zero-INVOICE documents by document type and merchant", async () => {
+  const f = fake();
+  f.rows.aiDetectedDocument[0].entityLinks = [];
+  const snapshot = buildBankDiagnosticSnapshotFromSource(await source(f.db));
+  assert.deepEqual(snapshot.source.materializationObservations.invoiceLinkCountsNotOne, [
+    { invoiceLinkCount: 0, count: 1 },
+  ]);
+  assert.deepEqual(snapshot.source.materializationObservations.invoiceLinkZeroContexts, [
+    { documentType: "ACCOUNTING_DOCUMENT", merchantName: "Example", count: 1 },
+  ]);
+});
+
+test("amount-mismatch diagnostics classify only explicit bank flow hints and keep unknowns unknown", async () => {
+  const f = fake();
+  f.rows.bankTransaction = [
+    bank({ id: 1, amount: "-55", text: "Kreditkort", sourceRawData: null }),
+    bank({ id: 2, amount: "-56", text: "Merchant", sourceRawData: JSON.stringify({ counterparty: "Merchant ehf", paymentExplanation: "Úttekt með debetkorti", counterpartyKennitala: "1234567890" }) }),
+    bank({ id: 3, amount: "-57", text: "Óþekkt", sourceRawData: null }),
+    bank({ id: 4, amount: "125000", text: "Example ehf", sourceRawData: JSON.stringify({ counterparty: "Example ehf", counterpartyKennitala: "1234567890" }) }),
+  ];
+  const snapshot = buildBankDiagnosticSnapshotFromSource(await source(f.db));
+  assert.equal(snapshot.source.reconciliationFlowObservations.amountMismatchNoCandidateCount, 4);
+  assert.deepEqual(snapshot.source.reconciliationFlowObservations.amountMismatchFlowHints, [
+    { flow: "CARD_PURCHASE", count: 1 },
+    { flow: "CARD_ACCOUNT_MOVEMENT", count: 1 },
+    { flow: "UNKNOWN", count: 2 },
+  ]);
+});
+
+test("reviewed-document diagnostics expose same-amount documents outside candidate layers", async () => {
+  const f = fake();
+  f.rows.bankTransaction = [bank({ id: 1, amount: "-125", text: "Example" })];
+  f.rows.aiDetectedDocument[0].totalAmount = 125;
+  f.rows.aiDetectedDocument[0].entityLinks = [];
+  const snapshot = buildBankDiagnosticSnapshotFromSource(await source(f.db));
+  const observation = snapshot.source.reviewedDocumentAmountObservations;
+
+  assert.equal(observation.amountMismatchNoCandidateCount, 1);
+  assert.equal(observation.reviewedAmountMatchTransactionCount, 1);
+  assert.equal(observation.reviewedAmountNearDateTransactionCount, 1);
+  assert.equal(observation.reviewedAmountNearDateUniqueTransactionCount, 1);
+  assert.equal(observation.reviewedAmountNearDateMultipleTransactionCount, 0);
+  assert.equal(observation.noReviewedAmountMatchTransactionCount, 0);
+  assert.deepEqual(observation.nearDateStateCounts, [
+    { state: "INVOICE_LINK_COUNT_NOT_ONE", count: 1 },
+  ]);
+  assert.equal(observation.examples?.[0]?.matches[0]?.receiptId, 11);
+  assert.equal(observation.examples?.[0]?.matches[0]?.merchantName, "Example");
+});
+
+test("source observations expose invoice-link cardinality for exactly-one rejection", async () => {
+  const f = fake();
+  f.rows.aiDetectedDocument[0].entityLinks = [];
+  const snapshot = buildBankDiagnosticSnapshotFromSource(await source(f.db));
+  assert.deepEqual(snapshot.source.materializationObservations.unsupportedDocumentTypes, []);
+  assert.deepEqual(snapshot.source.materializationObservations.invoiceLinkCountsNotOne, [
+    { invoiceLinkCount: 0, count: 1 },
+  ]);
+  assert.equal(snapshot.companyDocumentInventory.documents[0].materialization.reasons[0].code, R.INVOICE_LINK_COUNT_NOT_ONE);
 });
 test("foreign nested document/entity information is rejected before DTO and marks partial", async () => {
   const f = fake(); f.rows.aiDetectedDocument[0].entityLinks[0].entity = {

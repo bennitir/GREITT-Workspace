@@ -1,0 +1,86 @@
+GLÖGGT – Company-context reconciliation policy v1
+Dagsetning: 5. október 2026
+
+MARKMIÐ
+------
+FinancialReconciliation / Gagnaþekja á ekki lengur að vera INFORMATIONAL hjá
+öllum fyrirtækjum. Fyrirtækjaspjaldið er authoritative samhengi sem segir hvort
+þekja sé skyldubundin, upplýsandi eða sérstaklega undanskilin.
+
+MIKILVÆG FAIL-CLOSED REGLA
+-------------------------
+GLÖGGT má EKKI álykta út frá kennitöluformi, nafni, merchant eða færslum einum
+hvort fyrirtæki sé lögaðili/einstaklingur eða hvort fjármálanotkun sé blönduð.
+Eldri fyrirtæki fá því UNCONFIRMED og haldast INFORMATIONAL þar til notandi með
+heimild staðfestir samhengi á Fyrirtækjaspjaldi.
+
+NÝ COMPANY-SVIÐ
+---------------
+Company.taxIdentityType
+- UNCONFIRMED
+- LEGAL_ENTITY
+- INDIVIDUAL
+
+Company.personalBusinessUse
+- UNCONFIRMED
+- BUSINESS_ONLY
+- MIXED_USE
+
+Company.reconciliationCoverageOverride
+- null = derived frá fyrirtækjaspjaldi
+- REQUIRED
+- INFORMATIONAL
+- EXCLUDED
+
+DERIVED POLICY
+--------------
+LEGAL_ENTITY                              -> REQUIRED
+INDIVIDUAL + BUSINESS_ONLY               -> REQUIRED
+INDIVIDUAL + MIXED_USE                   -> INFORMATIONAL
+UNCONFIRMED / ófullnægjandi samhengi     -> INFORMATIONAL (safe default)
+Explicit override                         -> override vinnur
+
+MIXED_USE
+---------
+INDIVIDUAL + MIXED_USE setur jafnframt
+allowsPersonalTransactionExclusion=true í policy resolver. Það er contract fyrir
+næsta lag þar sem kortafærslur má merkja „Persónulegt / ekki rekstur“ með audit
+og færa í EXCLUDED. Sú per-transaction aðgerð er ekki hluti af þessari migration.
+
+AUDIT
+-----
+Breyting á company policy skrifar AuditEvent:
+- entityType=COMPANY
+- action=RECONCILIATION_POLICY_UPDATED
+- source=USER
+- beforeData / afterData varðveitt
+- metadata.policyVersion=company-reconciliation-policy-v1
+
+TENGING VIÐ RECONCILIATION
+--------------------------
+Kortafstemming:
+getCardReviewedDocumentCandidates les Company policy og sendir resolved mode í
+buildCardReviewedDocumentCoverageSnapshot.
+
+Bankafstemming:
+/banki/[id]/afstemming les sama Company policy og sendir resolved mode í
+buildBankDiagnosticCoverageSnapshot.
+
+Þetta er company-default. Sérstakar card/account overrides má bæta við síðar ef
+þörf er á; þær eiga þá að leggjast ofan á sama resolver, ekki búa til nýtt
+reconciliation-policy kerfi.
+
+MIGRATION
+---------
+prisma/migrations/20261005111500_add_company_reconciliation_policy/migration.sql
+
+Eftir overlay:
+1. npx prisma validate
+2. npx prisma generate
+3. npx prisma migrate deploy
+4. npx tsc --noEmit
+5. npx tsx --test lib/financial-reconciliation/company-policy.test.ts \
+   lib/financial-reconciliation/coverage.test.ts \
+   lib/financial-reconciliation/coverage-adapters.test.ts \
+   lib/financial-reconciliation/card-reviewed-document-provider.test.ts \
+   lib/financial-reconciliation/card-reviewed-document-confirmation.test.ts

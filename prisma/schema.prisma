@@ -40,6 +40,14 @@ model Company {
   // false = óstaðfest á fyrirtækisstigi; GLÖGGT má ekki túlka það sem VSK-rétt.
   vehicleVatDeductionBlocked Boolean @default(false)
 
+  // Rekstrarsamhengi fyrir FinancialReconciliation / gagnaþekju.
+  // UNCONFIRMED er örugg sjálfgefin staða; GLÖGGT má ekki álykta þetta
+  // út frá kennitölu eða færslum einum. Canonical gildi eru varðveitt sem texti
+  // til samræmis við önnur policy-svið í schema.
+  taxIdentityType                String  @default("UNCONFIRMED") // UNCONFIRMED | LEGAL_ENTITY | INDIVIDUAL
+  personalBusinessUse            String  @default("UNCONFIRMED") // UNCONFIRMED | BUSINESS_ONLY | MIXED_USE
+  reconciliationCoverageOverride String? // REQUIRED | INFORMATIONAL | EXCLUDED; null = derived from company profile
+
   // Launagreiðendaskrá / staðgreiðsla og tryggingagjald
   payrollRegistered       Boolean?
   payrollRegistrationDate DateTime?
@@ -127,6 +135,7 @@ model Company {
   insightEntities       InsightEntity[]
   financialEvents       FinancialEvent[]
   financialReconciliations FinancialReconciliation[]
+  financialSourceClassifications FinancialSourceClassification[]
   insightFacts          InsightFact[]
   insightProcessingJobs InsightProcessingJob[]
 
@@ -3354,6 +3363,36 @@ model FinancialEventPaymentAllocation {
   @@unique([paymentId, scheduleItemId])
   @@index([scheduleItemId, status])
   @@index([paymentId, status])
+}
+
+// Current-state flokkun canonical fjármálaheimilda.
+// Frumfærslan sjálf er óbreytt; AuditEvent geymir breytingasögu.
+model FinancialSourceClassification {
+  id        Int @id @default(autoincrement())
+  companyId Int
+
+  // Generic canonical source identity. First consumer is BANK_TRANSACTION;
+  // PAYMENT_CARD_TRANSACTION can use the same layer later.
+  sourceType String
+  sourceKey  String
+
+  // BUSINESS | PERSONAL | INTERNAL_TRANSFER | NON_DOCUMENT | REVIEW
+  classification String
+
+  // USER_CONFIRMED is the only source in v1. Suggestions are not persisted as truth.
+  source            String   @default("USER_CONFIRMED")
+  reason            String?
+  confirmedByUserId Int?
+  confirmedAt       DateTime @default(now())
+  metadata          Json?
+  createdAt         DateTime @default(now())
+  updatedAt         DateTime @updatedAt
+
+  company Company @relation(fields: [companyId], references: [id], onDelete: Cascade)
+
+  @@unique([companyId, sourceType, sourceKey])
+  @@index([companyId, sourceType, classification])
+  @@index([sourceType, sourceKey])
 }
 
 // Almenn fjármálaafstemming milli ólíkra canonical heimilda.

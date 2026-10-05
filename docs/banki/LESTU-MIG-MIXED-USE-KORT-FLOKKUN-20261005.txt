@@ -1,0 +1,23 @@
+GLÖGGT – MIXED-USE KORTAFLOKKUN – 5. OKTÓBER 2026
+
+MARKMIÐ
+PaymentCardTransaction notar sama FinancialSourceClassification lag og BankTransaction.
+Engin ný Prisma migration: modelið kom með 20261005120500_add_financial_source_classification.
+
+SOURCE TYPE
+PAYMENT_CARD_TRANSACTION
+
+FLOKKAR
+BUSINESS | PERSONAL | INTERNAL_TRANSFER | NON_DOCUMENT | REVIEW
+
+REGLUR
+- PERSONAL aðeins ef company-policy leyfir mixed-use personal exclusion.
+- Staðfest kortaafstemming má ekki vera flokkuð út úr document coverage.
+- PERSONAL / INTERNAL_TRANSFER / NON_DOCUMENT eru ekki send í card->document candidate graph.
+- Sömu flokkar verða EXCLUDED í reviewed-document coverage.
+- Frumkortafærslan breytist ekki og flokkun er afturkræf með AuditEvent.
+
+UI
+Kortasíðan fær síur: Í afstemmingu / Allt / Persónulegt /
+Utan fylgiskjalaþekju / Óflokkað-þarf yfirferð.
+Per-row flokkun notar sama i18n textalag og bankatiltektin.

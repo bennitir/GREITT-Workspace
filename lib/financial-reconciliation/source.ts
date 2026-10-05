@@ -125,6 +125,7 @@ export async function loadBankBookingReconciliationSource(
       date: tx.date,
       text: tx.text,
       amount: Number(tx.amount),
+      sourceRawData: tx.sourceRawData,
     })),
     bookings: entries.map((entry) => ({
       entryId: entry.id,

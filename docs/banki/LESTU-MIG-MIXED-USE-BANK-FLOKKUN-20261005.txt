@@ -1,0 +1,38 @@
+GLÖGGT – MIXED-USE TILTEKT BANKAFÆRSLNA
+5. október 2026
+
+MARKMIÐ
+Setja rekjanlegt, afturkræft flokkunarlag á canonical fjármálaheimildir áður en dýrari eða dýpri reconciliation fer fram. Fyrsta notkun er bankafærsla í einstaklingsrekstri/blandaðri notkun.
+
+EKKI STATUS Á BANKTRANSACTION
+Flokkun er varðveitt í FinancialSourceClassification. BankTransaction helst óbreytt frumheimild.
+
+FLOKKAR
+BUSINESS
+PERSONAL
+INTERNAL_TRANSFER
+NON_DOCUMENT
+REVIEW
+
+ÖRYGGI
+- PERSONAL aðeins þegar company-policy segir að personal exclusion sé heimil.
+- Staðfest reconciliation lokar á að færsla sé síðar færð út úr document-workflow.
+- Merchant-heiti eitt og sér má aldrei gefa PERSONAL flokkun.
+- Almenn millifærsla er ekki sjálfkrafa innri millifærsla.
+- AuditEvent skráir SET / CHANGE / CLEAR.
+
+COVERAGE
+PERSONAL fer í EXCLUDED úr business coverage.
+INTERNAL_TRANSFER og NON_DOCUMENT eru ekki persónulegar og eiga síðar að fara í sín reconciliation-flow. Þær má sía út úr fylgiskjalavinnu án þess að eyða færslunni.
+
+UI
+Bankafstemming fær quick classification controls á hverri færslu og síur fyrir virka vinnu, allt, persónulegt, utan fylgiskjalaþekju og óflokkað/yfirferð.
+
+DETERMINISTIC TILLÖGUR V1
+Explicit BANK_FEE / INTEREST / REVERSAL / CARD_ACCOUNT_MOVEMENT geta fengið read-only tillögu að NON_DOCUMENT. Tillagan verður ekki sannleikur fyrr en notandi staðfestir.
+
+MIGRATION
+20261005120500_add_financial_source_classification
+
+STAÐFEST MYNSTUR – READ-ONLY TILLAGA
+Ef nákvæmlega sami normaliseraði bankatexti hefur að minnsta kosti tvær samhljóða, staðfestar flokkanir sem PERSONAL eða BUSINESS og engin mótsagnakennd staðfest flokkun er til, má UI sýna tillögu fyrir næstu sambærilegu færslu. Tillagan breytir engu fyrr en notandi staðfestir. Mótsögn lokar tillögunni.

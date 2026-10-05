@@ -6,6 +6,7 @@ import {
   loadBankBookingReconciliationSource,
   type BankReconciliationSourceFailureCode,
 } from "./source";
+import { DOCUMENT_OBLIGATION_FLOW_KIND } from "./flow-kind";
 
 export type BankBookingReconciliationResult =
   | {
@@ -17,6 +18,7 @@ export type BankBookingReconciliationResult =
       ok: true;
       bankAccountId: number;
       companyId: number;
+      flowKind: typeof DOCUMENT_OBLIGATION_FLOW_KIND;
       ledgerAccount: {
         id: number;
         number: string;
@@ -88,6 +90,7 @@ export async function getBankBookingReconciliation(
     ok: true,
     bankAccountId: source.bankAccountId,
     companyId: source.companyId,
+    flowKind: DOCUMENT_OBLIGATION_FLOW_KIND,
     ledgerAccount: source.ledgerAccount,
     transactionCount: source.transactions.length,
     bookingCount: source.bookings.length,

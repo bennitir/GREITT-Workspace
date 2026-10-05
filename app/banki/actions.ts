@@ -10,6 +10,16 @@ import { getCompanyAccess } from "@/lib/core/access-control";
 import {
   confirmBankFinancialEventPayment as confirmBankFinancialEventPaymentCore,
 } from "@/lib/financial-reconciliation/event-confirmation";
+import {
+  confirmBankReviewedDocumentReconciliation as confirmBankReviewedDocumentReconciliationCore,
+} from "@/lib/financial-reconciliation/reviewed-document-confirmation";
+import {
+  clearBankTransactionClassification,
+  setBankTransactionClassification,
+} from "@/lib/financial-reconciliation/source-classification-service";
+import {
+  isFinancialSourceClassificationCode,
+} from "@/lib/financial-reconciliation/source-classification";
 import { prisma } from "@/lib/prisma";
 import { sourceFileSha256, sourceFileSize } from "@/lib/bank/import-provenance";
 
@@ -380,6 +390,118 @@ export async function confirmBankFinancialEventPayment(formData: FormData) {
   return;
 }
 
+export async function confirmManualBankFinancialEventPayment(formData: FormData) {
+  const companyId = Number(formData.get("companyId"));
+  const bankTransactionId = Number(formData.get("bankTransactionId"));
+  const eventId = Number(formData.get("eventId"));
+  const documentId = Number(formData.get("documentId"));
+
+  if (
+    !Number.isSafeInteger(companyId) ||
+    companyId < 1 ||
+    !Number.isSafeInteger(bankTransactionId) ||
+    bankTransactionId < 1 ||
+    !Number.isSafeInteger(eventId) ||
+    eventId < 1 ||
+    !Number.isSafeInteger(documentId) ||
+    documentId < 1
+  ) {
+    throw new Error("INVALID_CONFIRMATION_ID");
+  }
+
+  const { userId } = await bankContext(companyId);
+  const access = await getCompanyAccess(companyId);
+  if (!access.allowed || !access.canReconcileBookkeeping) {
+    throw new Error("RECONCILIATION_ACCESS_DENIED");
+  }
+
+  let result;
+  try {
+    result = await confirmBankFinancialEventPaymentCore({
+      companyId,
+      userId,
+      bankTransactionId,
+      eventId,
+      explicitPrimaryDocumentId: documentId,
+    });
+  } catch (error) {
+    const code = error instanceof Error ? error.message : "RECONCILIATION_CONFIRMATION_FAILED";
+    const handled = new Set([
+      "EVENT_PAYMENT_OVER_ALLOCATION",
+      "BANK_PAYMENT_OVER_ALLOCATION",
+      "BANK_TRANSACTION_ALREADY_RECONCILED",
+      "PAIR_NO_LONGER_VALID",
+      "PAYMENT_STATUS_NOT_CONFIRMABLE",
+      "CONFIRMED_PAYMENT_MISMATCH",
+      "RECONCILIATION_STATUS_NOT_CONFIRMABLE",
+      "RECONCILIATION_PARTICIPANTS_MISMATCH",
+      "AMBIGUOUS_EXISTING_RECONCILIATION",
+    ]);
+    if (handled.has(code)) return { ok: false as const, code };
+    throw error;
+  }
+
+  const bankTransaction = await prisma.bankTransaction.findUnique({
+    where: { id: result.bankTransactionId },
+    select: { bankAccountId: true },
+  });
+
+  revalidatePath("/banki");
+  if (bankTransaction) {
+    revalidatePath(`/banki/${bankTransaction.bankAccountId}`);
+    revalidatePath(`/banki/${bankTransaction.bankAccountId}/afstemming`);
+    revalidatePath(`/banki/${bankTransaction.bankAccountId}/afstemming/handvirkt`);
+  }
+  revalidatePath("/innsyn");
+
+  return { ok: true as const };
+}
+
+export async function confirmBankReviewedDocumentMatch(formData: FormData) {
+  const companyId = Number(formData.get("companyId"));
+  const bankTransactionId = Number(formData.get("bankTransactionId"));
+  const documentId = Number(formData.get("documentId"));
+
+  if (
+    !Number.isSafeInteger(companyId) ||
+    companyId < 1 ||
+    !Number.isSafeInteger(bankTransactionId) ||
+    bankTransactionId < 1 ||
+    !Number.isSafeInteger(documentId) ||
+    documentId < 1
+  ) {
+    throw new Error("INVALID_CONFIRMATION_ID");
+  }
+
+  const { userId } = await bankContext(companyId);
+  const access = await getCompanyAccess(companyId);
+  if (!access.allowed || !access.canReconcileBookkeeping) {
+    throw new Error("RECONCILIATION_ACCESS_DENIED");
+  }
+
+  const result = await confirmBankReviewedDocumentReconciliationCore({
+    companyId,
+    userId,
+    bankTransactionId,
+    documentId,
+  });
+
+  const bankTransaction = await prisma.bankTransaction.findUnique({
+    where: { id: result.bankTransactionId },
+    select: { bankAccountId: true },
+  });
+
+  revalidatePath("/banki");
+  if (bankTransaction) {
+    revalidatePath(`/banki/${bankTransaction.bankAccountId}`);
+    revalidatePath(`/banki/${bankTransaction.bankAccountId}/afstemming`);
+    revalidatePath(`/banki/${bankTransaction.bankAccountId}/afstemming/handvirkt`);
+  }
+  revalidatePath("/innsyn");
+
+  return;
+}
+
 export async function confirmFinancialEventPaymentAllocation(formData: FormData) {
   const allocationId = Number(formData.get("allocationId"));
   if (!Number.isInteger(allocationId) || allocationId < 1) {
@@ -638,4 +760,72 @@ export async function confirmFinancialEventPaymentAllocation(formData: FormData)
   revalidatePath("/innsyn");
 
   return result;
+}
+
+
+export async function setBankTransactionClassificationAction(formData: FormData) {
+  const companyId = Number(formData.get("companyId"));
+  const bankAccountId = Number(formData.get("bankAccountId"));
+  const bankTransactionId = Number(formData.get("bankTransactionId"));
+  const classification = String(formData.get("classification") ?? "").trim().toUpperCase();
+
+  if (
+    !Number.isSafeInteger(companyId) || companyId < 1 ||
+    !Number.isSafeInteger(bankAccountId) || bankAccountId < 1 ||
+    !Number.isSafeInteger(bankTransactionId) || bankTransactionId < 1 ||
+    !isFinancialSourceClassificationCode(classification)
+  ) {
+    throw new Error("INVALID_FINANCIAL_SOURCE_CLASSIFICATION_INPUT");
+  }
+
+  const { userId } = await bankContext(companyId);
+  const access = await getCompanyAccess(companyId);
+  if (!access.allowed || !access.canReconcileBookkeeping) {
+    throw new Error("RECONCILIATION_ACCESS_DENIED");
+  }
+
+  const result = await setBankTransactionClassification({
+    companyId,
+    userId,
+    bankTransactionId,
+    classification,
+    prisma,
+  });
+
+  revalidatePath("/banki");
+  revalidatePath(`/banki/${result.bankAccountId}`);
+  revalidatePath(`/banki/${result.bankAccountId}/afstemming`);
+  revalidatePath("/innsyn");
+}
+
+export async function clearBankTransactionClassificationAction(formData: FormData) {
+  const companyId = Number(formData.get("companyId"));
+  const bankAccountId = Number(formData.get("bankAccountId"));
+  const bankTransactionId = Number(formData.get("bankTransactionId"));
+
+  if (
+    !Number.isSafeInteger(companyId) || companyId < 1 ||
+    !Number.isSafeInteger(bankAccountId) || bankAccountId < 1 ||
+    !Number.isSafeInteger(bankTransactionId) || bankTransactionId < 1
+  ) {
+    throw new Error("INVALID_FINANCIAL_SOURCE_CLASSIFICATION_INPUT");
+  }
+
+  const { userId } = await bankContext(companyId);
+  const access = await getCompanyAccess(companyId);
+  if (!access.allowed || !access.canReconcileBookkeeping) {
+    throw new Error("RECONCILIATION_ACCESS_DENIED");
+  }
+
+  const result = await clearBankTransactionClassification({
+    companyId,
+    userId,
+    bankTransactionId,
+    prisma,
+  });
+
+  revalidatePath("/banki");
+  revalidatePath(`/banki/${result.bankAccountId}`);
+  revalidatePath(`/banki/${result.bankAccountId}/afstemming`);
+  revalidatePath("/innsyn");
 }

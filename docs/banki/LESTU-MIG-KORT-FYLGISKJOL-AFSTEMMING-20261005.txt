@@ -1,0 +1,103 @@
+GLÖGGT – Visa/greiðslukort ↔ yfirfarin fylgiskjöl
+5. október 2026 – canonical undirskjal v2
+
+Markmið
+- Tengja PaymentCardTransaction inn á sama reconciliation-hugarfar og bankann.
+- Halda PaymentCard aðskildu frá BankAccount.
+- Engin sjálfbókun og engin AI-köll.
+- Endurnýta þegar aðskilin, flokkuð, lesin og yfirfarin canonical undirskjalsgögn.
+- Fail closed við tvíræðni, rangri upphæð, PRIMARY FinancialEvent eða þegar-eigið mót.
+
+Mikilvæg leiðrétting v2 – undirskjal er matching-einingin
+- Receipt er aðeins frumskjals-/upload-gámur og navigation anchor.
+- AiDetectedDocument er canonical matching-eining eftir að GLÖGGT hefur aðskilið skjölin.
+- Kortafstemming má EKKI nota Receipt.date, Receipt.aiDate, Receipt.merchantName eða Receipt.merchantKennitala sem fallback fyrir aðskilið undirskjal.
+- Ástæða: slíkt parent-fallback getur látið staðreyndir eins sibling-skjals leka yfir á annað skjal í sama PDF/pakka og búið til falska tvíræðni.
+- Matching notar því aðeins document-local facts: AiDetectedDocument.date, merchantName, merchantKennitala, totalAmount, receiptNumber, documentType, documentRole og canonical entity links.
+- pageNumber, documentFingerprint og classificationSource fylgja með sem rekjanleg document identity/presentation facts.
+- duplicateMarkedAt, disposedAt eða disposition útiloka undirskjal frá kortacandidate-laginu.
+
+Canonical niðurstaða
+- FinancialReconciliation.reconciliationType = CARD_TO_REVIEWED_DOCUMENT
+- þátttakendur:
+  * PAYMENT_CARD_TRANSACTION / MONEY_MOVEMENT
+  * AI_DETECTED_DOCUMENT / EVIDENCE
+- staðfest kortafærsla fær status RECONCILED
+- AuditEvent.action = CONFIRM_CARD_TO_REVIEWED_DOCUMENT
+- staðfest pörun geymir fyrirtækjasértækt learning snapshot í reconciliation metadata.
+- reconciliation metadata v2 skráir canonicalFactScope = AI_DETECTED_DOCUMENT ásamt pageNumber/fingerprint/classificationSource þegar til eru.
+
+Candidate-reglur v2
+- undirskjalið verður að vera yfirfarið og hafa totalAmount;
+- undirskjal með duplicate/disposition er ekki candidate;
+- abs(kortaupphæð) = abs(skjalaupphæð);
+- dagamunur <= 30;
+- dagsetning og merchant verða að koma úr sjálfu aðskilda AiDetectedDocument, ekki parent Receipt;
+- skjöl með PRIMARY FinancialEvent fara ekki í þetta evidence-flæði;
+- merchant identity er normalized og má taka við terminal/location viðskeyti á kortayfirliti;
+- eitt gagnkvæmt einstakt merchant+amount mót innan 3 daga = UNIQUE_STRONG;
+- fleiri en eitt raunverulegt AiDetectedDocument-mót = AMBIGUOUS og kerfið giskar ekki;
+- tvö undirskjöl í sama Receipt eru EKKI dedupe-uð eftir receiptId; documentId/fingerprint/page eru sjálfstæð identity;
+- staðfest endurtekin mynstur mega styrkja seinni tillögur, eins og í bankaflæðinu.
+
+UI
+- /banki/kort/[id] sýnir afstemmingardálk á kortafærslum.
+- UNIQUE_STRONG / UNIQUE_POSSIBLE sýnir fylgiskjal og Afstemma-hnapp.
+- AMBIGUOUS sýnir hvert undirskjal sérstaklega með Receipt #, síðu (eða documentId), merchant, dagsetningu og upphæð.
+- Þetta kemur í veg fyrir villandi birtingu eins og „Fylgiskjal #308 / Fylgiskjal #308“ án þess að vita hvaða undirskjöl eru þar á bak við.
+- RECONCILED sýnir staðfesta stöðu.
+- Textar eru í is/en/pl/sr frá byrjun.
+
+Engin Prisma-migration
+FinancialReconciliation, AiDetectedDocument og PaymentCardTransaction.status voru þegar til og eru næg fyrir þessa útgáfu.
+
+Próf sem fylgja
+- card-reviewed-document-provider.test.ts
+  * sterkt Olís/Visa mót;
+  * rangur merchant fail-closed;
+  * tvö raunveruleg mót -> AMBIGUOUS;
+  * >30 dagar -> ekkert mót;
+  * PRIMARY FinancialEvent -> ekkert evidence-mót;
+  * sibling undirskjal fær EKKI merchant/date frá parent Receipt;
+  * tvö sjálfstæð undirskjöl í sama Receipt haldast tvíræð ef facts eru í raun eins;
+  * duplicate/disposed skjöl eru ekki materialized sem candidates.
+- card-reviewed-document-confirmation.test.ts
+  * canonical reconciliation + audit + learning;
+  * canonicalFactScope/document identity skráð í metadata;
+  * idempotency;
+  * rangt amount / PRIMARY event / cross-company / duplicate / disposed / vöntun canonical date/merchant fail-closed;
+  * önnur staðfest eign á færslu eða skjali blokkar.
+
+Raunpróf 5. október
+- Bílanaust 38.312 kr. var staðfest með Afstemma.
+- Eftir refresh hélt færslan stöðunni Afstemmt og Sterkt mót lækkaði úr 39 í 38.
+- Raunlistinn sýndi síðan Receipt #308 tvívegis við sumar Olís-færslur. Það leiddi til v2-breytingarinnar: skoða canonical AiDetectedDocument facts, ekki parent Receipt fallback, og sýna undirskjal identity skýrt.
+
+Production/local smoke test eftir v2
+1. Keyra prisma validate/generate og tsc.
+2. Keyra provider + confirmation tests.
+3. Opna Sturla Ólafsson -> Banki -> Gullkort/Visa.
+4. Finna OLIS NJARDVIK FITJAR 01.06.2026, 2.503 kr.
+5. Athuga hvort fyrri falska tvíræðnin hverfur þegar aðeins eitt aðskilið undirskjal hefur rétt document-local facts.
+6. Ef tvö mót eru enn til, staðfesta að UI sýni ólíka síðu/documentId og að bæði séu raunveruleg sjálfstæð undirskjöl.
+7. Ekki nota fjölda-Afstemma fyrr en raunpróf hafa staðfest candidate-gæði.
+
+DAGSETNINGARFORGANGUR – 2026-10-05
+----------------------------------
+Raunpróf: Olís 2.503 kr. var til bæði 01.06.2026 og 29.06.2026. Visa 01.06.2026 má ekki verða ambiguous vegna 29.06 skjalsins.
+
+Regla:
+- exact-date candidates hafa forgang áður en mutual uniqueness er reiknað;
+- non-exact candidates mega ekki blokka exact-date match;
+- fleiri en eitt exact-date candidate heldur áfram fail-closed/AMBIGUOUS;
+- <=30 dagar er recovery/POSSIBLE gluggi þegar ekkert exact-date match finnst;
+- learned company pattern verður aðeins STRONG innan <=3 daga.
+
+
+2026-10-05 — exact amount/date search-first refinement
+- Card reconciliation now indexes reviewed documents first by exact UTC purchase date + absolute amount (ISK minor units). Merchant text is deliberately not part of this search key.
+- If canonical merchant/alias resolves, existing strong/learned rules still apply.
+- If exactly one eligible reviewed document has the same date and amount but merchant identity is not resolved, it is surfaced as UNIQUE_POSSIBLE, never STRONG. Human confirmation can then feed the existing company-local reviewed-document learning.
+- Multiple same-date/same-amount documents remain AMBIGUOUS/fail-closed.
+- Documents owned by PRIMARY FinancialEvent remain outside direct card-to-document confirmation; event ownership is not bypassed.
+- Legacy/pre-statement booking counteraccounts (for example older 1510 vs later 2230) are not part of the matching evidence contract and therefore do not block a card/document candidate.

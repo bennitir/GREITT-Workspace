@@ -10,7 +10,7 @@ const ownerSelect = { id: true, companyId: true } as const;
 export const diagnosticSelect = {
   bankAccount: { ...ownerSelect, ledgerAccount: { select: { ...ownerSelect, number: true } } },
   bankTransaction: { id: true, bankAccountId: true, amount: true, date: true, reference: true,
-    text: true, status: true, bankAccount: { select: ownerSelect } },
+    text: true, sourceRawData: true, status: true, bankAccount: { select: ownerSelect } },
   receiptEntry: { id: true, receiptId: true, account: true, text: true, debit: true, credit: true,
     receipt: { select: receiptSelect } },
   financialEvent: { ...ownerSelect, eventType: true, amount: true, currency: true,
@@ -81,6 +81,15 @@ export type BankDiagnosticSource = {
   confirmationRecords: ConfirmationRecord[];
   allocations: AllocationFact[];
   eventStatuses: { eventId: number; status: string }[];
+  sourceObservations: {
+    banks: Array<{ id: number; text: string; amount: string; sourceRawData: string | null }>;
+    documents: Array<{
+      id: number;
+      documentType: string | null;
+      merchantName: string | null;
+      effectiveDate: Date | null;
+    }>;
+  };
 };
 export type BankDiagnosticSourceResult = { ok: true; source: BankDiagnosticSource }
   | { ok: false; code: "BANK_ACCOUNT_NOT_FOUND" | "INVALID_SCOPE" | "SOURCE_UNAVAILABLE" | "TENANT_SCOPE_VIOLATION" };
@@ -126,15 +135,17 @@ export async function loadBankDiagnosticSource(args: {
       return await delegate.findMany({ where, select: diagnosticSelect[model], orderBy: { id: "asc" } });
     } catch { failed.add(model); issue(model, R.SOURCE_UNAVAILABLE); return []; }
   }
-  const [bankRows, bookingRows, eventRows, documentRows, linkRows, paymentRows, reconciliationRows] = await Promise.all([
-    read("bankTransaction", { bankAccountId }),
-    read("receiptEntry", { receipt: { companyId } }),
-    read("financialEvent", { companyId }),
-    read("aiDetectedDocument", { receipt: { companyId } }),
-    read("documentFinancialEvent", { OR: [{ receipt: { companyId } }, { event: { companyId } }] }),
-    read("financialEventPayment", { OR: [{ event: { companyId } }, { bankTransaction: { bankAccountId } }] }),
-    read("financialReconciliation", { companyId }),
-  ]);
+  // This loader may run inside a Prisma interactive transaction. Keep reads
+  // sequential on that transaction client: node-postgres deprecates issuing a
+  // second client.query() while the same client is still executing a query.
+  // REPEATABLE READ keeps the snapshot stable, so concurrency is unnecessary.
+  const bankRows = await read("bankTransaction", { bankAccountId });
+  const bookingRows = await read("receiptEntry", { receipt: { companyId } });
+  const eventRows = await read("financialEvent", { companyId });
+  const documentRows = await read("aiDetectedDocument", { receipt: { companyId } });
+  const linkRows = await read("documentFinancialEvent", { OR: [{ receipt: { companyId } }, { event: { companyId } }] });
+  const paymentRows = await read("financialEventPayment", { OR: [{ event: { companyId } }, { bankTransaction: { bankAccountId } }] });
+  const reconciliationRows = await read("financialReconciliation", { companyId });
   // Without the bank inventory a transactionCount of zero would be a false total.
   if (failed.has("bankTransaction")) return { ok: false, code: R.SOURCE_UNAVAILABLE };
   const banks = bankRows.filter(b => owned("bankTransaction", b.bankAccount) &&
@@ -317,5 +328,15 @@ export async function loadBankDiagnosticSource(args: {
       ? { availability: "UNAVAILABLE" } : { availability: "AVAILABLE", rows: confirmations },
   };
   return { ok: true, source: { input, readConsistency: "UNCOORDINATED", issues, confirmationRecords: records, allocations,
-    eventStatuses: events.map(e => ({ eventId: e.id, status: e.status })) } };
+    eventStatuses: events.map(e => ({ eventId: e.id, status: e.status })),
+    sourceObservations: {
+      banks: banks.map(b => ({ id: b.id, text: b.text, amount: b.amount.toString(), sourceRawData: b.sourceRawData })),
+      documents: documents.map(d => ({
+        id: d.id,
+        documentType: d.documentType,
+        merchantName: d.receipt.merchantName,
+        effectiveDate: d.date ?? d.receipt.aiDate ?? d.receipt.date,
+      })),
+    },
+  } };
 }

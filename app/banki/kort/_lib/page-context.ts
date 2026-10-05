@@ -1,6 +1,9 @@
 import { cookies } from "next/headers";
 import { prisma } from "@/lib/prisma";
 import { paymentCardText } from "@/lib/i18n/payment-card";
+import { reconciliationCoverageText } from "@/lib/i18n/reconciliation-coverage";
+import { financialSourceClassificationText } from "@/lib/i18n/financial-source-classification";
+import { reviewedDocumentDiagnosticText } from "@/lib/i18n/reviewed-document-diagnostic";
 
 export async function paymentCardPageContext() {
   const cookieStore = await cookies();
@@ -21,8 +24,19 @@ export async function paymentCardPageContext() {
       })
     : null;
 
+  const interfaceLanguage =
+    settings?.interfaceLanguage === "en" ||
+    settings?.interfaceLanguage === "pl" ||
+    settings?.interfaceLanguage === "sr" ||
+    settings?.interfaceLanguage === "is"
+      ? settings.interfaceLanguage
+      : "is";
+
   return {
     companyId: Number.isInteger(companyId) && companyId > 0 ? companyId : null,
-    t: paymentCardText(settings?.interfaceLanguage),
+    t: paymentCardText(interfaceLanguage),
+    coverageT: reconciliationCoverageText(interfaceLanguage),
+    classificationT: financialSourceClassificationText(interfaceLanguage),
+    diagnosticT: reviewedDocumentDiagnosticText(interfaceLanguage),
   };
 }

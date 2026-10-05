@@ -2,8 +2,21 @@
 
 import * as XLSX from "xlsx";
 import { cookies } from "next/headers";
+import { revalidatePath } from "next/cache";
 import { redirect } from "next/navigation";
+import { getCompanyAccess } from "@/lib/core/access-control";
+import {
+  confirmCardReviewedDocumentReconciliation as confirmCardReviewedDocumentReconciliationCore,
+} from "@/lib/financial-reconciliation/card-reviewed-document-confirmation";
 import { prisma } from "@/lib/prisma";
+import {
+  clearPaymentCardTransactionClassification,
+  setPaymentCardTransactionClassification,
+  setPaymentCardTransactionClassifications,
+} from "@/lib/financial-reconciliation/source-classification-service";
+import {
+  isFinancialSourceClassificationCode,
+} from "@/lib/financial-reconciliation/source-classification";
 import { sourceFileSha256, sourceFileSize } from "@/lib/bank/import-provenance";
 import {
   cardRowFingerprint,
@@ -500,4 +513,151 @@ export async function confirmPaymentCardImport(formData: FormData) {
   }, { timeout: 30_000 });
 
   redirect(`/banki/kort/${result.paymentCardId}`);
+}
+
+export async function confirmCardReviewedDocumentMatch(formData: FormData) {
+  const paymentCardTransactionId = Number(formData.get("paymentCardTransactionId"));
+  const documentId = Number(formData.get("documentId"));
+
+  if (
+    !Number.isSafeInteger(paymentCardTransactionId) ||
+    paymentCardTransactionId < 1 ||
+    !Number.isSafeInteger(documentId) ||
+    documentId < 1
+  ) {
+    throw new Error("INVALID_CONFIRMATION_ID");
+  }
+
+  const { companyId, userId } = await cardContext();
+  const access = await getCompanyAccess(companyId);
+  if (!access.allowed || !access.canReconcileBookkeeping) {
+    throw new Error("RECONCILIATION_ACCESS_DENIED");
+  }
+
+  const cardTransaction = await prisma.paymentCardTransaction.findFirst({
+    where: {
+      id: paymentCardTransactionId,
+      paymentCard: { companyId, isActive: true },
+    },
+    select: { paymentCardId: true },
+  });
+  if (!cardTransaction) throw new Error("PAYMENT_CARD_TRANSACTION_NOT_FOUND");
+
+  await confirmCardReviewedDocumentReconciliationCore({
+    companyId,
+    userId,
+    paymentCardTransactionId,
+    documentId,
+  });
+
+  revalidatePath("/banki");
+  revalidatePath(`/banki/kort/${cardTransaction.paymentCardId}`);
+  revalidatePath("/innsyn");
+}
+
+
+export async function setPaymentCardTransactionClassificationAction(formData: FormData) {
+  const paymentCardId = Number(formData.get("paymentCardId"));
+  const paymentCardTransactionId = Number(formData.get("paymentCardTransactionId"));
+  const classification = String(formData.get("classification") ?? "").trim().toUpperCase();
+
+  if (
+    !Number.isSafeInteger(paymentCardId) || paymentCardId < 1 ||
+    !Number.isSafeInteger(paymentCardTransactionId) || paymentCardTransactionId < 1 ||
+    !isFinancialSourceClassificationCode(classification)
+  ) {
+    throw new Error("INVALID_FINANCIAL_SOURCE_CLASSIFICATION");
+  }
+
+  const { companyId, userId } = await cardContext();
+  const access = await getCompanyAccess(companyId);
+  if (!access.allowed || !access.canReconcileBookkeeping) {
+    throw new Error("RECONCILIATION_ACCESS_DENIED");
+  }
+  await requirePaymentCard(paymentCardId, companyId);
+
+  const result = await setPaymentCardTransactionClassification({
+    companyId,
+    userId,
+    paymentCardTransactionId,
+    classification,
+    prisma,
+  });
+  if (result.paymentCardId !== paymentCardId) {
+    throw new Error("PAYMENT_CARD_TRANSACTION_NOT_FOUND");
+  }
+
+  revalidatePath(`/banki/kort/${paymentCardId}`);
+  revalidatePath("/banki");
+  revalidatePath("/innsyn");
+}
+
+export async function setPaymentCardTransactionClassificationsAction(formData: FormData) {
+  const paymentCardId = Number(formData.get("paymentCardId"));
+  const paymentCardTransactionIds = [...new Set(
+    formData.getAll("paymentCardTransactionId")
+      .map((value) => Number(value))
+      .filter((value) => Number.isSafeInteger(value) && value > 0),
+  )];
+  const classification = String(formData.get("classification") ?? "").trim().toUpperCase();
+
+  if (
+    !Number.isSafeInteger(paymentCardId) || paymentCardId < 1 ||
+    paymentCardTransactionIds.length < 1 || paymentCardTransactionIds.length > 200 ||
+    !isFinancialSourceClassificationCode(classification)
+  ) {
+    throw new Error("INVALID_FINANCIAL_SOURCE_CLASSIFICATION_SELECTION");
+  }
+
+  const { companyId, userId } = await cardContext();
+  const access = await getCompanyAccess(companyId);
+  if (!access.allowed || !access.canReconcileBookkeeping) {
+    throw new Error("RECONCILIATION_ACCESS_DENIED");
+  }
+  await requirePaymentCard(paymentCardId, companyId);
+
+  await setPaymentCardTransactionClassifications({
+    companyId,
+    userId,
+    paymentCardId,
+    paymentCardTransactionIds,
+    classification,
+    prisma,
+  });
+
+  revalidatePath(`/banki/kort/${paymentCardId}`);
+  revalidatePath("/banki");
+  revalidatePath("/innsyn");
+}
+
+export async function clearPaymentCardTransactionClassificationAction(formData: FormData) {
+  const paymentCardId = Number(formData.get("paymentCardId"));
+  const paymentCardTransactionId = Number(formData.get("paymentCardTransactionId"));
+  if (
+    !Number.isSafeInteger(paymentCardId) || paymentCardId < 1 ||
+    !Number.isSafeInteger(paymentCardTransactionId) || paymentCardTransactionId < 1
+  ) {
+    throw new Error("INVALID_FINANCIAL_SOURCE_CLASSIFICATION");
+  }
+
+  const { companyId, userId } = await cardContext();
+  const access = await getCompanyAccess(companyId);
+  if (!access.allowed || !access.canReconcileBookkeeping) {
+    throw new Error("RECONCILIATION_ACCESS_DENIED");
+  }
+  await requirePaymentCard(paymentCardId, companyId);
+
+  const result = await clearPaymentCardTransactionClassification({
+    companyId,
+    userId,
+    paymentCardTransactionId,
+    prisma,
+  });
+  if (result.paymentCardId !== paymentCardId) {
+    throw new Error("PAYMENT_CARD_TRANSACTION_NOT_FOUND");
+  }
+
+  revalidatePath(`/banki/kort/${paymentCardId}`);
+  revalidatePath("/banki");
+  revalidatePath("/innsyn");
 }

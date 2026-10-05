@@ -1,4 +1,9 @@
 import { ConfirmFinancialEventMatchForm } from "@/app/banki/[id]/afstemming/ConfirmFinancialEventMatchForm";
+import { BankTransactionClassificationControls } from "@/app/banki/[id]/afstemming/BankTransactionClassificationControls";
+import { ReconciliationDiagnosticOverview } from "@/app/banki/[id]/afstemming/ReconciliationDiagnosticOverview";
+import { ReconciliationCoverageOverview } from "@/app/banki/_components/ReconciliationCoverageOverview";
+import { BankOriginatedFlowOverview } from "@/app/banki/[id]/afstemming/BankOriginatedFlowOverview";
+import { ReviewedDocumentCandidateOverview } from "@/app/banki/[id]/afstemming/ReviewedDocumentCandidateOverview";
 import { bankReconciliationText } from "@/app/banki/_lib/i18n/reconciliation-text";
 import type { CandidateReason } from "@/lib/financial-reconciliation/candidates";
 import {
@@ -15,16 +20,38 @@ import {
   hasPendingSourceDocumentBooking,
 } from "@/lib/financial-reconciliation/document-context";
 import { getBankBookingReconciliation } from "@/lib/financial-reconciliation/service";
+import { getBankOriginatedFlowCandidates } from "@/lib/financial-reconciliation/bank-originated-service";
+import {
+  getReviewedDocumentCandidates,
+  getConfirmedBankReviewedDocumentLinks,
+  type ConfirmedBankReviewedDocumentLink,
+} from "@/lib/financial-reconciliation/reviewed-document-service";
+import { buildPrismaBankDiagnosticSnapshot } from "@/lib/financial-reconciliation/diagnostics-prisma";
+import { buildBankDiagnosticCoverageSnapshot } from "@/lib/financial-reconciliation/coverage-adapters";
+import { resolveCompanyReconciliationPolicy } from "@/lib/financial-reconciliation/company-policy";
+import { getBankTransactionClassifications } from "@/lib/financial-reconciliation/source-classification-service";
+import {
+  buildBankClassificationSuggestionIndex,
+  classificationExcludesDocumentCoverage,
+  normalizeBankClassificationPatternText,
+  suggestBankTransactionClassification,
+} from "@/lib/financial-reconciliation/source-classification";
 import { getCompanyAccess } from "@/lib/core/access-control";
 import { getCurrentInterfaceLanguage } from "@/lib/i18n/current-language";
+import { reconciliationCoverageText } from "@/lib/i18n/reconciliation-coverage";
+import { financialSourceClassificationText } from "@/lib/i18n/financial-source-classification";
 import { formatNumber } from "@/lib/locale";
 import { cookies } from "next/headers";
+import Link from "next/link";
 import { notFound } from "next/navigation";
 import { prisma } from "@/lib/prisma";
 
 type Props = {
   params: Promise<{
     id: string;
+  }>;
+  searchParams: Promise<{
+    view?: string;
   }>;
 };
 
@@ -43,8 +70,9 @@ function formatFinancialEventAmount(amount: string, currency: string) {
     : `${formattedAmount} ${currency}`;
 }
 
-export default async function AfstemmingPage({ params }: Props) {
+export default async function AfstemmingPage({ params, searchParams }: Props) {
   const { id } = await params;
+  const { view: rawView } = await searchParams;
 
   const cookieStore = await cookies();
   const activeCompanyId = Number(
@@ -69,6 +97,13 @@ export default async function AfstemmingPage({ params }: Props) {
         id: true,
         bankName: true,
         accountNumber: true,
+        company: {
+          select: {
+            taxIdentityType: true,
+            personalBusinessUse: true,
+            reconciliationCoverageOverride: true,
+          },
+        },
       },
     }),
     getCompanyAccess(activeCompanyId),
@@ -79,11 +114,19 @@ export default async function AfstemmingPage({ params }: Props) {
   }
 
   const t = bankReconciliationText(language);
+  const coverageT = reconciliationCoverageText(language);
+  const classificationT = financialSourceClassificationText(language);
+  const coveragePolicy = resolveCompanyReconciliationPolicy(account.company);
 
   const [
     reconciliation,
     eventCandidateResult,
     confirmedEventLinkResult,
+    diagnosticResult,
+    reviewedDocumentResult,
+    confirmedReviewedDocumentResult,
+    bankOriginatedResult,
+    bankTransactionClassifications,
   ] = await Promise.all([
     getBankBookingReconciliation(
       bankAccountId,
@@ -97,6 +140,28 @@ export default async function AfstemmingPage({ params }: Props) {
       bankAccountId,
       activeCompanyId
     ),
+    buildPrismaBankDiagnosticSnapshot({
+      companyId: activeCompanyId,
+      bankAccountId,
+      prisma,
+    }),
+    getReviewedDocumentCandidates(
+      bankAccountId,
+      activeCompanyId,
+    ),
+    getConfirmedBankReviewedDocumentLinks(
+      bankAccountId,
+      activeCompanyId,
+    ),
+    getBankOriginatedFlowCandidates(
+      bankAccountId,
+      activeCompanyId,
+    ),
+    getBankTransactionClassifications({
+      companyId: activeCompanyId,
+      bankAccountId,
+      prisma,
+    }),
   ]);
 
   if (!reconciliation.ok) {
@@ -175,10 +240,76 @@ export default async function AfstemmingPage({ params }: Props) {
     }
   }
 
-  const transactions = [...reconciliation.transactions].sort(
+  const confirmedReviewedDocumentLinksByTransactionId = new Map<
+    number,
+    ConfirmedBankReviewedDocumentLink[]
+  >();
+  if (confirmedReviewedDocumentResult.ok) {
+    for (const link of confirmedReviewedDocumentResult.links) {
+      confirmedReviewedDocumentLinksByTransactionId.set(link.bankTransactionId, [
+        ...(confirmedReviewedDocumentLinksByTransactionId.get(link.bankTransactionId) ?? []),
+        link,
+      ]);
+    }
+  }
+
+  const classificationByTransactionId = new Map(
+    bankTransactionClassifications.map((item) => [item.bankTransactionId, item]),
+  );
+
+  type TransactionView = "active" | "all" | "personal" | "excluded" | "review";
+  const requestedView: TransactionView =
+    rawView === "all" || rawView === "personal" || rawView === "excluded" || rawView === "review" || rawView === "active"
+      ? rawView
+      : coveragePolicy.isMixedUse
+        ? "active"
+        : "all";
+
+  const allTransactions = [...reconciliation.transactions].sort(
     (a, b) =>
       b.date.getTime() - a.date.getTime() ||
       b.id - a.id
+  );
+
+  const learnedClassificationSuggestions = buildBankClassificationSuggestionIndex(
+    allTransactions.flatMap((transaction) => {
+      const classification = classificationByTransactionId.get(transaction.id)?.classification;
+      return classification ? [{ text: transaction.text, classification }] : [];
+    }),
+  );
+
+  const transactionViewMatches = (transactionId: number) => {
+    const classification = classificationByTransactionId.get(transactionId)?.classification ?? null;
+    const excluded = classificationExcludesDocumentCoverage(classification);
+    switch (requestedView) {
+      case "all":
+        return true;
+      case "personal":
+        return classification === "PERSONAL";
+      case "excluded":
+        return excluded;
+      case "review":
+        return classification === null || classification === "REVIEW";
+      case "active":
+        return !excluded;
+    }
+  };
+
+  const transactions = allTransactions.filter((transaction) =>
+    transactionViewMatches(transaction.id),
+  );
+
+  const classificationCounts = allTransactions.reduce(
+    (counts, transaction) => {
+      const classification = classificationByTransactionId.get(transaction.id)?.classification ?? null;
+      counts.all += 1;
+      if (!classificationExcludesDocumentCoverage(classification)) counts.active += 1;
+      if (classification === "PERSONAL") counts.personal += 1;
+      if (classificationExcludesDocumentCoverage(classification)) counts.excluded += 1;
+      if (classification === null || classification === "REVIEW") counts.review += 1;
+      return counts;
+    },
+    { all: 0, active: 0, personal: 0, excluded: 0, review: 0 },
   );
 
   function reasonText(reason: CandidateReason) {
@@ -232,6 +363,173 @@ export default async function AfstemmingPage({ params }: Props) {
           {t.readOnly}
         </div>
 
+        {diagnosticResult.ok ? (
+          <ReconciliationCoverageOverview
+            snapshot={buildBankDiagnosticCoverageSnapshot({
+              mode: coveragePolicy.mode,
+              diagnostic: diagnosticResult.snapshot,
+              classifications: bankTransactionClassifications.map((item) => ({
+                bankTransactionId: item.bankTransactionId,
+                classification: item.classification,
+              })),
+            })}
+            labels={coverageT}
+            targetBasisHelp={coverageT.targetBasisBank}
+          />
+        ) : null}
+
+        {diagnosticResult.ok ? (
+          <ReconciliationDiagnosticOverview
+            snapshot={diagnosticResult.snapshot}
+            labels={{
+              title: t.diagnosticTitle,
+              help: t.diagnosticHelp,
+              complete: t.diagnosticComplete,
+              partial: t.diagnosticPartial,
+              confirmed: t.diagnosticConfirmed,
+              ready: t.diagnosticReady,
+              review: t.diagnosticReview,
+              unresolved: t.diagnosticUnresolved,
+              issues: t.diagnosticIssues,
+              noCandidate: t.diagnosticNoCandidate,
+              noCandidateHelp: t.diagnosticNoCandidateHelp,
+              coverageTitle: t.diagnosticCoverageTitle,
+              bookingCoverage: t.diagnosticBookingCoverage,
+              eventCoverage: t.diagnosticEventCoverage,
+              bothCoverage: t.diagnosticBothCoverage,
+              documentBridgeTitle: t.diagnosticDocumentBridgeTitle,
+              documentInventory: t.diagnosticDocumentInventory,
+              reviewedDocuments: t.diagnosticReviewedDocuments,
+              eligibleDocuments: t.diagnosticEligibleDocuments,
+              primaryEvents: t.diagnosticPrimaryEvents,
+              primaryEventsHelp: t.diagnosticPrimaryEventsHelp,
+              eligibleWithoutEvent: t.diagnosticEligibleWithoutEvent,
+              separateScheduleFlow: t.diagnosticSeparateScheduleFlow,
+              exclusionTitle: t.diagnosticExclusionTitle,
+              exclusionHelp: t.diagnosticExclusionHelp,
+              reviewedOutsideStandardFlow: t.diagnosticReviewedOutsideStandardFlow,
+              noExclusions: t.diagnosticNoExclusions,
+              exclusionDocumentRole: t.diagnosticExclusionDocumentRole,
+              exclusionManualClassification: t.diagnosticExclusionManualClassification,
+              exclusionInvalidAmount: t.diagnosticExclusionInvalidAmount,
+              exclusionUnsupportedType: t.diagnosticExclusionUnsupportedType,
+              exclusionInvoiceLinkCount: t.diagnosticExclusionInvoiceLinkCount,
+              exclusionPaymentSchedule: t.diagnosticExclusionPaymentSchedule,
+              unsupportedTypesTitle: t.diagnosticUnsupportedTypesTitle,
+              unsupportedTypesHelp: t.diagnosticUnsupportedTypesHelp,
+              unsupportedTypeUnknown: t.diagnosticUnsupportedTypeUnknown,
+              invoiceLinkBreakdownTitle: t.diagnosticInvoiceLinkBreakdownTitle,
+              invoiceLinkBreakdownHelp: t.diagnosticInvoiceLinkBreakdownHelp,
+              invoiceLinkCountLabel: t.diagnosticInvoiceLinkCountLabel,
+              invoiceZeroContextTitle: t.diagnosticInvoiceZeroContextTitle,
+              invoiceZeroContextHelp: t.diagnosticInvoiceZeroContextHelp,
+              invoiceZeroContextUnknownMerchant: t.diagnosticInvoiceZeroContextUnknownMerchant,
+              amountMismatchFlowTitle: t.diagnosticAmountMismatchFlowTitle,
+              amountMismatchFlowHelp: t.diagnosticAmountMismatchFlowHelp,
+              bankFlowBankFee: t.diagnosticBankFlowBankFee,
+              bankFlowInterest: t.diagnosticBankFlowInterest,
+              bankFlowReversal: t.diagnosticBankFlowReversal,
+              bankFlowCardPurchase: t.diagnosticBankFlowCardPurchase,
+              bankFlowCreditCardMovement: t.diagnosticBankFlowCreditCardMovement,
+              bankFlowTransfer: t.diagnosticBankFlowTransfer,
+              bankFlowLoanPayment: t.diagnosticBankFlowLoanPayment,
+              bankFlowIdentifiedInflow: t.diagnosticBankFlowIdentifiedInflow,
+              bankFlowIdentifiedOutflow: t.diagnosticBankFlowIdentifiedOutflow,
+              bankFlowUnknown: t.diagnosticBankFlowUnknown,
+              noCandidateBreakdownTitle: t.diagnosticNoCandidateBreakdownTitle,
+              noCandidateBreakdownHelp: t.diagnosticNoCandidateBreakdownHelp,
+              flowSourceIncomplete: t.diagnosticFlowSourceIncomplete,
+              flowNoEligibleTargets: t.diagnosticFlowNoEligibleTargets,
+              flowAmountMismatch: t.diagnosticFlowAmountMismatch,
+              flowBookingContext: t.diagnosticFlowBookingContext,
+              flowEventDirection: t.diagnosticFlowEventDirection,
+              flowEventDate: t.diagnosticFlowEventDate,
+              flowEventTemporal: t.diagnosticFlowEventTemporal,
+              flowMixedLateRejection: t.diagnosticFlowMixedLateRejection,
+              flowOther: t.diagnosticFlowOther,
+              reviewedAmountBridgeTitle: t.diagnosticReviewedAmountBridgeTitle,
+              reviewedAmountBridgeHelp: t.diagnosticReviewedAmountBridgeHelp,
+              reviewedAmountGroup: t.diagnosticReviewedAmountGroup,
+              reviewedAmountFound: t.diagnosticReviewedAmountFound,
+              reviewedAmountNearDate: t.diagnosticReviewedAmountNearDate,
+              reviewedAmountNotFound: t.diagnosticReviewedAmountNotFound,
+              reviewedAmountUnique: t.diagnosticReviewedAmountUnique,
+              reviewedAmountMultiple: t.diagnosticReviewedAmountMultiple,
+              reviewedAmountStateTitle: t.diagnosticReviewedAmountStateTitle,
+              reviewedAmountStateEligible: t.diagnosticReviewedAmountStateEligible,
+              reviewedAmountStateSchedule: t.diagnosticReviewedAmountStateSchedule,
+              reviewedAmountStateUnsupportedType: t.diagnosticReviewedAmountStateUnsupportedType,
+              reviewedAmountStateInvoiceLink: t.diagnosticReviewedAmountStateInvoiceLink,
+              reviewedAmountStateRole: t.diagnosticReviewedAmountStateRole,
+              reviewedAmountStateManual: t.diagnosticReviewedAmountStateManual,
+              reviewedAmountStateOther: t.diagnosticReviewedAmountStateOther,
+              reviewedAmountExamplesTitle: t.diagnosticReviewedAmountExamplesTitle,
+              reviewedAmountExamplesHelp: t.diagnosticReviewedAmountExamplesHelp,
+              reviewedAmountDocumentLabel: t.diagnosticReviewedAmountDocumentLabel,
+              reviewedAmountEligibilityEligible: t.diagnosticReviewedAmountEligibilityEligible,
+              reviewedAmountEligibilityIneligible: t.diagnosticReviewedAmountEligibilityIneligible,
+              reviewedAmountEligibilitySchedule: t.diagnosticReviewedAmountEligibilitySchedule,
+              reviewedAmountEligibilityNotEvaluated: t.diagnosticReviewedAmountEligibilityNotEvaluated,
+            }}
+          />
+        ) : null}
+
+        {reviewedDocumentResult.ok ? (
+          <ReviewedDocumentCandidateOverview
+            resolutions={reviewedDocumentResult.resolutions}
+            counts={reviewedDocumentResult.counts}
+            labels={{
+              title: t.reviewedDocumentCandidateTitle,
+              help: t.reviewedDocumentCandidateHelp,
+              readOnlyBadge: t.reviewedDocumentCandidateReadOnly,
+              bankTransactions: t.reviewedDocumentCandidateTransactions,
+              uniqueStrong: t.reviewedDocumentCandidateStrong,
+              uniquePossible: t.reviewedDocumentCandidatePossible,
+              ambiguous: t.reviewedDocumentCandidateAmbiguous,
+              details: t.reviewedDocumentCandidateDetails,
+              accountingDocument: t.reviewedDocumentCandidateAccounting,
+              paymentNotice: t.reviewedDocumentCandidatePaymentNotice,
+              paymentConfirmation: t.reviewedDocumentCandidatePaymentConfirmation,
+              paymentConfirmationHelp: t.reviewedDocumentCandidatePaymentConfirmationHelp,
+              exactReference: t.reviewedDocumentCandidateExactReference,
+              exactKennitala: t.reviewedDocumentCandidateExactKennitala,
+              exactParty: t.reviewedDocumentCandidateExactParty,
+              learnedPattern: t.reviewedDocumentCandidateLearnedPattern,
+              learnedPatternHelp: t.reviewedDocumentCandidateLearnedPatternHelp,
+              strong: t.reviewedDocumentCandidateStrongBadge,
+              possible: t.reviewedDocumentCandidatePossibleBadge,
+              receipt: t.reviewedDocumentCandidateReceipt,
+              dateDistance: t.reviewedDocumentCandidateDateDistance,
+              days: t.reviewedDocumentCandidateDays,
+              confirm: t.reviewedDocumentCandidateConfirm,
+              confirming: t.reviewedDocumentCandidateConfirming,
+              openDocument: t.reviewedDocumentCandidateOpenDocument,
+            }}
+            companyId={activeCompanyId}
+            canReconcile={access.canReconcileBookkeeping}
+          />
+        ) : null}
+
+        {bankOriginatedResult.ok ? (
+          <BankOriginatedFlowOverview
+            candidates={bankOriginatedResult.candidates}
+            counts={bankOriginatedResult.counts}
+            labels={{
+              title: t.bankOriginatedTitle,
+              help: t.bankOriginatedHelp,
+              total: t.bankOriginatedTotal,
+              bankFee: t.bankOriginatedBankFee,
+              interest: t.bankOriginatedInterest,
+              details: t.bankOriginatedDetails,
+              readOnlyBadge: t.bankOriginatedReadOnlyBadge,
+              proposedEvent: t.bankOriginatedProposedEvent,
+              noPostingAccount: t.bankOriginatedNoPostingAccount,
+              charge: t.eventCharge,
+              credit: t.eventCredit,
+            }}
+          />
+        ) : null}
+
         <div className="mt-6 grid gap-3 sm:grid-cols-2 lg:grid-cols-5">
           <div className="rounded-lg border bg-gray-50 p-4">
             <p className="text-sm text-gray-600">
@@ -279,6 +577,31 @@ export default async function AfstemmingPage({ params }: Props) {
           </div>
         </div>
 
+        <div className="mt-6 rounded-lg border bg-white p-4">
+          <p className="text-sm font-semibold text-gray-900">{classificationT.filterTitle}</p>
+          <div className="mt-3 flex flex-wrap gap-2">
+            {[
+              ["active", classificationT.filterActive, classificationCounts.active],
+              ["all", classificationT.filterAll, classificationCounts.all],
+              ["personal", classificationT.filterPersonal, classificationCounts.personal],
+              ["excluded", classificationT.filterExcluded, classificationCounts.excluded],
+              ["review", classificationT.filterReview, classificationCounts.review],
+            ].map(([view, label, count]) => (
+              <Link
+                key={String(view)}
+                href={`/banki/${bankAccountId}/afstemming?view=${view}`}
+                className={
+                  requestedView === view
+                    ? "rounded-full border border-slate-900 bg-slate-900 px-3 py-1.5 text-sm font-semibold text-white"
+                    : "rounded-full border bg-white px-3 py-1.5 text-sm font-semibold text-slate-700 hover:bg-slate-50"
+                }
+              >
+                {String(label)} · {Number(count)}
+              </Link>
+            ))}
+          </div>
+        </div>
+
         <div className="mt-6 space-y-3">
           {transactions.length === 0 ? (
             <p className="text-gray-600">
@@ -294,9 +617,34 @@ export default async function AfstemmingPage({ params }: Props) {
               const state =
                 resolution?.state ?? "NONE";
 
-              const bookingCandidates =
-                state === "UNIQUE_STRONG" ||
-                state === "AMBIGUOUS_STRONG"
+              const classificationRecord =
+                classificationByTransactionId.get(transaction.id) ?? null;
+              const classification = classificationRecord?.classification ?? null;
+              const documentWorkExcluded =
+                classificationExcludesDocumentCoverage(classification);
+              const allCurrentCandidateFlowsExcluded =
+                classification === "PERSONAL" || classification === "INTERNAL_TRANSFER";
+              const deterministicClassificationSuggestion =
+                suggestBankTransactionClassification({
+                  text: transaction.text,
+                  amount: transaction.amount,
+                  sourceRawData: transaction.sourceRawData ?? null,
+                });
+              const learnedClassificationSuggestion =
+                learnedClassificationSuggestions.get(
+                  normalizeBankClassificationPatternText(transaction.text),
+                ) ?? null;
+              const classificationSuggestion =
+                deterministicClassificationSuggestion ??
+                (learnedClassificationSuggestion?.classification === "PERSONAL" &&
+                !coveragePolicy.allowsPersonalTransactionExclusion
+                  ? null
+                  : learnedClassificationSuggestion);
+
+              const bookingCandidates = documentWorkExcluded
+                ? []
+                : state === "UNIQUE_STRONG" ||
+                    state === "AMBIGUOUS_STRONG"
                   ? resolution?.strongCandidates ?? []
                   : state === "POSSIBLE"
                     ? resolution?.possibleCandidates ?? []
@@ -306,9 +654,13 @@ export default async function AfstemmingPage({ params }: Props) {
                 confirmedEventLinksByTransactionId.get(
                   transaction.id
                 ) ?? [];
+              const confirmedReviewedDocumentLinks =
+                confirmedReviewedDocumentLinksByTransactionId.get(
+                  transaction.id
+                ) ?? [];
 
               const eventCandidates =
-                confirmedEventLinks.length > 0
+                allCurrentCandidateFlowsExcluded || confirmedEventLinks.length > 0
                   ? []
                   : eventCandidatesByTransactionId.get(
                       transaction.id
@@ -348,8 +700,30 @@ export default async function AfstemmingPage({ params }: Props) {
                     ),
                 );
 
+              const classificationBadge = classification
+                ? {
+                    text: classification === "PERSONAL"
+                      ? classificationT.personal
+                      : classification === "INTERNAL_TRANSFER"
+                        ? classificationT.internalTransfer
+                        : classification === "NON_DOCUMENT"
+                          ? classificationT.nonDocument
+                          : classification === "BUSINESS"
+                            ? classificationT.business
+                            : classificationT.review,
+                    className: classification === "PERSONAL"
+                      ? "bg-violet-100 text-violet-800"
+                      : classification === "BUSINESS"
+                        ? "bg-emerald-100 text-emerald-800"
+                        : classification === "REVIEW"
+                          ? "bg-amber-100 text-amber-800"
+                          : "bg-slate-100 text-slate-800",
+                  }
+                : null;
+
               const badge =
-                confirmedEventLinks.length > 0
+                classificationBadge ??
+                (confirmedEventLinks.length > 0 || confirmedReviewedDocumentLinks.length > 0
                   ? {
                       text: t.eventMatchConfirmedBadge,
                       className:
@@ -389,12 +763,13 @@ export default async function AfstemmingPage({ params }: Props) {
                                 text: t.noneBadge,
                                 className:
                                   "bg-gray-100 text-gray-700",
-                              };
+                              });
 
               return (
                 <div
                   key={transaction.id}
-                  className="rounded-lg border p-4"
+                  id={`transaction-${transaction.id}`}
+                  className="scroll-mt-6 rounded-lg border p-4"
                 >
                   <div className="flex items-start justify-between gap-4">
                     <div>
@@ -412,15 +787,35 @@ export default async function AfstemmingPage({ params }: Props) {
                     </p>
                   </div>
 
-                  <div className="mt-3">
+                  <div className="mt-3 flex flex-wrap items-center gap-2">
                     <span
                       className={`inline-block rounded-full px-3 py-1 text-sm font-medium ${badge.className}`}
                     >
                       {badge.text}
                     </span>
+                    {access.canReconcileBookkeeping && !documentWorkExcluded && confirmedEventLinks.length === 0 && confirmedReviewedDocumentLinks.length === 0 ? (
+                      <Link
+                        href={`/banki/${bankAccountId}/afstemming/handvirkt?transaction=${transaction.id}`}
+                        className="rounded-lg border px-3 py-1 text-sm font-semibold text-gray-700 hover:bg-gray-50"
+                      >
+                        {t.manualReconcile}
+                      </Link>
+                    ) : null}
                   </div>
 
-                  {candidates.length > 0 ? (
+                  {access.canReconcileBookkeeping ? (
+                    <BankTransactionClassificationControls
+                      companyId={activeCompanyId}
+                      bankAccountId={bankAccountId}
+                      bankTransactionId={transaction.id}
+                      classification={classification}
+                      allowPersonal={coveragePolicy.allowsPersonalTransactionExclusion}
+                      suggestedClassification={classificationSuggestion?.classification ?? null}
+                      labels={classificationT}
+                    />
+                  ) : null}
+
+                  {candidates.length > 0 && !documentWorkExcluded ? (
                     <div className="mt-3 space-y-2">
                       {candidates.map((candidate) => (
                         <div
@@ -451,6 +846,49 @@ export default async function AfstemmingPage({ params }: Props) {
                           </p>
                         </div>
                       ))}
+                    </div>
+                  ) : null}
+
+                  {confirmedReviewedDocumentLinks.length > 0 ? (
+                    <div className="mt-3 rounded-lg border border-emerald-200 bg-emerald-50 p-3">
+                      <p className="text-sm font-semibold text-emerald-900">
+                        {t.manualConfirmedTitle}
+                      </p>
+                      <p className="mt-1 text-xs text-emerald-800">
+                        {t.manualConfirmedHelp}
+                      </p>
+                      <div className="mt-3 space-y-2">
+                        {confirmedReviewedDocumentLinks.map((link) => (
+                          <div
+                            key={link.reconciliationId}
+                            className="rounded-lg border border-emerald-200 bg-white p-3 text-sm"
+                          >
+                            <div className="flex flex-wrap items-start justify-between gap-3">
+                              <div>
+                                <p className="font-medium text-emerald-950">
+                                  {t.sourceReceipt} #{link.receiptId}
+                                  {link.merchantName ? ` · ${link.merchantName}` : ""}
+                                </p>
+                                <p className="mt-1 text-gray-600">
+                                  {link.documentDate ? formatReconciliationDate(link.documentDate) : "—"}
+                                  {link.totalAmount !== null ? ` · ${formatNumber(link.totalAmount)} kr.` : ""}
+                                </p>
+                                {link.confirmedAt ? (
+                                  <p className="mt-1 text-xs font-medium text-emerald-800">
+                                    {t.confirmedOn}: {formatReconciliationDate(link.confirmedAt)}
+                                  </p>
+                                ) : null}
+                              </div>
+                              <Link
+                                href={`/fylgiskjol/${link.receiptId}?document=${link.documentId}`}
+                                className="rounded-lg border border-emerald-200 bg-white px-3 py-2 text-sm font-semibold text-emerald-900 hover:bg-emerald-50"
+                              >
+                                {t.reviewedDocumentCandidateOpenDocument}
+                              </Link>
+                            </div>
+                          </div>
+                        ))}
+                      </div>
                     </div>
                   ) : null}
 

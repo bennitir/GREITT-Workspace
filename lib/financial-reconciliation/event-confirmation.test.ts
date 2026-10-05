@@ -143,6 +143,76 @@ test("cross-company, sign, date, currency and missing data fail closed", async (
   }
 });
 
+test("explicit PRIMARY reviewed document allows a human-confirmed long lead time", async () => {
+  const f = fixture();
+  Object.assign(f.state.bank, {
+    amount: decimal(-22160),
+    date: new Date("2026-08-17T12:00:00.000Z"),
+    reference: "103396",
+    text: "Ríkissjóðsinnheimtur",
+    sourceRawData: JSON.stringify({ counterparty: "Ríkissjóðsinnheimtur" }),
+  });
+  Object.assign(f.state.event, {
+    amount: decimal(22160),
+    eventDate: new Date("2026-07-02T12:00:00.000Z"),
+    eventType: "CHARGE",
+    externalReference: "BK109124410",
+    documentLinks: [{
+      source: "REVIEWED_DOCUMENT",
+      document: {
+        id: 77,
+        reviewedAt: new Date("2026-07-02T13:00:00.000Z"),
+        date: new Date("2026-07-02T12:00:00.000Z"),
+        totalAmount: 22160,
+        documentType: "ACCOUNTING_DOCUMENT",
+        receiptNumber: "BK109124410",
+        merchantName: "Sýslumaðurinn á Suðurnesjum",
+        merchantKennitala: null,
+        summary: null,
+        receipt: {
+          date: new Date("2026-07-02T12:00:00.000Z"),
+          aiDate: null,
+          merchantName: "Sýslumaðurinn á Suðurnesjum",
+          merchantKennitala: null,
+        },
+        bookingEntries: [],
+      },
+    }],
+  });
+
+  await assert.rejects(confirm(input, f.db), /PAIR_NO_LONGER_VALID/);
+  const result = await confirm({ ...input, explicitPrimaryDocumentId: 77 }, f.db);
+
+  assert.equal(result.idempotent, false);
+  assert.equal(f.state.bank.status, "RECONCILED");
+  assert.equal(f.state.payments[0].matchType, "HUMAN_EXPLICIT_PRIMARY_DOCUMENT");
+  assert.equal(f.state.payments[0].metadata.primaryDocumentId, 77);
+  assert.equal(f.state.payments[0].metadata.dateDistanceDays, 46);
+  assert.ok(f.state.payments[0].metadata.evidence.includes("HUMAN_SELECTED_PRIMARY_DOCUMENT"));
+  assert.equal(f.state.reconciliations[0].reconciliationType, "BANK_TO_FINANCIAL_EVENT");
+  assert.equal(f.state.audits[0].metadata.primaryDocumentId, 77);
+});
+
+test("explicit PRIMARY reviewed-document confirmation fails closed for the wrong document", async () => {
+  const f = fixture();
+  f.state.event.documentLinks = [{
+    source: "REVIEWED_DOCUMENT",
+    document: {
+      id: 77, reviewedAt: new Date(), date: new Date("2026-01-01Z"),
+      totalAmount: 36027, documentType: "ACCOUNTING_DOCUMENT", receiptNumber: "INV-1",
+      merchantName: "Vendor", merchantKennitala: null, summary: null,
+      receipt: { date: new Date("2026-01-01Z"), aiDate: null, merchantName: "Vendor", merchantKennitala: null },
+      bookingEntries: [],
+    },
+  }];
+
+  await assert.rejects(
+    confirm({ ...input, explicitPrimaryDocumentId: 78 }, f.db),
+    /EXPLICIT_PRIMARY_DOCUMENT_NOT_LINKED/,
+  );
+  assert.equal(f.state.payments.length + f.state.reconciliations.length + f.state.audits.length, 0);
+});
+
 test("old candidate is not trusted after amount changes", async () => {
   const f = fixture();
   assert.equal(buildBankFinancialEventCandidates(f.state.bank.bankAccount,

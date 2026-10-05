@@ -3,12 +3,21 @@ import { buildBankFinancialEventCandidates } from "./event-candidates";
 import {
   collectSourceDocumentTemporalContext,
 } from "./source-document-temporal";
+import { buildReviewedDocumentLearningObservation } from "./reviewed-document-learning";
 
 export type ConfirmBankFinancialEventInput = {
   companyId: number;
   userId: number;
   bankTransactionId: number;
   eventId: number;
+  /**
+   * Explicit human selection from the manual reconciliation workspace.
+   * When present, this document must be a reviewed PRIMARY source document
+   * of eventId. The human selection may bridge a long payment lead time, but
+   * amount, direction, currency, ownership and the PRIMARY link are still
+   * revalidated inside the serializable transaction.
+   */
+  explicitPrimaryDocumentId?: number;
 };
 
 const VERSION = "bank-to-financial-event-v2";
@@ -20,7 +29,19 @@ export async function confirmBankFinancialEventPayment(
   input: ConfirmBankFinancialEventInput,
   client?: Pick<PrismaClient, "$transaction">,
 ) {
-  if (Object.values(input).some((id) => !Number.isSafeInteger(id) || id <= 0)) {
+  const requiredIds = [
+    input.companyId,
+    input.userId,
+    input.bankTransactionId,
+    input.eventId,
+  ];
+  if (requiredIds.some((id) => !Number.isSafeInteger(id) || id <= 0)) {
+    throw new Error("INVALID_CONFIRMATION_ID");
+  }
+  if (
+    input.explicitPrimaryDocumentId !== undefined &&
+    (!Number.isSafeInteger(input.explicitPrimaryDocumentId) || input.explicitPrimaryDocumentId <= 0)
+  ) {
     throw new Error("INVALID_CONFIRMATION_ID");
   }
   const db = client ?? (await import("../prisma")).prisma;
@@ -40,8 +61,23 @@ export async function confirmBankFinancialEventPayment(
                 source: true,
                 document: {
                   select: {
+                    id: true,
+                    reviewedAt: true,
                     date: true,
+                    totalAmount: true,
+                    documentType: true,
+                    receiptNumber: true,
+                    merchantName: true,
+                    merchantKennitala: true,
                     summary: true,
+                    receipt: {
+                      select: {
+                        date: true,
+                        aiDate: true,
+                        merchantName: true,
+                        merchantKennitala: true,
+                      },
+                    },
                     bookingEntries: {
                       select: { text: true },
                     },
@@ -70,24 +106,129 @@ export async function confirmBankFinancialEventPayment(
               bookingEntries: link.document?.bookingEntries ?? [],
             })),
         );
-        const candidate = buildBankFinancialEventCandidates(
-          bank.bankAccount,
-          [{ ...bank, amount: bank.amount.toString() }],
-          [{
-            id: event.id,
-            companyId: event.companyId,
-            eventType: event.eventType,
-            amount: event.amount?.toString() ?? null,
-            eventDate: event.eventDate,
-            externalReference: event.externalReference,
-            currency: event.currency,
-            primarySourceDocumentDates: temporal.documentDates,
-            sourceDueDate: temporal.dueDate,
-            sourceFinalDueDate: temporal.finalDueDate,
-          }],
-        )[0];
-        if (!candidate || !event.amount) throw new Error("PAIR_NO_LONGER_VALID");
+        const explicitPrimaryDocumentId = input.explicitPrimaryDocumentId;
+        const explicitLink = explicitPrimaryDocumentId === undefined
+          ? null
+          : (event.documentLinks ?? []).find((link) =>
+              link.source === "REVIEWED_DOCUMENT" &&
+              link.document?.id === explicitPrimaryDocumentId
+            ) ?? null;
 
+        let confirmationMetadata: Prisma.InputJsonObject;
+        let matchType: string;
+
+        if (explicitPrimaryDocumentId !== undefined) {
+          if (!explicitLink?.document) {
+            throw new Error("EXPLICIT_PRIMARY_DOCUMENT_NOT_LINKED");
+          }
+          if (!explicitLink.document.reviewedAt) {
+            throw new Error("EXPLICIT_PRIMARY_DOCUMENT_NOT_REVIEWED");
+          }
+          if (!event.amount) throw new Error("PAIR_NO_LONGER_VALID");
+          if (event.currency !== "ISK") throw new Error("PAIR_NO_LONGER_VALID");
+          if (event.eventType !== "CHARGE" && event.eventType !== "CREDIT") {
+            throw new Error("PAIR_NO_LONGER_VALID");
+          }
+
+          const bankAmount = bank.amount;
+          const eventAmount = event.amount;
+          if (!bankAmount.abs().eq(eventAmount.abs())) {
+            throw new Error("PAIR_NO_LONGER_VALID");
+          }
+          const directionValid =
+            (event.eventType === "CHARGE" && eventAmount.gt(0) && bankAmount.lt(0)) ||
+            (event.eventType === "CREDIT" && eventAmount.lt(0) && bankAmount.gt(0));
+          if (!directionValid) throw new Error("PAIR_NO_LONGER_VALID");
+
+          if (explicitLink.document.totalAmount !== null) {
+            const documentAmount = new Prisma.Decimal(explicitLink.document.totalAmount);
+            if (!documentAmount.abs().eq(eventAmount.abs())) {
+              throw new Error("EXPLICIT_PRIMARY_DOCUMENT_AMOUNT_MISMATCH");
+            }
+          }
+
+          const effectiveDocumentDate =
+            explicitLink.document.date ??
+            explicitLink.document.receipt.aiDate ??
+            explicitLink.document.receipt.date;
+          const dateDistanceDays = effectiveDocumentDate
+            ? Math.abs(Math.floor(bank.date.getTime() / 86_400_000) - Math.floor(effectiveDocumentDate.getTime() / 86_400_000))
+            : null;
+          const normalizeReference = (value: string | null | undefined) =>
+            String(value ?? "").trim().toUpperCase();
+          const bankReference = normalizeReference(bank.reference);
+          const eventReference = normalizeReference(event.externalReference);
+          const documentReference = normalizeReference(explicitLink.document.receiptNumber);
+          const evidence = [
+            "HUMAN_SELECTED_PRIMARY_DOCUMENT",
+            "EXACT_ABSOLUTE_AMOUNT",
+            "OPPOSITE_DIRECTION",
+          ];
+          if (bankReference && eventReference && bankReference === eventReference) {
+            evidence.push("EXACT_EVENT_REFERENCE");
+          }
+          if (bankReference && documentReference && bankReference === documentReference) {
+            evidence.push("EXACT_DOCUMENT_REFERENCE");
+          }
+
+          const documentMerchantName =
+            explicitLink.document.merchantName ?? explicitLink.document.receipt.merchantName;
+          const learning = dateDistanceDays === null
+            ? null
+            : buildReviewedDocumentLearningObservation({
+                bankText: bank.text,
+                bankSourceRawData: bank.sourceRawData,
+                bankAmount: bank.amount.toString(),
+                documentMerchantName,
+                documentType: explicitLink.document.documentType,
+                dateDistanceDays,
+              });
+
+          matchType = "HUMAN_EXPLICIT_PRIMARY_DOCUMENT";
+          confirmationMetadata = {
+            reason: matchType,
+            confirmationMode: matchType,
+            primaryDocumentId: explicitPrimaryDocumentId,
+            documentReceiptNumber: explicitLink.document.receiptNumber,
+            documentMerchantName,
+            dateDistanceDays,
+            eventExternalReference: event.externalReference,
+            bankReference: bank.reference,
+            evidence,
+            learning,
+            reconciliationVersion: "bank-to-financial-event-v3-manual-document",
+          };
+        } else {
+          const candidate = buildBankFinancialEventCandidates(
+            bank.bankAccount,
+            [{ ...bank, amount: bank.amount.toString() }],
+            [{
+              id: event.id,
+              companyId: event.companyId,
+              eventType: event.eventType,
+              amount: event.amount?.toString() ?? null,
+              eventDate: event.eventDate,
+              externalReference: event.externalReference,
+              currency: event.currency,
+              primarySourceDocumentDates: temporal.documentDates,
+              sourceDueDate: temporal.dueDate,
+              sourceFinalDueDate: temporal.finalDueDate,
+            }],
+          )[0];
+          if (!candidate || !event.amount) throw new Error("PAIR_NO_LONGER_VALID");
+
+          matchType = candidate.reason;
+          confirmationMetadata = {
+            reason: candidate.reason,
+            dateDistanceDays: candidate.dateDistanceDays,
+            eventExternalReference: candidate.externalReference,
+            bankReference: candidate.bankReference,
+            evidence: candidate.evidence,
+            reconciliationVersion: VERSION,
+          };
+        }
+
+        if (!event.amount) throw new Error("PAIR_NO_LONGER_VALID");
         const key = { eventId, bankTransactionId };
         const existingPayment = await tx.financialEventPayment.findUnique({
           where: { eventId_bankTransactionId: key },
@@ -169,14 +310,10 @@ export async function confirmBankFinancialEventPayment(
         }
 
         const confirmedAt = new Date();
-        const metadata = {
-          reason: candidate.reason, dateDistanceDays: candidate.dateDistanceDays,
-          eventExternalReference: candidate.externalReference, bankReference: candidate.bankReference,
-          evidence: candidate.evidence, reconciliationVersion: VERSION,
-        };
+        const metadata = confirmationMetadata;
         const paymentData = {
           amount, currency: event.currency, status: "CONFIRMED", confirmedAt,
-          source: "USER", matchType: candidate.reason, metadata,
+          source: "USER", matchType, metadata,
         };
         const payment = existingPayment?.status === "CONFIRMED" ? existingPayment :
           await tx.financialEventPayment.upsert({

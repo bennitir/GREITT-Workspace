@@ -1,0 +1,68 @@
+import { normalizeUiLanguage } from "@/lib/i18n/ui";
+
+const text = {
+  is: {
+    reconciliation: "Afstemming",
+    all: "Allt",
+    reconciled: "✓ Afstemmt",
+    unreconciled: "Óafstemmt",
+    notApplicable: "Á ekki við",
+    bookedUnreconciled: "Bókað + óafstemmt",
+    bank: "Banki",
+    card: "Kort",
+    other: "Afstemming",
+    openReconciliation: "Opna afstemmingu",
+    filterLabel: "Afstemming",
+    reconciledCountHelp: "Staðfest greiðslutenging liggur fyrir.",
+    unreconciledHelp: "Skjalið er bókað en engin staðfest greiðslutenging fannst.",
+  },
+  en: {
+    reconciliation: "Reconciliation",
+    all: "All",
+    reconciled: "✓ Reconciled",
+    unreconciled: "Unreconciled",
+    notApplicable: "Not applicable",
+    bookedUnreconciled: "Booked + unreconciled",
+    bank: "Bank",
+    card: "Card",
+    other: "Reconciliation",
+    openReconciliation: "Open reconciliation",
+    filterLabel: "Reconciliation",
+    reconciledCountHelp: "A confirmed payment link exists.",
+    unreconciledHelp: "The document is booked but no confirmed payment link was found.",
+  },
+  pl: {
+    reconciliation: "Uzgodnienie",
+    all: "Wszystko",
+    reconciled: "✓ Uzgodniono",
+    unreconciled: "Nieuzgodnione",
+    notApplicable: "Nie dotyczy",
+    bookedUnreconciled: "Zaksięgowane + nieuzgodnione",
+    bank: "Bank",
+    card: "Karta",
+    other: "Uzgodnienie",
+    openReconciliation: "Otwórz uzgodnienie",
+    filterLabel: "Uzgodnienie",
+    reconciledCountHelp: "Istnieje potwierdzone powiązanie płatności.",
+    unreconciledHelp: "Dokument jest zaksięgowany, ale nie znaleziono potwierdzonego powiązania płatności.",
+  },
+  sr: {
+    reconciliation: "Усклађивање",
+    all: "Све",
+    reconciled: "✓ Усклађено",
+    unreconciled: "Неусклађено",
+    notApplicable: "Није применљиво",
+    bookedUnreconciled: "Прокњижено + неусклађено",
+    bank: "Банка",
+    card: "Картица",
+    other: "Усклађивање",
+    openReconciliation: "Отвори усклађивање",
+    filterLabel: "Усклађивање",
+    reconciledCountHelp: "Постоји потврђена веза са плаћањем.",
+    unreconciledHelp: "Документ је прокњижен, али потврђена веза са плаћањем није пронађена.",
+  },
+} as const;
+
+export function archiveReconciliationText(language: string | null | undefined) {
+  return text[normalizeUiLanguage(language)];
+}

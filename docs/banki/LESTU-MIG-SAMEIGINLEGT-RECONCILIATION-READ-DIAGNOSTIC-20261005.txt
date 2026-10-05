@@ -1,0 +1,31 @@
+GLÖGGT – sameiginlegt reconciliation read/diagnostic lag – 2026-10-05
+
+MARKMIÐ
+Banki og greiðslukort eiga að nýta sömu staðfestu skjalþekkingu í stað þess að
+hafa tvö ólík read-lög. Source-specific reglur haldast þó aðskildar þar sem þær
+eru raunverulega ólíkar (t.d. kort exact-date dominance vs. bank payment/due-date).
+
+SAMEIGINLEGT
+1. Canonical AiDetectedDocument read model.
+2. Safe single-document Receipt fallback fyrir eldri gögn; aldrei í multi-document bundle.
+3. Company-local ORGANIZATION/ISSUER alias graph.
+4. Duplicate/disposed og confirmed-document ownership vörn.
+5. Read-only rejection diagnostics fyrir amount/date/eligibility/identity.
+
+KORT FÆR FRÁ BANKA
+- rejection diagnostics / skýra ástæðu fyrir NO_CANDIDATE;
+- sýn á skjöl sem eru til en falla út vegna annarra flæða;
+- canonical alias evidence úr entity-graphi.
+
+BANKI FÆR FRÁ KORTUM
+- sama sibling-safe canonical document materialization;
+- duplicate/disposed vörn áður en candidates eru byggðir;
+- confirmed document ownership tekin út áður en candidate er sýndur;
+- company-local trading/legal-name aliases án AI.
+
+EKKI SAMEINAÐ BLINT
+- card exact-date dominance er áfram card-specific;
+- bank due-date/payment semantics og FinancialEvent lög haldast bank-specific;
+- coverage cardinality/policy er áfram source-context aware.
+
+ENGIN PRISMA MIGRATION.

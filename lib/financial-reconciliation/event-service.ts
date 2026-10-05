@@ -1,4 +1,5 @@
 import { prisma } from "../prisma";
+import { DOCUMENT_OBLIGATION_FLOW_KIND } from "./flow-kind";
 import {
   buildBankFinancialEventCandidates,
   type BankFinancialEventCandidate,
@@ -169,6 +170,7 @@ export async function getBankFinancialEventCandidates(bankAccountId: number, com
     kind: "BANK_TO_FINANCIAL_EVENT" as const,
     bankAccountId: bankAccount.id,
     companyId: bankAccount.companyId,
+    flowKind: DOCUMENT_OBLIGATION_FLOW_KIND,
     candidates,
   };
 }
@@ -208,6 +210,7 @@ export async function getConfirmedBankFinancialEventLinks(
       kind: "CONFIRMED_BANK_TO_FINANCIAL_EVENT" as const,
       bankAccountId: bankAccount.id,
       companyId: bankAccount.companyId,
+      flowKind: DOCUMENT_OBLIGATION_FLOW_KIND,
       links: [] as ConfirmedBankFinancialEventLink[],
     };
   }
@@ -396,6 +399,7 @@ export async function getConfirmedBankFinancialEventLinks(
     kind: "CONFIRMED_BANK_TO_FINANCIAL_EVENT" as const,
     bankAccountId: bankAccount.id,
     companyId: bankAccount.companyId,
+    flowKind: DOCUMENT_OBLIGATION_FLOW_KIND,
     links,
   };
 }

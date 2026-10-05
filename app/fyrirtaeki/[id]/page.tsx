@@ -9,6 +9,8 @@ import { companyVehicleText } from "@/lib/i18n/company-vehicles";
 import { updateCompanyVehicleVatPolicy } from "@/app/fyrirtaeki/[id]/okutaeki/actions";
 import DeleteCompanyButton from "@/components/DeleteCompanyButton";
 import CompanyAccountAiSuggestion from "@/components/CompanyAccountAiSuggestion";
+import { CompanyReconciliationPolicyForm } from "@/components/CompanyReconciliationPolicyForm";
+import { companyReconciliationPolicyText } from "@/lib/i18n/company-reconciliation-policy";
 import {
   initializeCompanyAccounts,
   addMissingDefaultAccounts,
@@ -85,6 +87,7 @@ export default async function FyrirtaekiDetailPage({
 
   const interfaceLanguage = await getCurrentInterfaceLanguage();
   const vehicleT = companyVehicleText(interfaceLanguage);
+  const reconciliationPolicyT = companyReconciliationPolicyText(interfaceLanguage);
 
   const rskActivities = company.activities.filter(
     (activity) => activity.registeredAtRsk
@@ -150,6 +153,28 @@ export default async function FyrirtaekiDetailPage({
               ].filter(Boolean).join(" · ")
             : "Ekki skráð"}
         </p>
+
+        <div className="mt-8 rounded-lg border p-4">
+          <h2 className="text-xl font-semibold">
+            {reconciliationPolicyT.title}
+          </h2>
+          <p className="mt-1 max-w-3xl text-sm text-slate-500">
+            {reconciliationPolicyT.help}
+          </p>
+
+          <CompanyReconciliationPolicyForm
+            company={{
+              id: company.id,
+              isActive: company.isActive,
+              taxIdentityType: company.taxIdentityType,
+              personalBusinessUse: company.personalBusinessUse,
+              reconciliationCoverageOverride:
+                company.reconciliationCoverageOverride,
+            }}
+            language={interfaceLanguage}
+            canManage={canManageCompanySettings}
+          />
+        </div>
 
         <div className="mt-8 rounded-lg border p-4">
           <h2 className="text-xl font-semibold">

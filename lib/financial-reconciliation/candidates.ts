@@ -4,6 +4,7 @@ export type BankCandidateInput = {
   date: Date;
   text: string;
   amount: number | string;
+  sourceRawData?: string | null;
 };
 
 export type BookingCandidateInput = {

@@ -1,0 +1,27 @@
+GLÖGGT – Skjalasafn + afstemming, 5. október 2026
+
+Markmið
+- Skjalasafnið á að sýna bókunarstöðu og afstemmingarstöðu hlið við hlið.
+- Bókað og afstemmt eru tvær ólíkar staðreyndir og mega ekki renna saman í eina stöðu.
+- Bókari á að geta síað beint á „Bókað + óafstemmt“ sem verklista fyrir eftirfylgni.
+
+Framkvæmd
+- Nýr dálkur „Afstemming“ í /fylgiskjol/skjalasafn.
+- Bókuð AiDetectedDocument eru:
+  * ✓ Afstemmt ef CONFIRMED FinancialReconciliation hefur AI_DETECTED_DOCUMENT participant fyrir skjalið.
+  * Óafstemmt ef engin slík staðfest tenging finnst.
+- Afgreidd/supporting/outside-business/duplicate skjöl sem ekki eru bókuð fá „Á ekki við“.
+- Eldri Receipt án AiDetectedDocument styður reconciliation gegnum RECEIPT_ENTRY participant.
+- Þegar afstemming er við BANK_TRANSACTION eða PAYMENT_CARD_TRANSACTION er staðan smellanleg og leiðir í viðkomandi banka-/kortafstemmingu.
+
+Síur
+- Allt
+- ✓ Afstemmt
+- Bókað + óafstemmt
+- Á ekki við
+
+Reglur
+- Skjalasafnið býr ekki til eða staðfestir reconciliation; það les aðeins staðfest FinancialReconciliation gögn.
+- PROPOSED/candidate mót eru ekki sýnd sem „Afstemmt“.
+- Multi-document Receipt er ekki notað sem reconciliation identity; AiDetectedDocument er canonical skjal-eining.
+- Engin Prisma migration þarf fyrir þessa breytingu.
