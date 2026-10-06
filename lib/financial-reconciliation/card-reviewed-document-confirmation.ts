@@ -72,6 +72,9 @@ export async function confirmCardReviewedDocumentReconciliation(
           throw new Error("PAIR_NOT_FOUND_IN_COMPANY");
         }
         if (!document.reviewedAt) throw new Error("DOCUMENT_NOT_REVIEWED");
+        if (document.reviewedContentRevision !== document.contentRevision) {
+          throw new Error("DOCUMENT_REVIEW_STALE");
+        }
         if (document.duplicateMarkedAt) throw new Error("DOCUMENT_DUPLICATE_PENDING");
         if (document.disposedAt || document.disposition) throw new Error("DOCUMENT_ALREADY_DISPOSED");
         if (!document.date || !Number.isFinite(document.date.getTime())) {

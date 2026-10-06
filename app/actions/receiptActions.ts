@@ -1,5 +1,10 @@
 "use server";
-import { findReviewedLiabilityAccount, materializeReviewedFinancialDocument } from "@/lib/receipts/financial-event-materialization";
+import {
+  assertReviewedFinancialEventRefreshAllowed,
+  findReviewedLiabilityAccount,
+  invalidateReviewedFinancialDerivationsForContentChange,
+  materializeReviewedFinancialDocument,
+} from "@/lib/receipts/financial-event-materialization";
 import { queueInsightForDocument } from "@/lib/insight/auto-enqueue";
 import { runInsightWorker } from "@/lib/insight/worker";
 import { persistReceiptDerivedInsight } from "@/lib/insight/receipt-derived";
@@ -45,7 +50,7 @@ import path from "path";
 import os from "os";
 import crypto from "crypto";
 import { prisma } from "@/lib/prisma";
-import type { Prisma } from "@/app/generated/prisma/client";
+import { Prisma } from "@/app/generated/prisma/client";
 import { getCompanyModuleSettings } from "@/lib/core/company-module-repository";
 import { isCompanyModuleEnabled } from "@/lib/core/company-modules";
 import { supabaseAdmin } from "@/lib/supabase";
@@ -70,6 +75,17 @@ import {
 import {
   findStableRecurringBookingTemplate,
 } from "@/lib/receipts/recurring-booking";
+import {
+  prepareReceiptNumberDocumentInstancesForBooking,
+  readDuplicateIdentityState,
+} from "@/lib/receipts/document-instance-booking";
+import {
+  DUPLICATE_REASON,
+  evaluateDocumentDuplicatePair,
+} from "@/lib/receipts/document-duplicate-reasons";
+import {
+  lockDocumentIdentityCompany,
+} from "@/lib/receipts/document-instance-service";
 
 async function isInventoryModuleEnabled(companyId: number) {
   const moduleSettings = await getCompanyModuleSettings(companyId);
@@ -80,6 +96,135 @@ async function requireInventoryModuleEnabled(companyId: number) {
   if (!(await isInventoryModuleEnabled(companyId))) {
     throw new Error("Birgðakerfi er ekki virkt fyrir þetta fyrirtæki.");
   }
+}
+
+type DetectedDocumentContentMutationReason =
+  | "MANUAL_PREPARE"
+  | "MERCHANT_CORRECTION"
+  | "VAT_DEDUCTION"
+  | "BOOKING_ENTRIES_UPDATE"
+  | "BOOKING_ENTRY_ADD"
+  | "BOOKING_ENTRY_DELETE"
+  | "BOOKING_SUGGESTION_REBUILD"
+  | "BOOKING_SUGGESTION_APPLY"
+  | "LEGACY_MANUAL_DRAFT"
+  | "LIABILITY_ACCOUNT_CHANGE";
+
+async function claimDetectedDocumentContentMutation(
+  tx: Prisma.TransactionClient,
+  params: {
+    companyId: number;
+    receiptId: number;
+    documentId: number;
+    expectedRevision: number;
+    userId: number | null;
+    reason: DetectedDocumentContentMutationReason;
+  },
+) {
+  const { companyId, receiptId, documentId, expectedRevision, userId, reason } = params;
+  const current = await tx.aiDetectedDocument.findFirst({
+    where: {
+      id: documentId,
+      receiptId,
+      receipt: { companyId },
+    },
+    select: {
+      contentRevision: true,
+      reviewedContentRevision: true,
+      reviewedAt: true,
+      approvedAt: true,
+      voucherNumber: true,
+    },
+  });
+
+  if (!current) {
+    throw new Error("Greint fylgiskjal fannst ekki lengur.");
+  }
+  if (current.approvedAt || current.voucherNumber != null) {
+    throw new Error("Ekki er hægt að breyta fylgiskjali eftir bókun.");
+  }
+  if (current.contentRevision !== expectedRevision) {
+    throw new Error(
+      "Fylgiskjalið breyttist á meðan aðgerðin var í gangi. Endurhlaðið síðuna og reynið aftur.",
+    );
+  }
+
+  const claim = await tx.aiDetectedDocument.updateMany({
+    where: {
+      id: documentId,
+      contentRevision: expectedRevision,
+      approvedAt: null,
+      voucherNumber: null,
+    },
+    data: {
+      contentRevision: { increment: 1 },
+      reviewedAt: null,
+      reviewedContentRevision: null,
+    },
+  });
+  if (claim.count !== 1) {
+    throw new Error(
+      "Fylgiskjalið breyttist á meðan aðgerðin var í gangi. Endurhlaðið síðuna og reynið aftur.",
+    );
+  }
+
+  let invalidated: { primaryEventIds: number[] };
+  try {
+    invalidated = await invalidateReviewedFinancialDerivationsForContentChange(tx, {
+      companyId,
+      documentId,
+    });
+  } catch (error) {
+    const message = error instanceof Error ? error.message : "";
+    if (message.startsWith("REVIEW_CONTENT_LOCKED|")) {
+      throw new Error(
+        "Ekki er hægt að breyta yfirförnu fylgiskjali eftir að afstemming eða greiðsla hefur verið staðfest. Aftengdu eða ógiltu staðfestinguna fyrst.",
+      );
+    }
+    throw error;
+  }
+
+  await tx.receipt.updateMany({
+    where: { id: receiptId, companyId, status: "REVIEWED" },
+    data: { status: "NEW" },
+  });
+
+  if (current.reviewedAt || current.reviewedContentRevision != null) {
+    await tx.auditEvent.create({
+      data: {
+        companyId,
+        userId,
+        entityType: "AiDetectedDocument",
+        entityId: documentId,
+        action: "INVALIDATE_DOCUMENT_REVIEW_CONTENT_CHANGED",
+        parentEntityType: "Receipt",
+        parentEntityId: receiptId,
+        source: "USER",
+        description:
+          "Yfirferð fylgiskjals ógilt vegna breytingar á canonical bókunargögnum.",
+        beforeData: {
+          contentRevision: current.contentRevision,
+          reviewedContentRevision: current.reviewedContentRevision,
+          reviewedAt: current.reviewedAt?.toISOString() ?? null,
+        },
+        afterData: {
+          contentRevision: current.contentRevision + 1,
+          reviewedContentRevision: null,
+          reviewedAt: null,
+        },
+        metadata: {
+          reason,
+          invalidatedPrimaryFinancialEventIds: invalidated.primaryEventIds,
+        },
+      },
+    });
+  }
+
+  return {
+    previousRevision: current.contentRevision,
+    contentRevision: current.contentRevision + 1,
+    reviewWasInvalidated: current.reviewedAt !== null,
+  };
 }
 
 async function saveReceiptFile(
@@ -732,6 +877,17 @@ export async function prepareExistingReceiptManually(
     String(formData.get("receiptNumber") || "").trim() || null;
 
   const preparedDocumentId = await prisma.$transaction(async (tx) => {
+    if (requestedDocument) {
+      await claimDetectedDocumentContentMutation(tx, {
+        companyId,
+        receiptId: receipt.id,
+        documentId: requestedDocument.id,
+        expectedRevision: requestedDocument.contentRevision,
+        userId: user.id,
+        reason: "MANUAL_PREPARE",
+      });
+    }
+
     await tx.receipt.update({
       where: { id: receipt.id },
       data: requestedDocument
@@ -775,6 +931,7 @@ export async function prepareExistingReceiptManually(
           classificationSource: "MANUAL",
           classifiedAt: new Date(),
           reviewedAt: null,
+          reviewedContentRevision: null,
           environmentReviewRequired: false,
           environmentReviewReason: null,
           bookingEntries: {
@@ -851,7 +1008,7 @@ export async function prepareExistingReceiptManually(
     });
 
     return targetDocumentId;
-  });
+  }, { isolationLevel: Prisma.TransactionIsolationLevel.Serializable });
 
   revalidatePath(`/fylgiskjol/${receipt.id}`);
   revalidatePath("/fylgiskjol");
@@ -3595,6 +3752,8 @@ export async function confirmMissingLoanDetails(
   const confirmedAt = new Date();
 
   await prisma.$transaction(async (tx) => {
+    await lockDocumentIdentityCompany(tx, document.receipt.companyId);
+
     const resolvedLoan = await resolveCanonicalInsightEntity(tx, {
       companyId: document.receipt.companyId,
       entityType: "LOAN",
@@ -3781,6 +3940,8 @@ export async function rejectIncorrectLoanEntityLink(
   }
 
   await prisma.$transaction(async (tx) => {
+    await lockDocumentIdentityCompany(tx, document.receipt.companyId);
+
     await tx.auditEvent.create({
       data: {
         companyId: document.receipt.companyId,
@@ -4180,7 +4341,7 @@ export async function confirmInsightEntityAccountLink(
 }
 
 async function materializeReviewedPaymentSchedule(
-  tx: any,
+  tx: Prisma.TransactionClient,
   params: {
     companyId: number;
     receiptId: number;
@@ -4233,53 +4394,80 @@ async function materializeReviewedPaymentSchedule(
     typeof schedule.totalAmount === "number" && Number.isFinite(schedule.totalAmount)
       ? schedule.totalAmount
       : document.totalAmount ?? installments.reduce((sum, item) => sum + item.amount, 0);
+  const currency =
+    typeof schedule.currency === "string" && schedule.currency.trim()
+      ? schedule.currency.trim().toUpperCase()
+      : "ISK";
+  const scheduleType =
+    typeof schedule.scheduleType === "string" && schedule.scheduleType.trim()
+      ? schedule.scheduleType.trim()
+      : "OTHER";
 
   const liabilityAccount = await findReviewedLiabilityAccount(
     tx, companyId, document.bookingEntries,
   );
 
-  // Idempotency: eitt PRIMARY event fyrir sama greinda frumskjal.
+  // Same event id is retained across content revisions. Invalidation moves the
+  // source link to STALE_PRIMARY; re-review refreshes and reactivates it only
+  // while no confirmed downstream payment/reconciliation owns the event.
   const existingLink = await tx.documentFinancialEvent.findFirst({
-    where: { documentId: document.id, role: "PRIMARY" },
-    include: { event: true },
-  });
-
-  const event = existingLink?.event ?? await tx.financialEvent.create({
-    data: {
-      companyId,
-      eventType:
-        schedule.scheduleType === "ANNUAL_ASSESSMENT"
-          ? "ANNUAL_ASSESSMENT"
-          : "CHARGE",
-      status: "OPEN",
-      title: document.merchantName
-        ? `${document.merchantName} – greiðsluáætlun`
-        : "Álagning / greiðsluáætlun",
-      eventDate: document.date ?? null,
-      amount: scheduleTotal,
-      currency:
-        typeof schedule.currency === "string" && schedule.currency.trim()
-          ? schedule.currency.trim().toUpperCase()
-          : "ISK",
-      liabilityAccountId: liabilityAccount?.id ?? null,
-      metadata: {
-        source: "REVIEWED_DOCUMENT",
-        scheduleType: schedule.scheduleType ?? "OTHER",
-        confidence:
-          typeof schedule.confidence === "number" ? schedule.confidence : null,
-        summary: document.summary ?? null,
-      },
+    where: {
+      documentId: document.id,
+      role: { in: ["PRIMARY", "STALE_PRIMARY"] },
     },
+    include: { event: true },
+    orderBy: { id: "asc" },
   });
 
-  if (existingLink && liabilityAccount && existingLink.event.liabilityAccountId !== liabilityAccount.id) {
-    await tx.financialEvent.update({
-      where: { id: event.id },
-      data: { liabilityAccountId: liabilityAccount.id },
-    });
-  }
+  const eventData = {
+    companyId,
+    eventType:
+      scheduleType === "ANNUAL_ASSESSMENT"
+        ? "ANNUAL_ASSESSMENT"
+        : "CHARGE",
+    status: "OPEN",
+    title: document.merchantName
+      ? `${document.merchantName} – greiðsluáætlun`
+      : "Álagning / greiðsluáætlun",
+    eventDate: document.date ?? null,
+    periodStart: null,
+    periodEnd: null,
+    amount: scheduleTotal,
+    currency,
+    externalReference: null,
+    liabilityAccountId: liabilityAccount?.id ?? null,
+    metadata: {
+      source: "REVIEWED_DOCUMENT",
+      sourceDocumentId: document.id,
+      scheduleType,
+      confidence:
+        typeof schedule.confidence === "number" ? schedule.confidence : null,
+      summary: document.summary ?? null,
+    },
+  };
 
-  if (!existingLink) {
+  let event: { id: number };
+  if (existingLink) {
+    await assertReviewedFinancialEventRefreshAllowed(tx, companyId, existingLink.eventId);
+    await tx.financialEventEntity.deleteMany({
+      where: { eventId: existingLink.eventId, role: "COUNTERPARTY" },
+    });
+    event = await tx.financialEvent.update({
+      where: { id: existingLink.eventId },
+      data: eventData,
+      select: { id: true },
+    });
+    if (existingLink.role !== "PRIMARY" || existingLink.source !== "REVIEWED_DOCUMENT") {
+      await tx.documentFinancialEvent.update({
+        where: { id: existingLink.id },
+        data: { role: "PRIMARY", source: "REVIEWED_DOCUMENT" },
+      });
+    }
+  } else {
+    event = await tx.financialEvent.create({
+      data: eventData,
+      select: { id: true },
+    });
     await tx.documentFinancialEvent.create({
       data: {
         receiptId,
@@ -4293,7 +4481,8 @@ async function materializeReviewedPaymentSchedule(
     });
   }
 
-  // Endurlesning/yfirferð má ekki tvöfalda gjalddaga.
+  // Endurlesning/yfirferð má ekki tvöfalda gjalddaga. Confirmed allocations
+  // are protected by assertReviewedFinancialEventRefreshAllowed above.
   await tx.financialEventScheduleItem.deleteMany({ where: { eventId: event.id } });
   await tx.financialEventScheduleItem.createMany({
     data: installments.map((item) => ({
@@ -4301,10 +4490,7 @@ async function materializeReviewedPaymentSchedule(
       sequence: item.sequence,
       dueDate: item.dueDate,
       amount: item.amount,
-      currency:
-        typeof schedule.currency === "string" && schedule.currency.trim()
-          ? schedule.currency.trim().toUpperCase()
-          : "ISK",
+      currency,
       externalReference: item.externalReference,
       metadata: { sourceDocumentId: document.id },
     })),
@@ -4827,6 +5013,8 @@ export async function applyConfirmedBookingSuggestions(
   if (
     document.documentRole !== "BOOKABLE" ||
     document.bookingEntries.length > 0 ||
+    document.reviewedAt ||
+    document.reviewedContentRevision != null ||
     document.approvedAt ||
     document.voucherNumber != null ||
     document.disposedAt
@@ -5681,6 +5869,15 @@ export async function applyConfirmedBookingSuggestions(
     });
     if (stillEmpty > 0) return;
 
+    await claimDetectedDocumentContentMutation(tx, {
+      companyId: document.receipt.companyId,
+      receiptId: document.receiptId,
+      documentId: document.id,
+      expectedRevision: document.contentRevision,
+      userId: user?.id ?? null,
+      reason: "BOOKING_SUGGESTION_APPLY",
+    });
+
     await tx.aiDetectedDocumentEntry.createMany({ data: suggestedEntries });
 
     const previousSummary = document.summary ?? "";
@@ -5748,7 +5945,7 @@ export async function applyConfirmedBookingSuggestions(
         },
       },
     });
-  });
+  }, { isolationLevel: Prisma.TransactionIsolationLevel.Serializable });
 
   revalidatePath(`/fylgiskjol/${document.receiptId}`);
   return { changed: true, reason: "APPLIED" };
@@ -5845,14 +6042,25 @@ export async function applyConfirmedBookingSuggestions(
   }
 
   await prisma.$transaction(async (tx) => {
-    await tx.aiDetectedDocument.update({
+    const reviewedAt = new Date();
+    const reviewClaim = await tx.aiDetectedDocument.updateMany({
       where: {
         id: documentId,
+        contentRevision: document.contentRevision,
+        reviewedAt: null,
+        approvedAt: null,
+        voucherNumber: null,
       },
       data: {
-        reviewedAt: new Date(),
+        reviewedAt,
+        reviewedContentRevision: document.contentRevision,
       },
     });
+    if (reviewClaim.count !== 1) {
+      throw new Error(
+        "Fylgiskjalið breyttist eftir að það var opnað. Endurhlaðið síðuna og farið yfir nýjustu gögnin.",
+      );
+    }
 
     await tx.receipt.update({
       where: {
@@ -6034,6 +6242,15 @@ export async function continueLegacyDetectedDocumentWithManualDraft(
   }
 
   await prisma.$transaction(async (tx) => {
+    await claimDetectedDocumentContentMutation(tx, {
+      companyId: document.receipt.companyId,
+      receiptId: document.receiptId,
+      documentId: document.id,
+      expectedRevision: document.contentRevision,
+      userId: user.id,
+      reason: "LEGACY_MANUAL_DRAFT",
+    });
+
     await tx.aiDetectedDocument.update({
       where: { id: document.id },
       data: {
@@ -6084,7 +6301,7 @@ export async function continueLegacyDetectedDocumentWithManualDraft(
         },
       },
     });
-  });
+  }, { isolationLevel: Prisma.TransactionIsolationLevel.Serializable });
 
   revalidatePath(`/fylgiskjol/${document.receiptId}`);
   revalidatePath("/fylgiskjol");
@@ -6140,6 +6357,15 @@ export async function updateDetectedDocumentMerchant(
   const reviewWasInvalidated = document.reviewedAt !== null;
 
   await prisma.$transaction(async (tx) => {
+    await claimDetectedDocumentContentMutation(tx, {
+      companyId: document.receipt.companyId,
+      receiptId: document.receiptId,
+      documentId: document.id,
+      expectedRevision: document.contentRevision,
+      userId: user.id,
+      reason: "MERCHANT_CORRECTION",
+    });
+
     await tx.aiDetectedDocument.update({
       where: { id: document.id },
       data: {
@@ -6150,6 +6376,7 @@ export async function updateDetectedDocumentMerchant(
         // Merkingin "yfirfarið" á ekki að lifa sjálfkrafa eftir breytingu á
         // auðkenni seljanda. Notandi staðfestir skjalið aftur eftir leiðréttingu.
         reviewedAt: null,
+        reviewedContentRevision: null,
       },
     });
 
@@ -6192,7 +6419,7 @@ export async function updateDetectedDocumentMerchant(
         },
       },
     });
-  });
+  }, { isolationLevel: Prisma.TransactionIsolationLevel.Serializable });
 
   revalidatePath(`/fylgiskjol/${document.receiptId}`);
   revalidatePath("/fylgiskjol");
@@ -7109,9 +7336,12 @@ export async function approveDetectedDocument(
     );
   }
 
-  if (!document.reviewedAt) {
+  if (
+    !document.reviewedAt ||
+    document.reviewedContentRevision !== document.contentRevision
+  ) {
   throw new Error(
-    "Ekki er hægt að bóka fylgiskjal fyrr en það hefur verið yfirfarið."
+    "Ekki er hægt að bóka fylgiskjal fyrr en nýjasta útgáfa þess hefur verið yfirfarin."
   );
 }
 
@@ -7138,8 +7368,23 @@ if (!document.date) {
 
   perf("prechecks");
 
+  if (document.receiptNumber) {
+    await prepareReceiptNumberDocumentInstancesForBooking({
+      companyId: document.receipt.companyId,
+      documentId: document.id,
+      receiptNumber: document.receiptNumber,
+      actorUserId: user.id,
+    });
+    perf("document instance identity preparation");
+  }
+
   try {
     await prisma.$transaction(async (tx) => {
+    // Booking and document-instance identity/duplicate decisions share the same
+    // company-scoped transaction lock. This prevents an identity/binding writer
+    // from changing the evidence while duplicate reasons are being evaluated.
+    await lockDocumentIdentityCompany(tx, document.receipt.companyId);
+
     const company = await tx.company.findUnique({
       where: {
         id: document.receipt.companyId,
@@ -7156,39 +7401,48 @@ if (!document.date) {
       document.bookingEntries
     );
     perf("tx company + VAT");
-// Öryggisvörn gegn tvíbókun sama fylgiskjals
+// Öryggisvörn gegn tvíbókun sama fylgiskjals.
+//
+// receiptNumber er áfram blocking nema authoritative document-instance evidence
+// sannar að númerið er obligation-reference og skjölin eru tvö mismunandi
+// instances. Þannig má t.d. sama lán eiga 16/480 og 17/480, en sama 17/480
+// hlaðið inn aftur blokkar áfram. Aðrar duplicate-ástæður eru óháðar þessu.
 if (document.receiptNumber) {
   if (
-  !allowPossibleDuplicate &&
-  document.merchantName &&
-  document.date &&
-  document.totalAmount != null
-) {
-  const possibleDuplicate =
-    await tx.aiDetectedDocument.findFirst({
-      where: {
-        id: {
-          not: document.id,
+    !allowPossibleDuplicate &&
+    document.merchantName &&
+    document.date &&
+    document.totalAmount != null
+  ) {
+    const possibleDuplicate =
+      await tx.aiDetectedDocument.findFirst({
+        where: {
+          id: {
+            not: document.id,
+          },
+          merchantName: document.merchantName,
+          date: document.date,
+          totalAmount: document.totalAmount,
+          receipt: {
+            companyId: company.id,
+          },
+          approvedAt: {
+            not: null,
+          },
         },
-        merchantName: document.merchantName,
-        date: document.date,
-        totalAmount: document.totalAmount,
-        receipt: {
-          companyId: company.id,
-        },
-        approvedAt: {
-          not: null,
-        },
-      },
-    });
+      });
 
-  if (possibleDuplicate) {
-    throw new Error(
-      `POSSIBLE_DUPLICATE|${possibleDuplicate.receiptId}|${possibleDuplicate.id}|${possibleDuplicate.voucherNumber ?? ""}|${document.merchantName}|${document.totalAmount}`
-    );
+    if (possibleDuplicate) {
+      throw new Error(
+        `POSSIBLE_DUPLICATE|${possibleDuplicate.receiptId}|${possibleDuplicate.id}|${possibleDuplicate.voucherNumber ?? ""}|${document.merchantName}|${document.totalAmount}`
+      );
+    }
   }
-}
-  const duplicateDocument = await tx.aiDetectedDocument.findFirst({
+
+  // All already-booked documents with the repeated number are evaluated.
+  // Never use a first-match shortcut: one pair can be DISTINCT while another
+  // pair is the SAME_INSTANCE and must still block.
+  const duplicateDocuments = await tx.aiDetectedDocument.findMany({
     where: {
       id: { not: document.id },
       receiptNumber: document.receiptNumber,
@@ -7199,15 +7453,58 @@ if (document.receiptNumber) {
         not: null,
       },
     },
+    select: {
+      id: true,
+      receiptId: true,
+      receiptNumber: true,
+      voucherNumber: true,
+    },
+    orderBy: { id: "asc" },
   });
 
-  if (duplicateDocument) {
-    throw new Error(
-      `Möguleg tvíbókun: reiknings-/kvittunarnúmer ${document.receiptNumber} hefur þegar verið bókað` +
-        (duplicateDocument.voucherNumber
-          ? ` sem fylgiskjal ${duplicateDocument.voucherNumber}.`
-          : ".")
+  if (duplicateDocuments.length > 0) {
+    const currentIdentity = await readDuplicateIdentityState(
+      tx,
+      company.id,
+      document.id,
     );
+
+    for (const duplicateDocument of duplicateDocuments) {
+      const candidateIdentity = await readDuplicateIdentityState(
+        tx,
+        company.id,
+        duplicateDocument.id,
+      );
+
+      const evaluation = evaluateDocumentDuplicatePair(
+        {
+          companyId: company.id,
+          receiptId: document.receiptId,
+          documentId: document.id,
+          receiptNumber: document.receiptNumber,
+          identity: currentIdentity,
+        },
+        {
+          document: {
+            companyId: company.id,
+            receiptId: duplicateDocument.receiptId,
+            documentId: duplicateDocument.id,
+            receiptNumber: duplicateDocument.receiptNumber,
+            identity: candidateIdentity,
+          },
+          observedReasons: [DUPLICATE_REASON.RECEIPT_NUMBER_MATCH],
+        },
+      );
+
+      if (evaluation.blocked) {
+        throw new Error(
+          `Möguleg tvíbókun: reiknings-/kvittunarnúmer ${document.receiptNumber} hefur þegar verið bókað` +
+            (duplicateDocument.voucherNumber
+              ? ` sem fylgiskjal ${duplicateDocument.voucherNumber}.`
+              : ".")
+        );
+      }
+    }
   }
 }
 
@@ -8056,6 +8353,15 @@ export async function setDetectedDocumentVatDeduction(
     : undefined;
 
   await prisma.$transaction(async (tx) => {
+    await claimDetectedDocumentContentMutation(tx, {
+      companyId: document.receipt.companyId,
+      receiptId: document.receiptId,
+      documentId,
+      expectedRevision: document.contentRevision,
+      userId: user?.id ?? null,
+      reason: "VAT_DEDUCTION",
+    });
+
     for (const update of vatUpdates) {
       const original = originalVatEntries.find((row) => row.id === update.id)!;
       const current = document.bookingEntries.find((row) => row.id === update.id)!;
@@ -8156,7 +8462,7 @@ export async function setDetectedDocumentVatDeduction(
         },
       },
     });
-  });
+  }, { isolationLevel: Prisma.TransactionIsolationLevel.Serializable });
 
   revalidatePath(`/fylgiskjol/${document.receiptId}`);
   revalidatePath("/vsk");
@@ -8322,7 +8628,18 @@ const entryIdsToDelete = existingEntries
   .map((entry) => entry.id)
   .filter((id) => !submittedIds.has(id));
 
+const user = await getEffectiveUser();
+
 await prisma.$transaction(async (tx) => {
+  await claimDetectedDocumentContentMutation(tx, {
+    companyId: document.receipt.companyId,
+    receiptId: document.receiptId,
+    documentId,
+    expectedRevision: document.contentRevision,
+    userId: user?.id ?? null,
+    reason: "BOOKING_ENTRIES_UPDATE",
+  });
+
   if (entryIdsToDelete.length > 0) {
     await tx.aiDetectedDocumentEntry.deleteMany({
       where: {
@@ -8358,7 +8675,7 @@ await prisma.$transaction(async (tx) => {
       },
     });
   }
-});
+}, { isolationLevel: Prisma.TransactionIsolationLevel.Serializable });
 
   revalidatePath(
     `/fylgiskjol/${document.receiptId}`
@@ -8374,6 +8691,7 @@ await prisma.$transaction(async (tx) => {
     select: {
       id: true,
       receiptId: true,
+      contentRevision: true,
       approvedAt: true,
       disposedAt: true,
       disposition: true,
@@ -8392,15 +8710,27 @@ await prisma.$transaction(async (tx) => {
     throw new Error("Ekki er hægt að breyta fylgiskjali sem hefur verið afgreitt án bókunar.");
   }
 
-  await prisma.aiDetectedDocumentEntry.create({
-    data: {
+  const user = await getEffectiveUser();
+  await prisma.$transaction(async (tx) => {
+    await claimDetectedDocumentContentMutation(tx, {
+      companyId,
+      receiptId: document.receiptId,
       documentId,
-      account: "",
-      text: "",
-      debit: 0,
-      credit: 0,
-    },
-  });
+      expectedRevision: document.contentRevision,
+      userId: user?.id ?? null,
+      reason: "BOOKING_ENTRY_ADD",
+    });
+
+    await tx.aiDetectedDocumentEntry.create({
+      data: {
+        documentId,
+        account: "",
+        text: "",
+        debit: 0,
+        credit: 0,
+      },
+    });
+  }, { isolationLevel: Prisma.TransactionIsolationLevel.Serializable });
 
   revalidatePath(`/fylgiskjol/${document.receiptId}`);
 }
@@ -8450,6 +8780,15 @@ export async function rebuildDetectedDocumentBookingSuggestion(documentId: numbe
   const user = await getEffectiveUser();
 
   await prisma.$transaction(async (tx) => {
+    await claimDetectedDocumentContentMutation(tx, {
+      companyId: document.receipt.companyId,
+      receiptId: document.receiptId,
+      documentId,
+      expectedRevision: document.contentRevision,
+      userId: user?.id ?? null,
+      reason: "BOOKING_SUGGESTION_REBUILD",
+    });
+
     await tx.aiDetectedDocumentEntry.deleteMany({
       where: { documentId },
     });
@@ -8476,7 +8815,7 @@ export async function rebuildDetectedDocumentBookingSuggestion(documentId: numbe
         },
       },
     });
-  });
+  }, { isolationLevel: Prisma.TransactionIsolationLevel.Serializable });
 
   const result = await applyConfirmedBookingSuggestions(documentId, {
     refreshCurrentPurchaseLines: true,
@@ -8499,6 +8838,7 @@ export async function deleteDetectedDocumentEntry(entryId: number) {
       document: {
         select: {
           receiptId: true,
+          contentRevision: true,
           approvedAt: true,
           disposedAt: true,
           disposition: true,
@@ -8519,11 +8859,23 @@ export async function deleteDetectedDocumentEntry(entryId: number) {
     throw new Error("Ekki er hægt að breyta fylgiskjali sem hefur verið afgreitt án bókunar.");
   }
 
-  await prisma.aiDetectedDocumentEntry.delete({
-    where: {
-      id: entryId,
-    },
-  });
+  const user = await getEffectiveUser();
+  await prisma.$transaction(async (tx) => {
+    await claimDetectedDocumentContentMutation(tx, {
+      companyId,
+      receiptId: entry.document.receiptId,
+      documentId: entry.documentId,
+      expectedRevision: entry.document.contentRevision,
+      userId: user?.id ?? null,
+      reason: "BOOKING_ENTRY_DELETE",
+    });
+
+    await tx.aiDetectedDocumentEntry.delete({
+      where: {
+        id: entryId,
+      },
+    });
+  }, { isolationLevel: Prisma.TransactionIsolationLevel.Serializable });
 
   revalidatePath(`/fylgiskjol/${entry.document.receiptId}`);
 }
@@ -8888,6 +9240,15 @@ export async function createLiabilityAccountForDetectedDocument(
       );
     }
 
+    await claimDetectedDocumentContentMutation(tx, {
+      companyId: document.receipt.companyId,
+      receiptId: document.receiptId,
+      documentId,
+      expectedRevision: currentDocument.contentRevision,
+      userId: user.id,
+      reason: "LIABILITY_ACCOUNT_CHANGE",
+    });
+
     // Athugum aftur innan transactionins svo tvísmellur/samhliða beiðni geti
     // ekki stofnað sama lykil tvisvar.
     const existingInTransaction = await tx.account.findUnique({
@@ -8932,19 +9293,6 @@ export async function createLiabilityAccountForDetectedDocument(
       );
     }
 
-    // Ef FinancialEvent hefur þegar verið materialized (t.d. við endurvinnslu),
-    // færist staðfesti skuldalykillinn með. Annars verður hann festur við yfirferð.
-    const eventLink = await tx.documentFinancialEvent.findFirst({
-      where: { documentId, role: "PRIMARY" },
-      select: { eventId: true },
-    });
-    if (eventLink) {
-      await tx.financialEvent.update({
-        where: { id: eventLink.eventId },
-        data: { liabilityAccountId: account.id },
-      });
-    }
-
     await tx.auditEvent.create({
       data: {
         companyId: document.receipt.companyId,
@@ -8967,7 +9315,7 @@ export async function createLiabilityAccountForDetectedDocument(
         },
       },
     });
-  });
+  }, { isolationLevel: Prisma.TransactionIsolationLevel.Serializable });
 
   revalidatePath(`/fylgiskjol/${document.receiptId}`);
   revalidatePath(`/fyrirtaeki/${document.receipt.companyId}/reikningslyklar`);

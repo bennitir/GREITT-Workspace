@@ -59,9 +59,10 @@ export async function getBankFinancialEventCandidates(bankAccountId: number, com
         id: true, companyId: true, eventType: true, amount: true,
         eventDate: true, externalReference: true, currency: true,
         documentLinks: {
-          where: { role: "PRIMARY" },
+          where: { role: { in: ["PRIMARY", "STALE_PRIMARY"] } },
           select: {
             receiptId: true,
+            role: true,
             source: true,
             receipt: {
               select: { status: true },
@@ -71,7 +72,9 @@ export async function getBankFinancialEventCandidates(bankAccountId: number, com
                 id: true,
                 date: true,
                 summary: true,
+                contentRevision: true,
                 reviewedAt: true,
+                reviewedContentRevision: true,
                 approvedAt: true,
                 documentType: true,
                 documentRole: true,
@@ -116,6 +119,17 @@ export async function getBankFinancialEventCandidates(bankAccountId: number, com
     ]),
   );
 
+  const currentEvents = events.filter((event) =>
+    event.documentLinks.every((link) => {
+      if (link.role !== "PRIMARY") return false;
+      if (link.source !== "REVIEWED_DOCUMENT") return true;
+      return Boolean(
+        link.document?.reviewedAt &&
+        link.document.reviewedContentRevision === link.document.contentRevision,
+      );
+    }),
+  );
+
   const candidates: BankFinancialEventCandidateProjection[] =
     buildBankFinancialEventCandidates(
       bankAccount,
@@ -123,11 +137,12 @@ export async function getBankFinancialEventCandidates(bankAccountId: number, com
         ...bank,
         amount: bank.amount.toString(),
       })),
-      events.map((event) => {
+      currentEvents.map((event) => {
         const temporal = collectSourceDocumentTemporalContext(
           event.documentLinks
             .filter(
               (link) =>
+                link.role === "PRIMARY" &&
                 link.source === "REVIEWED_DOCUMENT" &&
                 link.document !== null,
             )

@@ -370,7 +370,12 @@ model AiDetectedDocument {
   receiptId              Int
   approvedAt             DateTime?
   voucherNumber          Int?
-  reviewedAt             DateTime?
+  // Revision of canonical reviewable content. Every accounting-content mutation
+  // increments contentRevision. reviewedContentRevision binds reviewedAt to the
+  // exact content that was reviewed instead of treating the timestamp as truth.
+  contentRevision         Int       @default(1)
+  reviewedAt              DateTime?
+  reviewedContentRevision Int?
   // Skjal sem þarf nánari skoðun má setja tímabundið til hliðar án þess
   // að merkja það yfirfarið eða afgreitt. Það hverfur úr venjulegri forgangsröð
   // en helst sýnilegt í sérstakri "Þarf skoðun" biðröð.

@@ -29,6 +29,34 @@ export function createGloggtDocumentInstanceEvidenceVerifier() {
       }),
     ),
     extractTextPages: extractTextPagesFromPdfBuffer,
+    async loadReviewedCanonicalText(document) {
+      const row = await prisma.aiDetectedDocument.findFirst({
+        where: {
+          id: document.documentId,
+          receiptId: document.receiptId,
+          reviewedAt: { not: null },
+          receipt: { companyId: document.companyId },
+        },
+        select: {
+          summary: true,
+          reviewedAt: true,
+          receipt: { select: { fileHash: true } },
+        },
+      });
+      if (
+        !row?.reviewedAt ||
+        !row.summary.trim() ||
+        !document.sourceFileHash ||
+        row.receipt.fileHash !== document.sourceFileHash
+      ) {
+        return null;
+      }
+      return {
+        sourceField: "summary" as const,
+        text: row.summary,
+        reviewedAt: row.reviewedAt.toISOString(),
+      };
+    },
   };
 
   return createDocumentInstanceEvidenceVerifier(evidenceDependencies);

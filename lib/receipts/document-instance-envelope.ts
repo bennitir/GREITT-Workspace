@@ -10,7 +10,13 @@ export const IDENTITY_AUDIT = {
 } as const;
 type State = keyof typeof IDENTITY_AUDIT;
 export type IdentityCandidate = Omit<ConfirmedDocumentInstanceIdentity, "confirmation">;
-export type IdentityEvidence = { sourceFileHash: string; verbatimText: string; bindingRevision: string };
+export type IdentityEvidence = {
+  sourceFileHash: string;
+  verbatimText: string;
+  bindingRevision: string;
+  reviewedTextDigest?: string;
+  reviewedAt?: string;
+};
 export type IdentityPayload = {
   envelopeVersion: typeof ENVELOPE_VERSION;
   revision: number; state: State; candidate: IdentityCandidate; evidence: IdentityEvidence;
@@ -72,8 +78,16 @@ function validPayload(value: unknown): value is IdentityPayload {
     !["PROPOSED", "CONFIRMED", "INVALIDATED"].includes(String(value.state)) || !validCandidate(value.candidate) ||
     !object(value.evidence) || !hash(value.evidence.sourceFileHash) || !text(value.evidence.verbatimText) ||
     !text(value.evidence.bindingRevision) || !hash(value.evidenceDigest)) return false;
+  const identityCandidate = value.candidate as IdentityCandidate;
   const evidence = value.evidence as IdentityEvidence;
-  if (documentIdentityEvidenceDigest(value.candidate, evidence) !== value.evidenceDigest) return false;
+  const provenance = identityCandidate.instance.provenance;
+  if (provenance.origin === "REVIEWED_CANONICAL_TEXT") {
+    if (!hash(evidence.reviewedTextDigest) || !text(evidence.reviewedAt) ||
+      !Number.isFinite(Date.parse(evidence.reviewedAt!))) return false;
+  } else if (evidence.reviewedTextDigest !== undefined || evidence.reviewedAt !== undefined) {
+    return false;
+  }
+  if (documentIdentityEvidenceDigest(identityCandidate, evidence) !== value.evidenceDigest) return false;
   if (value.state !== "CONFIRMED") return value.confirmedIdentity === null;
   if (compareDocumentInstanceIdentity(value.confirmedIdentity, value.confirmedIdentity) !== "SAME_INSTANCE") return false;
   const { confirmation: _confirmation, ...candidate } = value.confirmedIdentity as ConfirmedDocumentInstanceIdentity;

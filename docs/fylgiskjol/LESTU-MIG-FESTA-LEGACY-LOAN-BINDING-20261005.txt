@@ -1,0 +1,33 @@
+GLÖGGT – Festa legacy loan-binding bootstrap V18
+5. október 2026
+
+Ástæða
+------
+Raunpróf sýndi að bókaða 16/480 skjalið (document 183) hafði ekkert LOAN DocumentEntityLink
+og ekkert documentInstanceIdentity. Nýja 17/480 skjalið (document 306) hafði hins vegar staðfesta
+ACTIVE lánatengingu við 0142-338379. Því gat V17 ekki staðfest að bæði skjöl væru instances af sömu
+skuldbindingu og gamla receiptNumber=338379 duplicate-vörnin hélt áfram að blokka.
+
+Breyting
+--------
+Á booking-preflight fyrir endurtekið receiptNumber er nú leyfilegt að bootstrap-a VANTANDI historical
+LOAN binding á áður bókuðu skjali, en aðeins ef:
+- núverandi skjal hefur nákvæmlega eitt ACTIVE/CONFIRMED LOAN entity,
+- það lán hefur CONFIRMED LIABILITY_PRINCIPAL account,
+- canonical loan number er annaðhvort nákvæmlega receiptNumber eða endar á "-receiptNumber",
+- original artifact gamla skjalsins er tiltækt og hash-staðfest,
+- á réttri síðu stendur sama númer undir loan/collection label,
+- og sama síða inniheldur prentað installment sequence (t.d. 16 af 480).
+
+Tengingin er SYSTEM + user-attributed, audit-uð með BOOTSTRAP_LEGACY_LOAN_BINDING.
+Engin upphæð/dagsetning/merchant inference er notuð. Conflicting active confirmed loan binding blokkar.
+Eftir bootstrap keyrir sama document-instance proposal/confirmation ferli og V17.
+
+Acceptance
+----------
+- 16/480, 01.01.2026, 242.189 kr., reference 338379 = þegar bókað.
+- 17/480, 01.02.2026, 244.980 kr., reference 338379 = má bókast sem DISTINCT_INSTANCE.
+- Sama 17/480 aftur = SAME_INSTANCE og blokkar áfram.
+- Venjulegt invoice number með sama númeri = legacy blocking óbreytt.
+
+Engin Prisma migration.

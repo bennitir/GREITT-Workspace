@@ -1,0 +1,43 @@
+GLÖGGT – Festa reviewed canonical evidence V19
+5. október 2026
+
+Raunorsök
+---------
+Raunpróf á Festa 16/480 (document 183) og 17/480 (document 306) sýndi:
+- durable Supabase original artifact er til fyrir bæði skjöl,
+- Receipt.fileHash passar nákvæmlega við niðurhalaðar original bytes,
+- en deterministic PDF text extraction skilar ónothæfu táknarusli og finnur hvorki
+  338379 né 16/480 / 17/480.
+
+GLÖGGT hafði hins vegar þegar lesið skjölin, notandi hafði yfirfarið þau, og canonical
+AiDetectedDocument.summary geymir nákvæmlega evidence-ið:
+- doc 183: innheimtubréf nr. 338379 + gjalddaga 16 af 480,
+- doc 306: innheimtubréf númer 338379 + gjalddagi 17 af 480.
+
+V19
+---
+Document-instance lagið endurnýtir nú REVIEWED_CANONICAL_TEXT þegar immutable original
+artifact er hash-staðfest en embedded PDF text layer getur ekki sannað instance.
+
+Þetta er EKKI frjáls AI fallback. Reviewed canonical evidence er aðeins gilt þegar:
+- AiDetectedDocument.reviewedAt er til,
+- exact server-reloaded summary er til á sama company/receipt/document,
+- Receipt.fileHash er enn current og original artifact bytes hash-staðfest,
+- summary staðfestir repeated reference undir explicit loan/collection label,
+- summary inniheldur prentað installment sequence (t.d. 16 af 480),
+- proposal geymir digest af allri reviewed summary + reviewedAt,
+- confirmation reloadar summary og sannreynir digest/reviewedAt aftur undir núverandi binding.
+
+Legacy binding bootstrap notar sama reviewed evidence fallback fyrir áður bókað skjal sem
+vantar historical LOAN link. Conflicting active confirmed binding blokkar áfram.
+
+Öryggi
+------
+- ordinary invoice number er áfram blocking,
+- merchant/upphæð/dagsetning veita enga undanþágu,
+- number alone án explicit obligation-reference semantics veitir enga undanþágu,
+- breytt summary/reviewedAt/source hash/binding failar closed,
+- sama 17/480 aftur á áfram að vera SAME_INSTANCE og blokka,
+- 16/480 vs 17/480 á sömu confirmed obligation verður DISTINCT_INSTANCE.
+
+Engin Prisma migration.

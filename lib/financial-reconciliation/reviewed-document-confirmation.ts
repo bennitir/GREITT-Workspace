@@ -88,6 +88,9 @@ export async function confirmBankReviewedDocumentReconciliation(
           throw new Error("PAIR_NOT_FOUND_IN_COMPANY");
         }
         if (!document.reviewedAt) throw new Error("DOCUMENT_NOT_REVIEWED");
+        if (document.reviewedContentRevision !== document.contentRevision) {
+          throw new Error("DOCUMENT_REVIEW_STALE");
+        }
         if (document.totalAmount === null || !Number.isFinite(document.totalAmount) || document.totalAmount === 0) {
           throw new Error("DOCUMENT_AMOUNT_NOT_CONFIRMABLE");
         }

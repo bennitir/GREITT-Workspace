@@ -15,6 +15,7 @@ import {
   verifyDocumentInstanceEvidence,
   type DocumentInstanceEvidenceDependencies,
 } from "./document-instance-evidence";
+import { reviewedCanonicalTextDigest } from "./document-instance-reviewed-evidence";
 import type { IdentityServiceDocument } from "./document-instance-service";
 
 function fixture() {
@@ -89,6 +90,9 @@ function fixture() {
     },
     async extractTextPages() {
       return pages;
+    },
+    async loadReviewedCanonicalText() {
+      return null;
     },
   };
   return { bytes, candidate, evidence, evidenceDigest, document, pages, deps };
@@ -211,4 +215,125 @@ test("verification does not mutate the document, metadata, pages or original byt
   assert.deepEqual(f.document, beforeDocument);
   assert.deepEqual(f.pages, beforePages);
   assert.deepEqual(f.bytes, beforeBytes);
+});
+
+
+function reviewedFixture() {
+  const bytes = Buffer.from("trusted-original-artifact-reviewed");
+  const sourceFileHash = createHash("sha256").update(bytes).digest("hex");
+  const reviewedAt = "2026-10-05T20:00:00.000Z";
+  const reviewedText =
+    "Skuldabréf/innheimtubréf vegna gjalddaga 16 af 480. Krafa nr. 294755, innheimtubréf nr. 338379. Til greiðslu eru 242.189 kr.";
+  const candidate: IdentityCandidate = {
+    version: DOCUMENT_INSTANCE_IDENTITY_VERSION,
+    companyId: 8,
+    receiptId: 101,
+    documentId: 100,
+    obligation: { companyId: 8, entityId: 42 },
+    reference: { role: "OBLIGATION_REFERENCE", value: "338379" },
+    instance: {
+      kind: "PRINTED_INSTALLMENT_SEQUENCE",
+      sequenceText: "16",
+      totalText: "480",
+      provenance: {
+        origin: "REVIEWED_CANONICAL_TEXT",
+        sourceField: "summary",
+        receiptId: 101,
+        documentId: 100,
+        pageNumber: 1,
+        fieldLabel: "gjalddaga",
+      },
+    },
+  };
+  const evidence = {
+    sourceFileHash,
+    verbatimText: "gjalddaga 16 af 480",
+    bindingRevision: "binding-1",
+    reviewedTextDigest: reviewedCanonicalTextDigest(reviewedText),
+    reviewedAt,
+  };
+  const evidenceDigest = documentIdentityEvidenceDigest(candidate, evidence);
+  const proposal = planDocumentIdentityTransition({
+    metadata: null,
+    previousAudit: null,
+    context: {
+      companyId: 8,
+      receiptId: 101,
+      documentId: 100,
+      obligationEntityId: 42,
+      bindingRevision: "binding-1",
+      sourceFileHash,
+      verifiedEvidenceDigest: evidenceDigest,
+    },
+    expectedRevision: 0,
+    expectedEvidenceDigest: null,
+    actorUserId: 3,
+    requestId: "reviewed-proposal",
+    occurredAt: "2026-10-05T20:01:00Z",
+    command: { kind: "PROPOSE", candidate, evidence },
+  });
+  const audit: IdentityAuditRecord = { id: 11, ...proposal.audit };
+  const document: IdentityServiceDocument = {
+    companyId: 8,
+    receiptId: 101,
+    documentId: 100,
+    extractionMetadata: attachDocumentIdentityAudit(proposal, audit),
+    sourceFileHash,
+    binding: {
+      companyId: 8,
+      entityId: 42,
+      revision: "binding-1",
+      confirmed: true,
+    },
+  };
+  const deps: DocumentInstanceEvidenceDependencies = {
+    async loadOriginalArtifact() {
+      return { bytes, immutable: true };
+    },
+    async extractTextPages() {
+      return ["garbled embedded PDF text layer"];
+    },
+    async loadReviewedCanonicalText() {
+      return { sourceField: "summary", text: reviewedText, reviewedAt };
+    },
+  };
+  return { bytes, reviewedText, reviewedAt, document, deps, evidenceDigest };
+}
+
+test("reviewed canonical summary verifies when immutable PDF text extraction is unusable", async () => {
+  const f = reviewedFixture();
+  assert.deepEqual(await verifyDocumentInstanceEvidence(f.document, f.deps), {
+    sourceFileHash: f.document.sourceFileHash,
+    evidenceDigest: f.evidenceDigest,
+  });
+});
+
+test("reviewed canonical evidence fails closed if the reviewed summary or review timestamp changes", async () => {
+  {
+    const f = reviewedFixture();
+    f.deps.loadReviewedCanonicalText = async () => ({
+      sourceField: "summary",
+      text: f.reviewedText.replace("16 af 480", "17 af 480"),
+      reviewedAt: f.reviewedAt,
+    });
+    assert.equal(await verifyDocumentInstanceEvidence(f.document, f.deps), null);
+  }
+  {
+    const f = reviewedFixture();
+    f.deps.loadReviewedCanonicalText = async () => ({
+      sourceField: "summary",
+      text: f.reviewedText,
+      reviewedAt: "2026-10-05T20:02:00.000Z",
+    });
+    assert.equal(await verifyDocumentInstanceEvidence(f.document, f.deps), null);
+  }
+});
+
+test("reviewed canonical fallback still requires the immutable original file hash", async () => {
+  const f = reviewedFixture();
+  f.deps.loadOriginalArtifact = async () => ({
+    bytes: Buffer.from("changed-original"),
+    immutable: true,
+  });
+  assert.equal(await verifyDocumentInstanceEvidence(f.document, f.deps), null);
 });

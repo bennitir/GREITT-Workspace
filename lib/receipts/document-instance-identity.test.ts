@@ -41,7 +41,7 @@ test("changed schedule total is ambiguous even with different sequence", () => {
   const other = identity("17"); other.instance.totalText = "360";
   assert.equal(compare(identity(), other), C.INSUFFICIENT_EVIDENCE);
 });
-test("confirmation and original-document provenance are mandatory, not inferred from review or account binding", () => {
+test("confirmation and trusted provenance are mandatory, not inferred from review or account binding", () => {
   const good = identity("17");
   const invalid: unknown[] = [
     { ...good, confirmation: undefined, reviewedAt: "2026-01-01", accountStatus: "CONFIRMED" },
@@ -53,6 +53,23 @@ test("confirmation and original-document provenance are mandatory, not inferred 
     })),
   ];
   for (const value of invalid) assert.equal(compare(identity(), value), C.INSUFFICIENT_EVIDENCE);
+});
+
+test("reviewed canonical summary provenance is a valid confirmed source class", () => {
+  const reviewed = identity("17", 200);
+  reviewed.instance.provenance = {
+    origin: "REVIEWED_CANONICAL_TEXT",
+    sourceField: "summary",
+    receiptId: reviewed.receiptId,
+    documentId: reviewed.documentId,
+    pageNumber: 1,
+    fieldLabel: "Gjalddagi",
+  };
+  assert.equal(compare(identity(), reviewed), C.DISTINCT_INSTANCE);
+
+  const invalid = structuredClone(reviewed) as any;
+  invalid.instance.provenance.sourceField = "ocrText";
+  assert.equal(compare(identity(), invalid), C.INSUFFICIENT_EVIDENCE);
 });
 test("provenance must belong to the supplied document and receipt", () => {
   for (const patch of [{ documentId: 999 }, { receiptId: 999 }, { pageNumber: 0 }, { fieldLabel: " " }]) {

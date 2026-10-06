@@ -4,6 +4,11 @@ import {
   documentIdentityEvidenceDigest,
   parseDocumentIdentityEnvelope,
 } from "./document-instance-envelope";
+import {
+  normalizeReviewedCanonicalText,
+  reviewedCanonicalTextDigest,
+  reviewedTextConfirmsObligationReference,
+} from "./document-instance-reviewed-evidence";
 import type {
   IdentityServiceDependencies,
   IdentityServiceDocument,
@@ -19,11 +24,20 @@ export type OriginalIdentityArtifact = {
   immutable: true;
 };
 
+export type ReviewedCanonicalIdentityText = {
+  sourceField: "summary";
+  text: string;
+  reviewedAt: string;
+};
+
 export type DocumentInstanceEvidenceDependencies = {
   loadOriginalArtifact(
     document: IdentityServiceDocument,
   ): Promise<OriginalIdentityArtifact | null>;
   extractTextPages(bytes: Buffer | Uint8Array): Promise<string[]>;
+  loadReviewedCanonicalText(
+    document: IdentityServiceDocument,
+  ): Promise<ReviewedCanonicalIdentityText | null>;
 };
 
 const DIGEST = /^[a-f0-9]{64}$/;
@@ -56,15 +70,42 @@ function sha256(bytes: Buffer | Uint8Array) {
   return createHash("sha256").update(bytes).digest("hex");
 }
 
+function sourceTextGroundsCandidate(input: {
+  sourceText: string;
+  verbatimText: string;
+  fieldLabel: string;
+  sequenceText: string;
+  totalText: string;
+  referenceValue: string;
+}) {
+  const sourceText = normalizeSourceText(input.sourceText);
+  const sourceComparable = normalizeComparableText(input.sourceText);
+  const verbatim = normalizeSourceText(input.verbatimText);
+  const verbatimComparable = normalizeComparableText(input.verbatimText);
+  const fieldLabel = normalizeComparableText(input.fieldLabel);
+
+  if (!verbatim || !fieldLabel) return false;
+  if (!sourceComparable.includes(verbatimComparable)) return false;
+  if (!verbatimComparable.includes(fieldLabel)) return false;
+  if (!containsPrintedInteger(verbatim, input.sequenceText)) return false;
+  if (!containsPrintedInteger(verbatim, input.totalText)) return false;
+
+  const reference = normalizeReference(input.referenceValue);
+  const sourceReferenceSpace = normalizeReference(sourceText);
+  return Boolean(reference) && sourceReferenceSpace.includes(reference);
+}
+
 /**
- * Verifies a PROPOSED document-instance identity against the original artifact.
+ * Verifies a PROPOSED document-instance identity against trusted source evidence.
  *
- * This verifier deliberately does not trust browser supplied evidence or a
- * stored digest by itself. It re-hashes the original bytes, extracts the
- * authoritative page text, and checks the exact proposal evidence against that
- * page before returning the digest accepted by the service layer.
+ * ORIGINAL_DOCUMENT keeps the existing immutable-PDF verification path.
+ * REVIEWED_CANONICAL_TEXT is a fallback for PDFs whose embedded text layer is
+ * unreadable but whose already-reviewed canonical summary contains the exact
+ * obligation reference and printed installment sequence. That path still
+ * authenticates the original bytes by Receipt.fileHash and additionally binds
+ * the proposal to the exact server-reloaded reviewed summary digest + reviewedAt.
  *
- * It performs no DB writes and no authorization. The service owns those.
+ * Neither path trusts browser supplied evidence or a stored digest by itself.
  */
 export async function verifyDocumentInstanceEvidence(
   document: IdentityServiceDocument,
@@ -104,27 +145,68 @@ export async function verifyDocumentInstanceEvidence(
   const actualSourceFileHash = sha256(artifact.bytes);
   if (actualSourceFileHash !== document.sourceFileHash) return null;
 
-  const pages = await deps.extractTextPages(artifact.bytes);
-  if (!Array.isArray(pages) || pages.length === 0) return null;
+  if (provenance.origin === "ORIGINAL_DOCUMENT") {
+    const pages = await deps.extractTextPages(artifact.bytes);
+    if (!Array.isArray(pages) || pages.length === 0) return null;
 
-  const pageTextRaw = pages[provenance.pageNumber - 1];
-  if (typeof pageTextRaw !== "string" || !pageTextRaw.trim()) return null;
+    const pageTextRaw = pages[provenance.pageNumber - 1];
+    if (typeof pageTextRaw !== "string" || !pageTextRaw.trim()) return null;
 
-  const pageText = normalizeSourceText(pageTextRaw);
-  const pageComparable = normalizeComparableText(pageTextRaw);
-  const verbatim = normalizeSourceText(evidence.verbatimText);
-  const verbatimComparable = normalizeComparableText(evidence.verbatimText);
-  const fieldLabel = normalizeComparableText(provenance.fieldLabel);
+    if (
+      !sourceTextGroundsCandidate({
+        sourceText: pageTextRaw,
+        verbatimText: evidence.verbatimText,
+        fieldLabel: provenance.fieldLabel,
+        sequenceText: candidate.instance.sequenceText,
+        totalText: candidate.instance.totalText,
+        referenceValue: candidate.reference.value,
+      })
+    ) {
+      return null;
+    }
+  } else if (provenance.origin === "REVIEWED_CANONICAL_TEXT") {
+    if (
+      provenance.sourceField !== "summary" ||
+      !evidence.reviewedTextDigest ||
+      !DIGEST.test(evidence.reviewedTextDigest) ||
+      !evidence.reviewedAt ||
+      !Number.isFinite(Date.parse(evidence.reviewedAt))
+    ) {
+      return null;
+    }
 
-  if (!verbatim || !fieldLabel) return null;
-  if (!pageComparable.includes(verbatimComparable)) return null;
-  if (!verbatimComparable.includes(fieldLabel)) return null;
-  if (!containsPrintedInteger(verbatim, candidate.instance.sequenceText)) return null;
-  if (!containsPrintedInteger(verbatim, candidate.instance.totalText)) return null;
+    const reviewed = await deps.loadReviewedCanonicalText(
+      structuredClone(document),
+    );
+    if (
+      !reviewed ||
+      reviewed.sourceField !== "summary" ||
+      reviewed.reviewedAt !== evidence.reviewedAt ||
+      !reviewed.text.trim() ||
+      reviewedCanonicalTextDigest(reviewed.text) !== evidence.reviewedTextDigest
+    ) {
+      return null;
+    }
 
-  const reference = normalizeReference(candidate.reference.value);
-  const pageReferenceSpace = normalizeReference(pageText);
-  if (!reference || !pageReferenceSpace.includes(reference)) return null;
+    if (
+      !reviewedTextConfirmsObligationReference(
+        reviewed.text,
+        candidate.reference.value,
+      ) ||
+      !sourceTextGroundsCandidate({
+        sourceText: normalizeReviewedCanonicalText(reviewed.text),
+        verbatimText: evidence.verbatimText,
+        fieldLabel: provenance.fieldLabel,
+        sequenceText: candidate.instance.sequenceText,
+        totalText: candidate.instance.totalText,
+        referenceValue: candidate.reference.value,
+      })
+    ) {
+      return null;
+    }
+  } else {
+    return null;
+  }
 
   const recomputedDigest = documentIdentityEvidenceDigest(candidate, evidence);
   if (recomputedDigest !== evidenceDigest) return null;

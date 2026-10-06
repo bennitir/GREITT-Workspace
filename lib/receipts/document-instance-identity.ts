@@ -23,16 +23,25 @@ export type ConfirmedDocumentInstanceIdentity = {
     // Literal printed numeric components, not a generated schedule index.
     sequenceText: string;
     totalText: string;
-    provenance: {
-      origin: "ORIGINAL_DOCUMENT";
-      receiptId: number;
-      documentId: number;
-      pageNumber: number;
-      fieldLabel: string;
-    };
+    provenance:
+      | {
+          origin: "ORIGINAL_DOCUMENT";
+          receiptId: number;
+          documentId: number;
+          pageNumber: number;
+          fieldLabel: string;
+        }
+      | {
+          origin: "REVIEWED_CANONICAL_TEXT";
+          sourceField: "summary";
+          receiptId: number;
+          documentId: number;
+          pageNumber: number;
+          fieldLabel: string;
+        };
   };
   // Confirms obligation binding, reference meaning AND this source evidence.
-  // reviewedAt or a confirmed liability account alone do not satisfy this.
+  // reviewedAt or a confirmed liability account alone do not satisfy this. A reviewed canonical source must also be server-reloaded, source-hash bound and digest verified.
   confirmation: { state: "CONFIRMED"; confirmedByUserId: number };
 };
 
@@ -59,9 +68,12 @@ function validated(value: unknown) {
     !instance || instance.kind !== "PRINTED_INSTALLMENT_SEQUENCE" ||
     !confirmation || confirmation.state !== "CONFIRMED" || !positiveId(confirmation.confirmedByUserId)) return null;
   const provenance = object(instance.provenance);
-  if (!provenance || provenance.origin !== "ORIGINAL_DOCUMENT" ||
+  if (!provenance ||
+    (provenance.origin !== "ORIGINAL_DOCUMENT" && provenance.origin !== "REVIEWED_CANONICAL_TEXT") ||
     provenance.receiptId !== root.receiptId || provenance.documentId !== root.documentId ||
     !positiveId(provenance.pageNumber) || !nonempty(provenance.fieldLabel)) return null;
+  if (provenance.origin === "REVIEWED_CANONICAL_TEXT" && provenance.sourceField !== "summary") return null;
+  if (provenance.origin === "ORIGINAL_DOCUMENT" && "sourceField" in provenance) return null;
   const sequence = printedInteger(instance.sequenceText), installmentTotal = printedInteger(instance.totalText);
   if (sequence === null || installmentTotal === null || sequence > installmentTotal) return null;
   return { companyId: root.companyId, obligationId: obligation.entityId, sequence, installmentTotal };

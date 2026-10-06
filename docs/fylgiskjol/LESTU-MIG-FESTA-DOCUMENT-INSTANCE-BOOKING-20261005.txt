@@ -1,0 +1,45 @@
+GLÖGGT – Festa / document-instance booking wiring
+5. október 2026
+
+MARKMIÐ
+Klára false-positive duplicate-vörn fyrir endurtekin lánaskjöl án Festa-sérkóða.
+
+ACCEPTANCE-DÆMI
+- Lán/obligation: 0142-338379
+- Stöðugt obligation-reference á skjali: 338379
+- Fyrri afborgun: 16/480, bókuð sem fylgiskjal 1
+- Ný afborgun: 17/480, á að mega bókast
+- Sama 17/480 hlaðið inn aftur á áfram að blokka sem duplicate
+
+HVAÐ BREYTIST
+1. Bókunarflæðið reynir aðeins document-instance leiðina þegar áður bókað skjal
+   með sama receiptNumber er til í sama fyrirtæki.
+2. Skjalið þarf staðfesta LOAN-tengingu og durable original artifact með SHA256.
+3. Original PDF-síðan þarf að staðfesta obligation-reference merkingu og prentaða
+   installment-röð, t.d. „Gjaldagi 17 af 480“.
+4. PROPOSED identity er búið til server-side; trusted verifier les frumskjalið aftur
+   áður en identity verður CONFIRMED.
+5. Booking og loan-binding writers nota sama company advisory lock.
+6. Duplicate guard metur ALLA áður bókaða documents með sama receiptNumber.
+   CONFIRMED DISTINCT_INSTANCE fjarlægir aðeins obligation-reference duplicate reason.
+   SAME_INSTANCE eða ófullnægjandi evidence blokkar áfram.
+
+ENGIN MIGRATION.
+
+PRÓF EFTIR OVERLAY
+npx tsc --noEmit
+npx tsx --test `
+  lib/receipts/document-instance-identity.test.ts `
+  lib/receipts/document-duplicate-reasons.test.ts `
+  lib/receipts/document-instance-envelope.test.ts `
+  lib/receipts/document-instance-evidence.test.ts `
+  lib/receipts/document-instance-original-artifact.test.ts `
+  lib/receipts/document-instance-prisma.test.ts `
+  lib/receipts/document-instance-service.test.ts
+
+LIVE ACCEPTANCE
+1. Opna Festa 01.02.2026 / 17 af 480 / 244.980 kr.
+2. Bóka fylgiskjal.
+3. Það á EKKI lengur að blokka vegna receiptNumber 338379 / fylgiskjals 1.
+4. Staðfesta að bókun fari í gegn og audit/identity metadata varðveitist.
+5. Endurhlaða sama 17/480 skjal síðar: það á að blokka sem SAME_INSTANCE/duplicate.
