@@ -7253,6 +7253,26 @@ if (olderUnbookedDocument?.date) {
 
     perf("tx chronology check");
 
+    const approvedAt = new Date();
+    const postingClaim = await tx.aiDetectedDocument.updateMany({
+      where: {
+        id: document.id,
+        approvedAt: null,
+        voucherNumber: null,
+      },
+      data: {
+        approvedAt,
+      },
+    });
+
+    if (postingClaim.count !== 1) {
+      throw new Error(
+        "Þetta fylgiskjal hefur þegar verið samþykkt."
+      );
+    }
+
+    perf("tx posting claim");
+
     let voucherNumber: number;
 
     if (manualVoucherNumber === undefined) {
@@ -7359,8 +7379,6 @@ if (hasVatActivity && !isVatSettlement) {
 }
 
     perf("tx receipt entries + VAT period");
-
-    const approvedAt = new Date();
 
     await tx.aiDetectedDocument.update({
       where: {
@@ -7592,6 +7610,21 @@ export async function approveManualReceipt(
   }
 
   await prisma.$transaction(async (tx) => {
+    const postingClaim = await tx.receipt.updateMany({
+      where: {
+        id: receiptId,
+        companyId,
+        status: { not: "APPROVED" },
+      },
+      data: {
+        status: "APPROVED",
+      },
+    });
+
+    if (postingClaim.count !== 1) {
+      throw new Error("Þetta fylgiskjal hefur þegar verið bókað.");
+    }
+
     const company = await tx.company.findUnique({
       where: {
         id: receipt.companyId,
