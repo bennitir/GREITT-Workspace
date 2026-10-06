@@ -9,6 +9,7 @@ import { redirect } from "next/navigation";
 
 import { prisma } from "@/lib/prisma";
 import { getEffectiveUser } from "@/lib/core/access-control";
+import { READ_ONLY_BOOKKEEPING_CAPABILITIES } from "@/lib/core/bookkeeping-access-policy";
 import { sendTemporaryPasswordEmail } from "@/lib/email";
 import { getSingleMobileCompanyIdForUser } from "@/lib/core/mobile-company";
 
@@ -259,6 +260,9 @@ export async function addUserCompany(
     );
   }
 
+  const viewerBookkeepingReset =
+    accessRole === "VIEWER" ? READ_ONLY_BOOKKEEPING_CAPABILITIES : {};
+
   await prisma.userCompany.upsert({
     where: {
       userId_companyId: {
@@ -271,6 +275,7 @@ export async function addUserCompany(
       isActive: true,
       accessRole,
       emailNotificationsEnabled,
+      ...viewerBookkeepingReset,
     },
 
     create: {
@@ -279,6 +284,7 @@ export async function addUserCompany(
       isActive: true,
       accessRole,
       emailNotificationsEnabled,
+      ...viewerBookkeepingReset,
     },
   });
 
@@ -320,6 +326,9 @@ export async function setUserCompanyRole(
     );
   }
 
+  const viewerBookkeepingReset =
+    accessRole === "VIEWER" ? READ_ONLY_BOOKKEEPING_CAPABILITIES : {};
+
   await prisma.userCompany.update({
     where: {
       userId_companyId: {
@@ -330,6 +339,7 @@ export async function setUserCompanyRole(
 
     data: {
       accessRole,
+      ...viewerBookkeepingReset,
       ...(emailNotificationsEnabled === undefined
         ? {}
         : { emailNotificationsEnabled }),

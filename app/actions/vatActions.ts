@@ -2,14 +2,16 @@
 
 import { revalidatePath } from "next/cache";
 import { prisma } from "@/lib/prisma";
+import { requireActiveCompanyBookAccess } from "@/lib/core/access-control";
 
 export async function createVatPeriod(
   companyId: number,
   year: number,
   period: number
 ) {
-  if (!companyId) {
-    throw new Error("Fyrirtæki vantar.");
+  const activeCompanyId = await requireActiveCompanyBookAccess();
+  if (!companyId || companyId !== activeCompanyId) {
+    throw new Error("Ógilt fyrirtækjasamhengi.");
   }
 
   if (!Number.isInteger(year) || year < 2000 || year > 2100) {
@@ -23,14 +25,14 @@ export async function createVatPeriod(
   await prisma.vatPeriod.upsert({
     where: {
       companyId_year_period: {
-        companyId,
+        companyId: activeCompanyId,
         year,
         period,
       },
     },
     update: {},
     create: {
-      companyId,
+      companyId: activeCompanyId,
       year,
       period,
       status: "OPEN",

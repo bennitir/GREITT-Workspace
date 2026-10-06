@@ -3,6 +3,7 @@ import {
   getRequestAuthContext,
   getRequestUserCompany,
 } from "@/lib/core/request-context";
+import { effectiveBookkeepingCapabilities } from "@/lib/core/bookkeeping-access-policy";
 
 export const COMPANY_ACCESS_ROLES = [
   "OWNER",
@@ -87,30 +88,34 @@ export async function getCompanyAccess(companyId: number) {
   if (!access?.isActive) return { ...DENIED_ACCESS };
 
   // Nýju aðgerðarheimildirnar í UserCompany eru frumheimildin.
+  // VIEWER er þó harður read-only boundary fyrir bókhald, jafnvel ef
+  // eldri/stale UserCompany-röð ber óvart true capability-gildi.
+  const bookkeeping = effectiveBookkeepingCapabilities(access);
+
   // Gömlu heitin eru áfram skiluð sem samhæfingarlag fyrir síður sem
   // hafa ekki enn verið færðar yfir á nákvæmari heimildir.
   const canWrite =
-    access.canPrepareBookkeeping ||
-    access.canReviewBookkeeping ||
-    access.canReconcileBookkeeping ||
-    access.canApproveExpenses ||
-    access.canBookEntries ||
-    access.canManageCompanySettings;
+    bookkeeping.canPrepareBookkeeping ||
+    bookkeeping.canReviewBookkeeping ||
+    bookkeeping.canReconcileBookkeeping ||
+    bookkeeping.canApproveExpenses ||
+    bookkeeping.canBookEntries ||
+    bookkeeping.canManageCompanySettings;
 
   return {
     allowed: true,
     canWrite,
-    canUpload: access.canPrepareBookkeeping,
-    canReview: access.canReviewBookkeeping,
-    canBook: access.canBookEntries,
-    canDelete: access.canBookEntries,
-    canManage: access.canManageCompanySettings,
-    canPrepareBookkeeping: access.canPrepareBookkeeping,
-    canReviewBookkeeping: access.canReviewBookkeeping,
-    canReconcileBookkeeping: access.canReconcileBookkeeping,
-    canApproveExpenses: access.canApproveExpenses,
-    canBookEntries: access.canBookEntries,
-    canManageCompanySettings: access.canManageCompanySettings,
+    canUpload: bookkeeping.canPrepareBookkeeping,
+    canReview: bookkeeping.canReviewBookkeeping,
+    canBook: bookkeeping.canBookEntries,
+    canDelete: bookkeeping.canBookEntries,
+    canManage: bookkeeping.canManageCompanySettings,
+    canPrepareBookkeeping: bookkeeping.canPrepareBookkeeping,
+    canReviewBookkeeping: bookkeeping.canReviewBookkeeping,
+    canReconcileBookkeeping: bookkeeping.canReconcileBookkeeping,
+    canApproveExpenses: bookkeeping.canApproveExpenses,
+    canBookEntries: bookkeeping.canBookEntries,
+    canManageCompanySettings: bookkeeping.canManageCompanySettings,
     canSaleUse: access.canSaleUse,
     canSaleHold: access.canSaleHold,
     canSaleDiscount: access.canSaleDiscount,
@@ -155,18 +160,63 @@ export async function requireCompanyUploadAccess(companyId: number) {
   return access;
 }
 
-export async function requireActiveCompanyWriteAccess() {
+export async function requireCompanyPrepareBookkeepingAccess(companyId: number) {
+  const access = await getCompanyAccess(companyId);
+  if (!access.allowed) throw new Error("Þú hefur ekki aðgang að þessu fyrirtæki.");
+  if (!access.canPrepareBookkeeping) {
+    throw new Error("Þú hefur ekki heimild til að undirbúa bókhaldsgögn.");
+  }
+  return access;
+}
+
+export async function requireCompanyReviewBookkeepingAccess(companyId: number) {
+  const access = await getCompanyAccess(companyId);
+  if (!access.allowed) throw new Error("Þú hefur ekki aðgang að þessu fyrirtæki.");
+  if (!access.canReviewBookkeeping) {
+    throw new Error("Þú hefur ekki heimild til að yfirfara bókhaldsgögn.");
+  }
+  return access;
+}
+
+async function getRequiredActiveCompanyId() {
   const cookieStore = await cookies();
   const activeCompanyId = Number(cookieStore.get("activeCompanyId")?.value || 0);
   if (!activeCompanyId) throw new Error("Ekkert virkt fyrirtæki valið.");
+  return activeCompanyId;
+}
+
+export async function requireActiveCompanyPrepareBookkeepingAccess() {
+  const activeCompanyId = await getRequiredActiveCompanyId();
+  await requireCompanyPrepareBookkeepingAccess(activeCompanyId);
+  return activeCompanyId;
+}
+
+export async function requireActiveCompanyReviewBookkeepingAccess() {
+  const activeCompanyId = await getRequiredActiveCompanyId();
+  await requireCompanyReviewBookkeepingAccess(activeCompanyId);
+  return activeCompanyId;
+}
+
+export async function requireActiveCompanyBookAccess() {
+  const activeCompanyId = await getRequiredActiveCompanyId();
+  await requireCompanyBookAccess(activeCompanyId);
+  return activeCompanyId;
+}
+
+export async function requireActiveCompanyDeleteAccess() {
+  const activeCompanyId = await getRequiredActiveCompanyId();
+  await requireCompanyDeleteAccess(activeCompanyId);
+  return activeCompanyId;
+}
+
+export async function requireActiveCompanyWriteAccess() {
+  const activeCompanyId = await getRequiredActiveCompanyId();
   await requireCompanyWriteAccess(activeCompanyId);
   return activeCompanyId;
 }
 
 export async function requireActiveCompanyReadAccess() {
-  const cookieStore = await cookies();
-  const activeCompanyId = Number(cookieStore.get("activeCompanyId")?.value || 0);
-  if (!activeCompanyId) throw new Error("Ekkert virkt fyrirtæki valið.");
+  const activeCompanyId = await getRequiredActiveCompanyId();
 
   const access = await getCompanyAccess(activeCompanyId);
   if (!access.allowed) throw new Error("Þú hefur ekki aðgang að þessu fyrirtæki.");

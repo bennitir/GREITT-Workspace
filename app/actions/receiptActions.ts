@@ -24,6 +24,10 @@ import {
 } from "@/lib/receipts/ingestion";
 import {
   requireActiveCompanyWriteAccess,
+  requireActiveCompanyPrepareBookkeepingAccess,
+  requireActiveCompanyReviewBookkeepingAccess,
+  requireActiveCompanyBookAccess,
+  requireActiveCompanyDeleteAccess,
   requireCompanyBookAccess,
   requireCompanyDeleteAccess,
   getEffectiveUser,
@@ -325,7 +329,7 @@ async function runAutomaticInsightForDocuments(documentIds: number[]) {
 }
 
 export async function createReceipt(formData: FormData) {
-  await requireActiveCompanyWriteAccess();
+  await requireActiveCompanyPrepareBookkeepingAccess();
 
   const file = formData.get("file") as File;
   if (!(file instanceof File) || file.size === 0) {
@@ -504,7 +508,7 @@ export async function createReceipt(formData: FormData) {
 }
 
 export async function createManualReceipt(formData: FormData) {
-  await requireActiveCompanyWriteAccess();
+  await requireActiveCompanyPrepareBookkeepingAccess();
   const file = formData.get("file");
 
 
@@ -636,7 +640,7 @@ export async function prepareExistingReceiptManually(
     credit: number;
   }[],
 ) {
-  const companyId = await requireActiveCompanyWriteAccess();
+  const companyId = await requireActiveCompanyPrepareBookkeepingAccess();
   const user = await getEffectiveUser();
 
   if (!user) {
@@ -860,10 +864,19 @@ export async function prepareExistingReceiptManually(
 }
 
 export async function addReceiptEntries(receiptId: number) {
-  await requireActiveCompanyWriteAccess();
+  const companyId = await requireActiveCompanyBookAccess();
+  const receipt = await prisma.receipt.findFirst({
+    where: { id: receiptId, companyId },
+    select: { id: true },
+  });
+
+  if (!receipt) {
+    throw new Error("Fylgiskjal fannst ekki.");
+  }
+
   const existingEntries = await prisma.receiptEntry.count({
     where: {
-      receiptId,
+      receiptId: receipt.id,
     },
   });
 
@@ -878,28 +891,26 @@ export async function addReceiptEntries(receiptId: number) {
         text: "Staðgreiðsla",
         debit: 53508,
         credit: 0,
-        receiptId,
+        receiptId: receipt.id,
       },
       {
         account: "4530",
         text: "Tryggingagjald",
         debit: 12532,
         credit: 0,
-        receiptId,
+        receiptId: receipt.id,
       },
       {
         account: "1510",
         text: "Banki",
         debit: 0,
         credit: 66040,
-        receiptId,
+        receiptId: receipt.id,
       },
     ],
   });
 
-  
-
-  revalidatePath(`/fylgiskjol/${receiptId}`);
+  revalidatePath(`/fylgiskjol/${receipt.id}`);
 }
 export async function saveOcrResult(
 
@@ -911,10 +922,11 @@ export async function saveOcrResult(
     ocrStatus?: string;
   }
 ) {
-  await requireActiveCompanyWriteAccess();
-  await prisma.receipt.update({
+  const companyId = await requireActiveCompanyPrepareBookkeepingAccess();
+  const updated = await prisma.receipt.updateMany({
     where: {
       id: receiptId,
+      companyId,
     },
     data: {
       merchantName: data.merchantName ?? null,
@@ -923,6 +935,10 @@ export async function saveOcrResult(
       ocrStatus: data.ocrStatus ?? null,
     },
   });
+
+  if (updated.count !== 1) {
+    throw new Error("Fylgiskjal fannst ekki.");
+  }
 
   revalidatePath(`/fylgiskjol/${receiptId}`);
 }
@@ -997,7 +1013,7 @@ async function analyzeReceiptWithAIInternal(
     return openaiClient;
   };
   if (!options.skipAccessCheck) {
-    await requireActiveCompanyWriteAccess();
+    await requireActiveCompanyPrepareBookkeepingAccess();
   }
   const receipt = await prisma.receipt.findUnique({
     where: {
@@ -3441,6 +3457,16 @@ async function withReceiptAnalysisLease<T>(
 }
 
 export async function analyzeReceiptWithAI(receiptId: number) {
+  const companyId = await requireActiveCompanyPrepareBookkeepingAccess();
+  const receipt = await prisma.receipt.findFirst({
+    where: { id: receiptId, companyId },
+    select: { id: true },
+  });
+
+  if (!receipt) {
+    throw new Error("Fylgiskjal fannst ekki.");
+  }
+
   return withReceiptAnalysisLease(receiptId, () =>
     analyzeReceiptWithAIInternal(receiptId),
   );
@@ -5729,8 +5755,12 @@ export async function applyConfirmedBookingSuggestions(
 }
 
   export async function reviewDetectedDocument(documentId: number) {
-  const document = await prisma.aiDetectedDocument.findUnique({
-    where: { id: documentId },
+  const companyId = await requireActiveCompanyReviewBookkeepingAccess();
+  const document = await prisma.aiDetectedDocument.findFirst({
+    where: {
+      id: documentId,
+      receipt: { companyId },
+    },
     include: {
       receipt: true,
       bookingEntries: true,
@@ -5742,8 +5772,6 @@ export async function applyConfirmedBookingSuggestions(
     throw new Error("Greint fylgiskjal fannst ekki.");
 
   }
-
-  await requireCompanyBookAccess(document.receipt.companyId);
 
   const user = await getEffectiveUser();
   if (!user) {
@@ -6592,15 +6620,28 @@ export async function markDetectedDocumentDuplicate(
   duplicateOfDocumentId: number,
   duplicateVoucherNumber: number
 ) {
-  await requireActiveCompanyWriteAccess();
-  const document = await prisma.aiDetectedDocument.findUnique({
-    where: { id: documentId },
-  });
+  const companyId = await requireActiveCompanyReviewBookkeepingAccess();
+  if (documentId === duplicateOfDocumentId) {
+    throw new Error("Fylgiskjal getur ekki verið tvírit af sjálfu sér.");
+  }
+
+  const [document, duplicateOfDocument] = await Promise.all([
+    prisma.aiDetectedDocument.findFirst({
+      where: { id: documentId, receipt: { companyId } },
+      select: { id: true, receiptId: true },
+    }),
+    prisma.aiDetectedDocument.findFirst({
+      where: { id: duplicateOfDocumentId, receipt: { companyId } },
+      select: { id: true, voucherNumber: true },
+    }),
+  ]);
 
   if (!document) {
     throw new Error("Greint fylgiskjal fannst ekki.");
   }
-
+  if (!duplicateOfDocument || duplicateOfDocument.voucherNumber !== duplicateVoucherNumber) {
+    throw new Error("Bókaða fylgiskjalið sem á að merkja sem frumrit fannst ekki.");
+  }
 
   await prisma.aiDetectedDocument.update({
     where: { id: documentId },
@@ -7523,7 +7564,7 @@ export async function approveManualReceipt(
     credit: number;
   }[]
 ) {
-  await requireActiveCompanyWriteAccess();
+  const companyId = await requireActiveCompanyBookAccess();
 
   const user = await getEffectiveUser();
 
@@ -7531,9 +7572,10 @@ export async function approveManualReceipt(
     throw new Error("Innskráning er nauðsynleg.");
   }
 
-  const receipt = await prisma.receipt.findUnique({
+  const receipt = await prisma.receipt.findFirst({
     where: {
       id: receiptId,
+      companyId,
     },
   });
 
@@ -7760,7 +7802,7 @@ export async function setDetectedDocumentVatDeduction(
   percent: number,
   reason?: string,
 ) {
-  const companyId = await requireActiveCompanyWriteAccess();
+  const companyId = await requireActiveCompanyBookAccess();
   const user = await getEffectiveUser();
 
   if (!Number.isFinite(percent) || percent < 0 || percent > 100) {
@@ -8107,7 +8149,7 @@ export async function updateDetectedDocumentEntries(
   documentDate: string,
   documentAmount: string
 ) {
-  const companyId = await requireActiveCompanyWriteAccess();
+  const companyId = await requireActiveCompanyPrepareBookkeepingAccess();
   const document =
   await prisma.aiDetectedDocument.findFirst({
     where: {
@@ -8290,9 +8332,11 @@ await prisma.$transaction(async (tx) => {
   );
 }
  export async function addDetectedDocumentEntry(documentId: number) {
-  const document = await prisma.aiDetectedDocument.findUnique({
+  const companyId = await requireActiveCompanyPrepareBookkeepingAccess();
+  const document = await prisma.aiDetectedDocument.findFirst({
     where: {
       id: documentId,
+      receipt: { companyId },
     },
     select: {
       id: true,
@@ -8328,7 +8372,7 @@ await prisma.$transaction(async (tx) => {
   revalidatePath(`/fylgiskjol/${document.receiptId}`);
 }
 export async function rebuildDetectedDocumentBookingSuggestion(documentId: number) {
-  const companyId = await requireActiveCompanyWriteAccess();
+  const companyId = await requireActiveCompanyBookAccess();
   const document = await prisma.aiDetectedDocument.findFirst({
     where: {
       id: documentId,
@@ -8412,10 +8456,11 @@ export async function rebuildDetectedDocumentBookingSuggestion(documentId: numbe
 }
 
 export async function deleteDetectedDocumentEntry(entryId: number) {
-  await requireActiveCompanyWriteAccess();
-  const entry = await prisma.aiDetectedDocumentEntry.findUnique({
+  const companyId = await requireActiveCompanyPrepareBookkeepingAccess();
+  const entry = await prisma.aiDetectedDocumentEntry.findFirst({
     where: {
       id: entryId,
+      document: { receipt: { companyId } },
     },
     include: {
       document: {
@@ -8450,8 +8495,7 @@ export async function deleteDetectedDocumentEntry(entryId: number) {
   revalidatePath(`/fylgiskjol/${entry.document.receiptId}`);
 }
 export async function deleteDetectedDocument(documentId: number) {
-  const companyId = await requireActiveCompanyWriteAccess();
-await requireCompanyDeleteAccess(companyId);
+  const companyId = await requireActiveCompanyDeleteAccess();
   const document = await prisma.aiDetectedDocument.findFirst({
   where: {
     id: documentId,
@@ -8482,10 +8526,11 @@ await requireCompanyDeleteAccess(companyId);
 }
 
 export async function deleteReceipt(receiptId: number) {
-  await requireActiveCompanyWriteAccess();
-  const receipt = await prisma.receipt.findUnique({
+  const companyId = await requireActiveCompanyDeleteAccess();
+  const receipt = await prisma.receipt.findFirst({
     where: {
       id: receiptId,
+      companyId,
     },
     include: {
       aiDetectedDocuments: true,
@@ -8516,9 +8561,11 @@ export async function deleteReceipt(receiptId: number) {
   revalidatePath("/fylgiskjol");
 }
   export async function markReceiptReviewed(receiptId: number) {
-  const receipt = await prisma.receipt.findUnique({
+  const companyId = await requireActiveCompanyReviewBookkeepingAccess();
+  const receipt = await prisma.receipt.findFirst({
     where: {
       id: receiptId,
+      companyId,
     },
   });
 
@@ -8548,18 +8595,17 @@ export async function markReceiptNeedsAttention(
   receiptId: number,
   documentId?: number,
 ) {
-  await requireActiveCompanyWriteAccess();
-  const receipt = await prisma.receipt.findUnique({
+  const companyId = await requireActiveCompanyBookAccess();
+  const receipt = await prisma.receipt.findFirst({
     where: {
       id: receiptId,
+      companyId,
     },
   });
 
   if (!receipt) {
     throw new Error("Fylgiskjal fannst ekki.");
   }
-
-  await requireCompanyBookAccess(receipt.companyId);
 
   if (receipt.status === "APPROVED") {
     throw new Error("Ekki er hægt að breyta bókuðu fylgiskjali.");
@@ -8621,16 +8667,14 @@ export async function restoreReceiptFromNeedsAttention(
   receiptId: number,
   documentId?: number,
 ) {
-  await requireActiveCompanyWriteAccess();
-  const receipt = await prisma.receipt.findUnique({
-    where: { id: receiptId },
+  const companyId = await requireActiveCompanyBookAccess();
+  const receipt = await prisma.receipt.findFirst({
+    where: { id: receiptId, companyId },
   });
 
   if (!receipt) {
     throw new Error("Fylgiskjal fannst ekki.");
   }
-
-  await requireCompanyBookAccess(receipt.companyId);
 
   if (documentId != null) {
     const document = await prisma.aiDetectedDocument.findFirst({
@@ -8659,10 +8703,11 @@ export async function restoreReceiptFromNeedsAttention(
 }
 
 export async function repairDeleteLegacyReceipt(receiptId: number) {
-  await requireActiveCompanyWriteAccess();
-  const receipt = await prisma.receipt.findUnique({
+  const companyId = await requireActiveCompanyDeleteAccess();
+  const receipt = await prisma.receipt.findFirst({
     where: {
       id: receiptId,
+      companyId,
     },
     include: {
       aiDetectedDocuments: true,
