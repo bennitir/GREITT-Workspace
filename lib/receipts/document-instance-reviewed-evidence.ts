@@ -52,6 +52,92 @@ export function reviewedTextConfirmsObligationReference(
   );
 }
 
+function occurrenceEvidenceFromMatch(
+  match: RegExpExecArray,
+): ReviewedInstallmentEvidence | null {
+  const sequence = Number(match[2]);
+  const total = Number(match[3]);
+
+  if (
+    !Number.isSafeInteger(sequence) ||
+    !Number.isSafeInteger(total) ||
+    sequence < 1 ||
+    total < 1 ||
+    sequence > total
+  ) {
+    return null;
+  }
+
+  return {
+    fieldLabel: match[1],
+    sequenceText: String(sequence),
+    totalText: String(total),
+    verbatimText: match[0],
+  };
+}
+
+/**
+ * Extracts an occurrence identity independently of document/vendor vocabulary.
+ *
+ * "13 af 84" / "13 of 84" is treated as schedule-shaped source evidence.
+ * The word immediately preceding the sequence is retained only as provenance;
+ * it is NOT a semantic allow-list.
+ *
+ * Multiple different N/M values are ambiguous and therefore fail closed.
+ * Slash notation remains conservative because dates such as 01/02 are common.
+ */
+export function findReviewedOccurrenceEvidence(
+  sourceText: string,
+): ReviewedInstallmentEvidence | null {
+  const normalized = normalizeReviewedCanonicalText(sourceText);
+
+  const genericPattern =
+    /\b([\p{L}\p{M}][\p{L}\p{M}'’.-]*)\s*[:#-]?\s*(\d{1,5})\s+(?:af|of)\s+(\d{1,6})\b/giu;
+
+  const unique = new Map<string, ReviewedInstallmentEvidence>();
+
+  for (
+    let match = genericPattern.exec(normalized);
+    match;
+    match = genericPattern.exec(normalized)
+  ) {
+    const evidence = occurrenceEvidenceFromMatch(match);
+    if (!evidence) continue;
+
+    unique.set(
+      `${evidence.sequenceText}/${evidence.totalText}`,
+      evidence,
+    );
+  }
+
+  if (unique.size === 1) {
+    return unique.values().next().value ?? null;
+  }
+
+  if (unique.size > 1) {
+    return null;
+  }
+
+  // Preserve the old slash form conservatively. Unlike "N af M" / "N of M",
+  // an arbitrary N/M pair can easily be a date, so slash syntax is not made
+  // label-agnostic here.
+  const slashPatterns = [
+    /\b(Gjalddag(?:i|a))\s*[:#-]?\s*(\d{1,5})\s*\/\s*(\d{1,6})\b/iu,
+    /\b(Afborgun(?:arnumer|arnúmer|arnr\.?| numer| númer| nr\.?)?)\s*[:#-]?\s*(\d{1,5})\s*\/\s*(\d{1,6})\b/iu,
+    /\b(Installment)\s*[:#-]?\s*(\d{1,5})\s*\/\s*(\d{1,6})\b/iu,
+  ];
+
+  for (const pattern of slashPatterns) {
+    const match = pattern.exec(normalized);
+    if (!match) continue;
+
+    const evidence = occurrenceEvidenceFromMatch(match);
+    if (evidence) return evidence;
+  }
+
+  return null;
+}
+
 export function findReviewedInstallmentEvidence(
   sourceText: string,
   receiptNumber: string,
@@ -60,36 +146,7 @@ export function findReviewedInstallmentEvidence(
     return null;
   }
 
-  const normalized = normalizeReviewedCanonicalText(sourceText);
-  const patterns = [
-    /\b(Gjalddag(?:i|a))\s*[:#-]?\s*(\d{1,5})\s*(?:af|\/)\s*(\d{1,6})\b/iu,
-    /\b(Afborgun(?:arnumer|arnúmer|arnr\.?| numer| númer| nr\.?)?)\s*[:#-]?\s*(\d{1,5})\s*(?:af|\/)\s*(\d{1,6})\b/iu,
-    /\b(Installment)\s*[:#-]?\s*(\d{1,5})\s*(?:of|\/)\s*(\d{1,6})\b/iu,
-  ];
-
-  for (const pattern of patterns) {
-    const match = pattern.exec(normalized);
-    if (!match) continue;
-    const sequence = Number(match[2]);
-    const total = Number(match[3]);
-    if (
-      !Number.isSafeInteger(sequence) ||
-      !Number.isSafeInteger(total) ||
-      sequence < 1 ||
-      total < 1 ||
-      sequence > total
-    ) {
-      continue;
-    }
-    return {
-      fieldLabel: match[1],
-      sequenceText: String(sequence),
-      totalText: String(total),
-      verbatimText: match[0],
-    };
-  }
-
-  return null;
+  return findReviewedOccurrenceEvidence(sourceText);
 }
 
 export function reviewedTextContainsReference(

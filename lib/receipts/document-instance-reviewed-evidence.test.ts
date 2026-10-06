@@ -3,6 +3,7 @@ import test from "node:test";
 
 import {
   findReviewedInstallmentEvidence,
+  findReviewedOccurrenceEvidence,
   reviewedCanonicalTextDigest,
   reviewedTextConfirmsObligationReference,
 } from "./document-instance-reviewed-evidence";
@@ -76,6 +77,45 @@ test("a number in reviewed text is not enough without explicit obligation-refere
       "338379",
     ),
     false,
+  );
+});
+
+
+test("occurrence extraction is label-agnostic while obligation gating stays separate", () => {
+  const reviewed =
+    "Afborgunartilkynning vegna l\u00e1ns nr. 103533, krafa nr. 24345. " +
+    "Grei\u00f0sla 13 af 84, annuitetsafborgun.";
+
+  const expected = {
+    fieldLabel: "Grei\u00f0sla",
+    sequenceText: "13",
+    totalText: "84",
+    verbatimText: "Grei\u00f0sla 13 af 84",
+  };
+
+  assert.deepEqual(
+    findReviewedOccurrenceEvidence(reviewed),
+    expected,
+  );
+
+  assert.deepEqual(
+    findReviewedInstallmentEvidence(reviewed, "24345"),
+    expected,
+  );
+});
+
+test("multiple different schedule-shaped occurrences fail closed", () => {
+  const reviewed =
+    "Krafa nr. 24345. Fyrri 13 af 84 en annar texti segir 14 af 84.";
+
+  assert.equal(
+    findReviewedOccurrenceEvidence(reviewed),
+    null,
+  );
+
+  assert.equal(
+    findReviewedInstallmentEvidence(reviewed, "24345"),
+    null,
   );
 });
 
