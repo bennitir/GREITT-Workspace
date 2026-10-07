@@ -28,6 +28,7 @@ import {
   confirmDocumentInstanceIdentity,
   lockDocumentIdentityCompany,
   type IdentityServiceDependencies,
+  type IdentityServiceDocument,
 } from "./document-instance-service";
 import type { DuplicateDocumentFacts } from "./document-duplicate-reasons";
 import {
@@ -608,6 +609,136 @@ async function proposeAndConfirmDocumentInstanceIdentity(
   return { status: "CONFIRMED" };
 }
 
+type DocumentInstanceIdentityDiscoveryResult =
+  | {
+      status: "DISCOVERED";
+      candidate: IdentityCandidate;
+      evidence: IdentityEvidence;
+    }
+  | { status: "UNAVAILABLE"; reason: string };
+
+async function discoverLoanInstallmentDocumentInstanceIdentity(input: {
+  companyId: number;
+  receiptId: number;
+  documentId: number;
+  pageNumber: number;
+  receiptNumber: string;
+  summary: string | null;
+  reviewedAt: Date | null;
+  extractionMetadata: unknown;
+  serviceDocument: IdentityServiceDocument;
+  obligationEntityId: number;
+  bindingRevision: string;
+  sourceFileHash: string;
+}): Promise<DocumentInstanceIdentityDiscoveryResult> {
+  const artifactLoader = createDocumentInstanceOriginalArtifactLoader(
+    createPrismaSupabaseOriginalArtifactDependencies({
+      prisma,
+      storage: supabaseAdmin.storage,
+    }),
+  );
+  const artifact = await artifactLoader(input.serviceDocument);
+  if (!artifact?.immutable) {
+    return { status: "UNAVAILABLE", reason: "ORIGINAL_ARTIFACT_UNAVAILABLE" };
+  }
+
+  let originalPageText = "";
+  try {
+    const pages = await extractTextPagesFromPdfBuffer(artifact.bytes);
+    originalPageText = pages[input.pageNumber - 1] ?? "";
+  } catch {
+    originalPageText = "";
+  }
+
+  const originalInstance =
+    text(originalPageText) &&
+    pageContainsReference(originalPageText, input.receiptNumber) &&
+    (metadataConfirmsObligationReference(
+      input.extractionMetadata,
+      input.receiptNumber,
+    ) ||
+      pageConfirmsObligationReference(originalPageText, input.receiptNumber))
+      ? findPrintedInstallmentEvidence(originalPageText)
+      : null;
+
+  const reviewedInstance =
+    !originalInstance && input.reviewedAt && text(input.summary)
+      ? findReviewedInstallmentEvidence(input.summary, input.receiptNumber)
+      : null;
+
+  if (!originalInstance && !reviewedInstance) {
+    if (
+      text(originalPageText) &&
+      pageContainsReference(originalPageText, input.receiptNumber)
+    ) {
+      return {
+        status: "UNAVAILABLE",
+        reason: "INSTALLMENT_SEQUENCE_NOT_FOUND",
+      };
+    }
+    return {
+      status: "UNAVAILABLE",
+      reason: "TRUSTED_INSTANCE_EVIDENCE_NOT_FOUND",
+    };
+  }
+
+  const instance = originalInstance ?? reviewedInstance!;
+  const usingReviewedCanonicalText = !originalInstance;
+
+  const candidate: IdentityCandidate = {
+    version: "document-instance-identity-v1",
+    companyId: input.companyId,
+    receiptId: input.receiptId,
+    documentId: input.documentId,
+    obligation: {
+      companyId: input.companyId,
+      entityId: input.obligationEntityId,
+    },
+    reference: {
+      role: "OBLIGATION_REFERENCE",
+      value: input.receiptNumber,
+    },
+    instance: {
+      kind: "PRINTED_INSTALLMENT_SEQUENCE",
+      sequenceText: instance.sequenceText,
+      totalText: instance.totalText,
+      provenance: usingReviewedCanonicalText
+        ? {
+            origin: "REVIEWED_CANONICAL_TEXT",
+            sourceField: "summary",
+            receiptId: input.receiptId,
+            documentId: input.documentId,
+            pageNumber: input.pageNumber,
+            fieldLabel: instance.fieldLabel,
+          }
+        : {
+            origin: "ORIGINAL_DOCUMENT",
+            receiptId: input.receiptId,
+            documentId: input.documentId,
+            pageNumber: input.pageNumber,
+            fieldLabel: instance.fieldLabel,
+          },
+    },
+  };
+
+  const evidence: IdentityEvidence = {
+    sourceFileHash: input.sourceFileHash,
+    verbatimText: instance.verbatimText,
+    bindingRevision: input.bindingRevision,
+    ...(usingReviewedCanonicalText &&
+    input.reviewedAt &&
+    typeof input.summary === "string" &&
+    input.summary.trim().length > 0
+      ? {
+          reviewedTextDigest: reviewedCanonicalTextDigest(input.summary),
+          reviewedAt: input.reviewedAt.toISOString(),
+        }
+      : {}),
+  };
+
+  return { status: "DISCOVERED", candidate, evidence };
+}
+
 async function prepareOneLoanDocumentInstanceIdentity(input: {
   companyId: number;
   documentId: number;
@@ -689,97 +820,24 @@ async function prepareOneLoanDocumentInstanceIdentity(input: {
     );
   }
 
-  const artifactLoader = createDocumentInstanceOriginalArtifactLoader(
-    createPrismaSupabaseOriginalArtifactDependencies({
-      prisma,
-      storage: supabaseAdmin.storage,
-    }),
-  );
-  const artifact = await artifactLoader(serviceDocument);
-  if (!artifact?.immutable) {
-    return { status: "UNAVAILABLE", reason: "ORIGINAL_ARTIFACT_UNAVAILABLE" };
-  }
-
-  let originalPageText = "";
-  try {
-    const pages = await extractTextPagesFromPdfBuffer(artifact.bytes);
-    originalPageText = pages[pageNumber - 1] ?? "";
-  } catch {
-    originalPageText = "";
-  }
-
-  const originalInstance =
-    text(originalPageText) &&
-    pageContainsReference(originalPageText, receiptNumber) &&
-    (metadataConfirmsObligationReference(
-      row.extractionMetadata,
-      receiptNumber,
-    ) ||
-      pageConfirmsObligationReference(originalPageText, receiptNumber))
-      ? findPrintedInstallmentEvidence(originalPageText)
-      : null;
-
-  const reviewedInstance =
-    !originalInstance && row.reviewedAt && text(row.summary)
-      ? findReviewedInstallmentEvidence(row.summary, receiptNumber)
-      : null;
-
-  if (!originalInstance && !reviewedInstance) {
-    if (text(originalPageText) && pageContainsReference(originalPageText, receiptNumber)) {
-      return { status: "UNAVAILABLE", reason: "INSTALLMENT_SEQUENCE_NOT_FOUND" };
-    }
-    return { status: "UNAVAILABLE", reason: "TRUSTED_INSTANCE_EVIDENCE_NOT_FOUND" };
-  }
-
-  const instance = originalInstance ?? reviewedInstance!;
-  const usingReviewedCanonicalText = !originalInstance;
-
-  const candidate: IdentityCandidate = {
-    version: "document-instance-identity-v1",
+  const discovery = await discoverLoanInstallmentDocumentInstanceIdentity({
     companyId: input.companyId,
     receiptId: row.receiptId,
     documentId: row.id,
-    obligation: {
-      companyId: input.companyId,
-      entityId: binding.entityId,
-    },
-    reference: {
-      role: "OBLIGATION_REFERENCE",
-      value: receiptNumber,
-    },
-    instance: {
-      kind: "PRINTED_INSTALLMENT_SEQUENCE",
-      sequenceText: instance.sequenceText,
-      totalText: instance.totalText,
-      provenance: usingReviewedCanonicalText
-        ? {
-            origin: "REVIEWED_CANONICAL_TEXT",
-            sourceField: "summary",
-            receiptId: row.receiptId,
-            documentId: row.id,
-            pageNumber,
-            fieldLabel: instance.fieldLabel,
-          }
-        : {
-            origin: "ORIGINAL_DOCUMENT",
-            receiptId: row.receiptId,
-            documentId: row.id,
-            pageNumber,
-            fieldLabel: instance.fieldLabel,
-          },
-    },
-  };
-  const evidence: IdentityEvidence = {
-    sourceFileHash,
-    verbatimText: instance.verbatimText,
+    pageNumber,
+    receiptNumber,
+    summary: row.summary,
+    reviewedAt: row.reviewedAt,
+    extractionMetadata: row.extractionMetadata,
+    serviceDocument,
+    obligationEntityId: binding.entityId,
     bindingRevision: binding.revision,
-    ...(usingReviewedCanonicalText && row.reviewedAt
-      ? {
-          reviewedTextDigest: reviewedCanonicalTextDigest(row.summary),
-          reviewedAt: row.reviewedAt.toISOString(),
-        }
-      : {}),
-  };
+    sourceFileHash,
+  });
+
+  if (discovery.status === "UNAVAILABLE") {
+    return discovery;
+  }
 
   return proposeAndConfirmDocumentInstanceIdentity(
     {
@@ -788,8 +846,8 @@ async function prepareOneLoanDocumentInstanceIdentity(input: {
       actorUserId: input.actorUserId,
       execution: {
         kind: "NEW_PROPOSAL",
-        candidate,
-        evidence,
+        candidate: discovery.candidate,
+        evidence: discovery.evidence,
       },
     },
     dependencies,
