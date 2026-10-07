@@ -27,6 +27,7 @@ import {
 import {
   confirmDocumentInstanceIdentity,
   lockDocumentIdentityCompany,
+  type IdentityServiceDependencies,
 } from "./document-instance-service";
 import type { DuplicateDocumentFacts } from "./document-duplicate-reasons";
 import {
@@ -455,170 +456,35 @@ type BookingIdentityPreparationResult =
   | { status: "NOT_APPLICABLE" }
   | { status: "UNAVAILABLE"; reason: string };
 
-async function prepareOneLoanDocumentInstanceIdentity(input: {
-  companyId: number;
-  documentId: number;
-  actorUserId: number;
-}): Promise<BookingIdentityPreparationResult> {
-  const row = await prisma.aiDetectedDocument.findFirst({
-    where: {
-      id: input.documentId,
-      receipt: { companyId: input.companyId },
-    },
-    select: {
-      id: true,
-      receiptId: true,
-      pageNumber: true,
-      receiptNumber: true,
-      summary: true,
-      reviewedAt: true,
-      extractionMetadata: true,
-    },
-  });
+type DocumentInstanceIdentityExecution =
+  | {
+      kind: "EXISTING_PROPOSAL";
+      revision: number;
+      evidenceDigest: string;
+    }
+  | {
+      kind: "NEW_PROPOSAL";
+      candidate: IdentityCandidate;
+      evidence: IdentityEvidence;
+    };
 
-  if (!row || !text(row.receiptNumber) || !positiveId(row.pageNumber)) {
-    return { status: "NOT_APPLICABLE" };
-  }
-  const receiptNumber = row.receiptNumber.trim();
-  const pageNumber = row.pageNumber;
-
-  const dependencies = createPrismaDocumentInstanceDependencies({
-    prisma,
-    authenticatedUserId: async () => input.actorUserId,
-    verifyEvidence: createGloggtDocumentInstanceEvidenceVerifier(),
-  });
-
-  const serviceDocument = await dependencies.readForEvidence(
-    input.companyId,
-    input.documentId,
-  );
-  const binding = serviceDocument?.binding;
-  const sourceFileHash = serviceDocument?.sourceFileHash;
-  if (
-    !serviceDocument ||
-    !binding?.confirmed ||
-    !positiveId(binding.entityId) ||
-    !text(binding.revision) ||
-    !text(sourceFileHash)
-  ) {
-    return { status: "NOT_APPLICABLE" };
-  }
-
-  const parsedExisting = parseDocumentIdentityEnvelope(
-    serviceDocument.extractionMetadata,
-  );
-  if (parsedExisting.ok && parsedExisting.envelope.state === "CONFIRMED") {
-    return { status: "CONFIRMED" };
-  }
-  if (
-    parsedExisting.ok &&
-    parsedExisting.envelope.state !== "PROPOSED"
-  ) {
-    return { status: "UNAVAILABLE", reason: "IDENTITY_NOT_PROPOSABLE" };
-  }
-  if (!parsedExisting.ok && parsedExisting.code !== "ABSENT") {
-    return { status: "UNAVAILABLE", reason: parsedExisting.code };
-  }
-
+async function proposeAndConfirmDocumentInstanceIdentity(
+  input: {
+    companyId: number;
+    documentId: number;
+    actorUserId: number;
+    execution: DocumentInstanceIdentityExecution;
+  },
+  dependencies: IdentityServiceDependencies,
+): Promise<BookingIdentityPreparationResult> {
   let proposalRevision: number;
   let proposalDigest: string;
 
-  if (parsedExisting.ok) {
-    proposalRevision = parsedExisting.envelope.revision;
-    proposalDigest = parsedExisting.envelope.evidenceDigest;
+  if (input.execution.kind === "EXISTING_PROPOSAL") {
+    proposalRevision = input.execution.revision;
+    proposalDigest = input.execution.evidenceDigest;
   } else {
-    const artifactLoader = createDocumentInstanceOriginalArtifactLoader(
-      createPrismaSupabaseOriginalArtifactDependencies({
-        prisma,
-        storage: supabaseAdmin.storage,
-      }),
-    );
-    const artifact = await artifactLoader(serviceDocument);
-    if (!artifact?.immutable) {
-      return { status: "UNAVAILABLE", reason: "ORIGINAL_ARTIFACT_UNAVAILABLE" };
-    }
-
-    let originalPageText = "";
-    try {
-      const pages = await extractTextPagesFromPdfBuffer(artifact.bytes);
-      originalPageText = pages[pageNumber - 1] ?? "";
-    } catch {
-      originalPageText = "";
-    }
-
-    const originalInstance =
-      text(originalPageText) &&
-      pageContainsReference(originalPageText, receiptNumber) &&
-      (metadataConfirmsObligationReference(
-        row.extractionMetadata,
-        receiptNumber,
-      ) ||
-        pageConfirmsObligationReference(originalPageText, receiptNumber))
-        ? findPrintedInstallmentEvidence(originalPageText)
-        : null;
-
-    const reviewedInstance =
-      !originalInstance && row.reviewedAt && text(row.summary)
-        ? findReviewedInstallmentEvidence(row.summary, receiptNumber)
-        : null;
-
-    if (!originalInstance && !reviewedInstance) {
-      if (text(originalPageText) && pageContainsReference(originalPageText, receiptNumber)) {
-        return { status: "UNAVAILABLE", reason: "INSTALLMENT_SEQUENCE_NOT_FOUND" };
-      }
-      return { status: "UNAVAILABLE", reason: "TRUSTED_INSTANCE_EVIDENCE_NOT_FOUND" };
-    }
-
-    const instance = originalInstance ?? reviewedInstance!;
-    const usingReviewedCanonicalText = !originalInstance;
-
-    const candidate: IdentityCandidate = {
-      version: "document-instance-identity-v1",
-      companyId: input.companyId,
-      receiptId: row.receiptId,
-      documentId: row.id,
-      obligation: {
-        companyId: input.companyId,
-        entityId: binding.entityId,
-      },
-      reference: {
-        role: "OBLIGATION_REFERENCE",
-        value: receiptNumber,
-      },
-      instance: {
-        kind: "PRINTED_INSTALLMENT_SEQUENCE",
-        sequenceText: instance.sequenceText,
-        totalText: instance.totalText,
-        provenance: usingReviewedCanonicalText
-          ? {
-              origin: "REVIEWED_CANONICAL_TEXT",
-              sourceField: "summary",
-              receiptId: row.receiptId,
-              documentId: row.id,
-              pageNumber,
-              fieldLabel: instance.fieldLabel,
-            }
-          : {
-              origin: "ORIGINAL_DOCUMENT",
-              receiptId: row.receiptId,
-              documentId: row.id,
-              pageNumber,
-              fieldLabel: instance.fieldLabel,
-            },
-      },
-    };
-    const evidence: IdentityEvidence = {
-      sourceFileHash,
-      verbatimText: instance.verbatimText,
-      bindingRevision: binding.revision,
-      ...(usingReviewedCanonicalText && row.reviewedAt
-        ? {
-            reviewedTextDigest: reviewedCanonicalTextDigest(row.summary),
-            reviewedAt: row.reviewedAt.toISOString(),
-          }
-        : {}),
-    };
-
+    const { candidate, evidence } = input.execution;
     const proposal = await prisma.$transaction(async (tx) => {
       await lockDocumentIdentityCompany(tx, input.companyId);
       const adapter = createPrismaIdentityTransaction(tx);
@@ -740,6 +606,194 @@ async function prepareOneLoanDocumentInstanceIdentity(input: {
   );
 
   return { status: "CONFIRMED" };
+}
+
+async function prepareOneLoanDocumentInstanceIdentity(input: {
+  companyId: number;
+  documentId: number;
+  actorUserId: number;
+}): Promise<BookingIdentityPreparationResult> {
+  const row = await prisma.aiDetectedDocument.findFirst({
+    where: {
+      id: input.documentId,
+      receipt: { companyId: input.companyId },
+    },
+    select: {
+      id: true,
+      receiptId: true,
+      pageNumber: true,
+      receiptNumber: true,
+      summary: true,
+      reviewedAt: true,
+      extractionMetadata: true,
+    },
+  });
+
+  if (!row || !text(row.receiptNumber) || !positiveId(row.pageNumber)) {
+    return { status: "NOT_APPLICABLE" };
+  }
+  const receiptNumber = row.receiptNumber.trim();
+  const pageNumber = row.pageNumber;
+
+  const dependencies = createPrismaDocumentInstanceDependencies({
+    prisma,
+    authenticatedUserId: async () => input.actorUserId,
+    verifyEvidence: createGloggtDocumentInstanceEvidenceVerifier(),
+  });
+
+  const serviceDocument = await dependencies.readForEvidence(
+    input.companyId,
+    input.documentId,
+  );
+  const binding = serviceDocument?.binding;
+  const sourceFileHash = serviceDocument?.sourceFileHash;
+  if (
+    !serviceDocument ||
+    !binding?.confirmed ||
+    !positiveId(binding.entityId) ||
+    !text(binding.revision) ||
+    !text(sourceFileHash)
+  ) {
+    return { status: "NOT_APPLICABLE" };
+  }
+
+  const parsedExisting = parseDocumentIdentityEnvelope(
+    serviceDocument.extractionMetadata,
+  );
+  if (parsedExisting.ok && parsedExisting.envelope.state === "CONFIRMED") {
+    return { status: "CONFIRMED" };
+  }
+  if (
+    parsedExisting.ok &&
+    parsedExisting.envelope.state !== "PROPOSED"
+  ) {
+    return { status: "UNAVAILABLE", reason: "IDENTITY_NOT_PROPOSABLE" };
+  }
+  if (!parsedExisting.ok && parsedExisting.code !== "ABSENT") {
+    return { status: "UNAVAILABLE", reason: parsedExisting.code };
+  }
+
+  if (parsedExisting.ok) {
+    return proposeAndConfirmDocumentInstanceIdentity(
+      {
+        companyId: input.companyId,
+        documentId: input.documentId,
+        actorUserId: input.actorUserId,
+        execution: {
+          kind: "EXISTING_PROPOSAL",
+          revision: parsedExisting.envelope.revision,
+          evidenceDigest: parsedExisting.envelope.evidenceDigest,
+        },
+      },
+      dependencies,
+    );
+  }
+
+  const artifactLoader = createDocumentInstanceOriginalArtifactLoader(
+    createPrismaSupabaseOriginalArtifactDependencies({
+      prisma,
+      storage: supabaseAdmin.storage,
+    }),
+  );
+  const artifact = await artifactLoader(serviceDocument);
+  if (!artifact?.immutable) {
+    return { status: "UNAVAILABLE", reason: "ORIGINAL_ARTIFACT_UNAVAILABLE" };
+  }
+
+  let originalPageText = "";
+  try {
+    const pages = await extractTextPagesFromPdfBuffer(artifact.bytes);
+    originalPageText = pages[pageNumber - 1] ?? "";
+  } catch {
+    originalPageText = "";
+  }
+
+  const originalInstance =
+    text(originalPageText) &&
+    pageContainsReference(originalPageText, receiptNumber) &&
+    (metadataConfirmsObligationReference(
+      row.extractionMetadata,
+      receiptNumber,
+    ) ||
+      pageConfirmsObligationReference(originalPageText, receiptNumber))
+      ? findPrintedInstallmentEvidence(originalPageText)
+      : null;
+
+  const reviewedInstance =
+    !originalInstance && row.reviewedAt && text(row.summary)
+      ? findReviewedInstallmentEvidence(row.summary, receiptNumber)
+      : null;
+
+  if (!originalInstance && !reviewedInstance) {
+    if (text(originalPageText) && pageContainsReference(originalPageText, receiptNumber)) {
+      return { status: "UNAVAILABLE", reason: "INSTALLMENT_SEQUENCE_NOT_FOUND" };
+    }
+    return { status: "UNAVAILABLE", reason: "TRUSTED_INSTANCE_EVIDENCE_NOT_FOUND" };
+  }
+
+  const instance = originalInstance ?? reviewedInstance!;
+  const usingReviewedCanonicalText = !originalInstance;
+
+  const candidate: IdentityCandidate = {
+    version: "document-instance-identity-v1",
+    companyId: input.companyId,
+    receiptId: row.receiptId,
+    documentId: row.id,
+    obligation: {
+      companyId: input.companyId,
+      entityId: binding.entityId,
+    },
+    reference: {
+      role: "OBLIGATION_REFERENCE",
+      value: receiptNumber,
+    },
+    instance: {
+      kind: "PRINTED_INSTALLMENT_SEQUENCE",
+      sequenceText: instance.sequenceText,
+      totalText: instance.totalText,
+      provenance: usingReviewedCanonicalText
+        ? {
+            origin: "REVIEWED_CANONICAL_TEXT",
+            sourceField: "summary",
+            receiptId: row.receiptId,
+            documentId: row.id,
+            pageNumber,
+            fieldLabel: instance.fieldLabel,
+          }
+        : {
+            origin: "ORIGINAL_DOCUMENT",
+            receiptId: row.receiptId,
+            documentId: row.id,
+            pageNumber,
+            fieldLabel: instance.fieldLabel,
+          },
+    },
+  };
+  const evidence: IdentityEvidence = {
+    sourceFileHash,
+    verbatimText: instance.verbatimText,
+    bindingRevision: binding.revision,
+    ...(usingReviewedCanonicalText && row.reviewedAt
+      ? {
+          reviewedTextDigest: reviewedCanonicalTextDigest(row.summary),
+          reviewedAt: row.reviewedAt.toISOString(),
+        }
+      : {}),
+  };
+
+  return proposeAndConfirmDocumentInstanceIdentity(
+    {
+      companyId: input.companyId,
+      documentId: input.documentId,
+      actorUserId: input.actorUserId,
+      execution: {
+        kind: "NEW_PROPOSAL",
+        candidate,
+        evidence,
+      },
+    },
+    dependencies,
+  );
 }
 
 /**
