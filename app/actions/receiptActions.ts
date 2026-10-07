@@ -7403,42 +7403,43 @@ if (!document.date) {
     perf("tx company + VAT");
 // Öryggisvörn gegn tvíbókun sama fylgiskjals.
 //
-// receiptNumber er áfram blocking nema authoritative document-instance evidence
-// sannar að númerið er obligation-reference og skjölin eru tvö mismunandi
-// instances. Þannig má t.d. sama lán eiga 16/480 og 17/480, en sama 17/480
-// hlaðið inn aftur blokkar áfram. Aðrar duplicate-ástæður eru óháðar þessu.
-if (document.receiptNumber) {
-  if (
-    !allowPossibleDuplicate &&
-    document.merchantName &&
-    document.date &&
-    document.totalAmount != null
-  ) {
-    const possibleDuplicate =
-      await tx.aiDetectedDocument.findFirst({
-        where: {
-          id: {
-            not: document.id,
-          },
-          merchantName: document.merchantName,
-          date: document.date,
-          totalAmount: document.totalAmount,
-          receipt: {
-            companyId: company.id,
-          },
-          approvedAt: {
-            not: null,
-          },
+// Merchant/date/amount evidence is independent of receiptNumber semantics and
+// must therefore guard documents even when no receipt/invoice number exists.
+if (
+  !allowPossibleDuplicate &&
+  document.merchantName &&
+  document.date &&
+  document.totalAmount != null
+) {
+  const possibleDuplicate =
+    await tx.aiDetectedDocument.findFirst({
+      where: {
+        id: {
+          not: document.id,
         },
-      });
+        merchantName: document.merchantName,
+        date: document.date,
+        totalAmount: document.totalAmount,
+        receipt: {
+          companyId: company.id,
+        },
+        approvedAt: {
+          not: null,
+        },
+      },
+    });
 
-    if (possibleDuplicate) {
-      throw new Error(
-        `POSSIBLE_DUPLICATE|${possibleDuplicate.receiptId}|${possibleDuplicate.id}|${possibleDuplicate.voucherNumber ?? ""}|${document.merchantName}|${document.totalAmount}`
-      );
-    }
+  if (possibleDuplicate) {
+    throw new Error(
+      `POSSIBLE_DUPLICATE|${possibleDuplicate.receiptId}|${possibleDuplicate.id}|${possibleDuplicate.voucherNumber ?? ""}|${document.merchantName}|${document.totalAmount}`
+    );
   }
+}
 
+// receiptNumber is separately blocking unless authoritative document-instance
+// evidence proves that the repeated number is an obligation reference and the
+// documents are distinct occurrences.
+if (document.receiptNumber) {
   // All already-booked documents with the repeated number are evaluated.
   // Never use a first-match shortcut: one pair can be DISTINCT while another
   // pair is the SAME_INSTANCE and must still block.
