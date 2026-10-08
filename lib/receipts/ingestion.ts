@@ -1401,7 +1401,7 @@ export function tryParseDeterministicPageReceiptBundle(input: {
   };
 }
 
-function buildDeterministicData(text: string) {
+export function buildDeterministicData(text: string) {
   const kennitolur = collectRegexMatches(
     text,
     /\b(\d{6}[- ]?\d{4})\b/g,
