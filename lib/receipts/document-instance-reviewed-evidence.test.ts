@@ -129,3 +129,35 @@ test("reviewed canonical digest is stable across whitespace but changes with the
     reviewedCanonicalTextDigest("Innheimtubréf nr. 338379 Gjalddagi 17 af 480"),
   );
 });
+
+test("original PDF and reviewed summaries share the same issuer-independent occurrence reader", () => {
+  const cases = [
+    ["Lán nr. 338379. Gjalddagi 16 af 480", "16", "480"],
+    ["Lán nr. 338379. Gjalddagi 17/480", "17", "480"],
+    ["Claim nr. 24345. Payment 13 of 84", "13", "84"],
+    ["Lán nr. 338379. Afborgun 16 / 480", "16", "480"],
+  ] as const;
+  for (const [source, sequence, total] of cases) {
+    const parsed = findReviewedOccurrenceEvidence(source);
+    assert.equal(parsed?.sequenceText, sequence);
+    assert.equal(parsed?.totalText, total);
+  }
+});
+
+test("different N/M occurrences fail closed regardless of text or slash form", () => {
+  for (const source of [
+    "Gjalddagi 16 af 480, Gjalddagi 17 af 480",
+    "Gjalddagi 16 af 480, Gjalddagi 17/480",
+    "Gjalddagi 16/480, Gjalddagi 17/480",
+    "Gjalddagi 16/480, Greiðsla 17 af 480",
+  ]) {
+    assert.equal(findReviewedOccurrenceEvidence(source), null, source);
+  }
+});
+
+test("a matching N/M printed twice is one candidate; unrelated dates and slashes are not payment numbers", () => {
+  const source = "Útgáfudagur 01/02/2026. Gjalddagi 17 af 480. " +
+    "Gjalddagi 17/480. Tilvísun 17/480.";
+  assert.equal(findReviewedOccurrenceEvidence(source)?.sequenceText, "17");
+  assert.equal(findReviewedOccurrenceEvidence("Dagsetning 01/02/2026 og tilvísun 17/480."), null);
+});

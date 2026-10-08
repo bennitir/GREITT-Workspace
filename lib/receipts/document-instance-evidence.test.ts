@@ -337,3 +337,13 @@ test("reviewed canonical fallback still requires the immutable original file has
   });
   assert.equal(await verifyDocumentInstanceEvidence(f.document, f.deps), null);
 });
+
+
+test("conflicting schedules on the original source page cannot confirm an instance", async () => {
+  const f = fixture();
+  f.deps.extractTextPages = async () => [
+    f.pages[0],
+    "Innheimtubréf númer: 338379\nGjalddagi 16 af 480\nGjalddagi 17 af 480",
+  ];
+  assert.equal(await verifyDocumentInstanceEvidence(f.document, f.deps), null);
+});

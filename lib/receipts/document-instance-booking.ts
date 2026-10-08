@@ -32,6 +32,13 @@ import {
 } from "./document-instance-service";
 import type { DuplicateDocumentFacts } from "./document-duplicate-reasons";
 import {
+  planDocumentInstanceOccurrencePreparation,
+  type DocumentOccurrenceDiscoveryResult,
+  type DocumentInstanceIdentityExecution,
+  type DocumentOccurrenceProvider,
+} from "./document-instance-occurrence-orchestration";
+import {
+  findDeterministicOccurrenceEvidence,
   findReviewedInstallmentEvidence,
   reviewedCanonicalTextDigest,
 } from "./document-instance-reviewed-evidence";
@@ -98,37 +105,11 @@ function metadataConfirmsObligationReference(
   );
 }
 
+// Original PDF text and reviewed canonical text use the same issuer-neutral
+// sequence grammar. Booking still requires separate confirmed obligation and
+// immutable-source evidence; parsing alone never authorizes a booking.
 function findPrintedInstallmentEvidence(pageText: string) {
-  const normalized = pageText.normalize("NFKC").replace(/\s+/g, " ").trim();
-  const patterns = [
-    /\b(Gjaldagi)\s*[:#-]?\s*(\d{1,5})\s*(?:af|\/)\s*(\d{1,6})\b/iu,
-    /\b(Afborgun(?:arnumer|arnúmer|arnr\.?| numer| númer| nr\.?)?)\s*[:#-]?\s*(\d{1,5})\s*(?:af|\/)\s*(\d{1,6})\b/iu,
-    /\b(Installment)\s*[:#-]?\s*(\d{1,5})\s*(?:of|\/)\s*(\d{1,6})\b/iu,
-  ];
-
-  for (const pattern of patterns) {
-    const match = pattern.exec(normalized);
-    if (!match) continue;
-    const sequence = Number(match[2]);
-    const total = Number(match[3]);
-    if (
-      !Number.isSafeInteger(sequence) ||
-      !Number.isSafeInteger(total) ||
-      sequence < 1 ||
-      total < 1 ||
-      sequence > total
-    ) {
-      continue;
-    }
-    return {
-      fieldLabel: match[1],
-      sequenceText: String(sequence),
-      totalText: String(total),
-      verbatimText: match[0],
-    };
-  }
-
-  return null;
+  return findDeterministicOccurrenceEvidence(pageText);
 }
 
 function pageContainsReference(pageText: string, receiptNumber: string) {
@@ -457,18 +438,6 @@ type BookingIdentityPreparationResult =
   | { status: "NOT_APPLICABLE" }
   | { status: "UNAVAILABLE"; reason: string };
 
-type DocumentInstanceIdentityExecution =
-  | {
-      kind: "EXISTING_PROPOSAL";
-      revision: number;
-      evidenceDigest: string;
-    }
-  | {
-      kind: "NEW_PROPOSAL";
-      candidate: IdentityCandidate;
-      evidence: IdentityEvidence;
-    };
-
 async function proposeAndConfirmDocumentInstanceIdentity(
   input: {
     companyId: number;
@@ -609,14 +578,6 @@ async function proposeAndConfirmDocumentInstanceIdentity(
   return { status: "CONFIRMED" };
 }
 
-type DocumentInstanceIdentityDiscoveryResult =
-  | {
-      status: "DISCOVERED";
-      candidate: IdentityCandidate;
-      evidence: IdentityEvidence;
-    }
-  | { status: "UNAVAILABLE"; reason: string };
-
 async function discoverLoanInstallmentDocumentInstanceIdentity(input: {
   companyId: number;
   receiptId: number;
@@ -630,7 +591,7 @@ async function discoverLoanInstallmentDocumentInstanceIdentity(input: {
   obligationEntityId: number;
   bindingRevision: string;
   sourceFileHash: string;
-}): Promise<DocumentInstanceIdentityDiscoveryResult> {
+}): Promise<DocumentOccurrenceDiscoveryResult> {
   const artifactLoader = createDocumentInstanceOriginalArtifactLoader(
     createPrismaSupabaseOriginalArtifactDependencies({
       prisma,
@@ -739,7 +700,7 @@ async function discoverLoanInstallmentDocumentInstanceIdentity(input: {
   return { status: "DISCOVERED", candidate, evidence };
 }
 
-async function prepareOneLoanDocumentInstanceIdentity(input: {
+async function prepareOneDocumentInstanceIdentity(input: {
   companyId: number;
   documentId: number;
   actorUserId: number;
@@ -788,39 +749,7 @@ async function prepareOneLoanDocumentInstanceIdentity(input: {
     return { status: "NOT_APPLICABLE" };
   }
 
-  const parsedExisting = parseDocumentIdentityEnvelope(
-    serviceDocument.extractionMetadata,
-  );
-  if (parsedExisting.ok && parsedExisting.envelope.state === "CONFIRMED") {
-    return { status: "CONFIRMED" };
-  }
-  if (
-    parsedExisting.ok &&
-    parsedExisting.envelope.state !== "PROPOSED"
-  ) {
-    return { status: "UNAVAILABLE", reason: "IDENTITY_NOT_PROPOSABLE" };
-  }
-  if (!parsedExisting.ok && parsedExisting.code !== "ABSENT") {
-    return { status: "UNAVAILABLE", reason: parsedExisting.code };
-  }
-
-  if (parsedExisting.ok) {
-    return proposeAndConfirmDocumentInstanceIdentity(
-      {
-        companyId: input.companyId,
-        documentId: input.documentId,
-        actorUserId: input.actorUserId,
-        execution: {
-          kind: "EXISTING_PROPOSAL",
-          revision: parsedExisting.envelope.revision,
-          evidenceDigest: parsedExisting.envelope.evidenceDigest,
-        },
-      },
-      dependencies,
-    );
-  }
-
-  const discovery = await discoverLoanInstallmentDocumentInstanceIdentity({
+  const context = {
     companyId: input.companyId,
     receiptId: row.receiptId,
     documentId: row.id,
@@ -833,22 +762,30 @@ async function prepareOneLoanDocumentInstanceIdentity(input: {
     obligationEntityId: binding.entityId,
     bindingRevision: binding.revision,
     sourceFileHash,
-  });
+  };
 
-  if (discovery.status === "UNAVAILABLE") {
-    return discovery;
-  }
+  // The current loan/installment discoverer is one provider; it does not own
+  // the lifecycle of an identity. Future providers must make their eligibility
+  // precise and must not silently compete for the same occurrence.
+  const providers: readonly DocumentOccurrenceProvider<typeof context>[] = [{
+    id: "reviewed-loan-installment",
+    isApplicable: () => true,
+    discover: discoverLoanInstallmentDocumentInstanceIdentity,
+  }];
+
+  const plan = await planDocumentInstanceOccurrencePreparation({
+    existing: parseDocumentIdentityEnvelope(serviceDocument.extractionMetadata),
+    context,
+    providers,
+  });
+  if (plan.status !== "EXECUTE") return plan;
 
   return proposeAndConfirmDocumentInstanceIdentity(
     {
       companyId: input.companyId,
       documentId: input.documentId,
       actorUserId: input.actorUserId,
-      execution: {
-        kind: "NEW_PROPOSAL",
-        candidate: discovery.candidate,
-        evidence: discovery.evidence,
-      },
+      execution: plan.execution,
     },
     dependencies,
   );
@@ -896,7 +833,7 @@ export async function prepareReceiptNumberDocumentInstancesForBooking(input: {
 
   for (const documentId of [input.documentId, ...candidates.map((item) => item.id)]) {
     try {
-      await prepareOneLoanDocumentInstanceIdentity({
+      await prepareOneDocumentInstanceIdentity({
         companyId: input.companyId,
         documentId,
         actorUserId: input.actorUserId,

@@ -2,6 +2,7 @@ import crypto from "crypto";
 
 import { extractTextFromPdfBuffer } from "@/lib/core/pdf-text";
 import { inspectCanonicalReceiptKnowledge } from "@/lib/insight/reconciliation";
+import { findDeterministicOccurrenceEvidence } from "./document-instance-reviewed-evidence";
 
 export const RECEIPT_PROCESSING_VERSION = "receipt-v5-data-first-page-split";
 export const DETERMINISTIC_RECEIPT_PURCHASE_LINE_VERSION = "document-lines-v5-template-aware";
@@ -1450,7 +1451,19 @@ function buildDeterministicData(text: string) {
     10,
   );
 
+  // Advisory source-text observation only. Without confirmed obligation,
+  // artifact/page provenance and identity validation this is NOT a booking key.
+  // Conflicting installment numbers deliberately yield no candidate.
+  const occurrence = findDeterministicOccurrenceEvidence(text);
+
   return {
+    ...(occurrence
+      ? {
+          occurrenceSequenceCandidate: Number(occurrence.sequenceText),
+          occurrenceTotalCandidate: Number(occurrence.totalText),
+          occurrenceSource: "PDF_TEXT_UNVERIFIED",
+        }
+      : {}),
     kennitolur,
     dates,
     invoiceReferences,

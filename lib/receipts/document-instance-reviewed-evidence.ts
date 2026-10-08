@@ -86,57 +86,42 @@ function occurrenceEvidenceFromMatch(
  * Multiple different N/M values are ambiguous and therefore fail closed.
  * Slash notation remains conservative because dates such as 01/02 are common.
  */
-export function findReviewedOccurrenceEvidence(
+export function findDeterministicOccurrenceEvidence(
   sourceText: string,
 ): ReviewedInstallmentEvidence | null {
   const normalized = normalizeReviewedCanonicalText(sourceText);
-
-  const genericPattern =
-    /\b([\p{L}\p{M}][\p{L}\p{M}'’.-]*)\s*[:#-]?\s*(\d{1,5})\s+(?:af|of)\s+(\d{1,6})\b/giu;
-
   const unique = new Map<string, ReviewedInstallmentEvidence>();
 
-  for (
-    let match = genericPattern.exec(normalized);
-    match;
-    match = genericPattern.exec(normalized)
-  ) {
-    const evidence = occurrenceEvidenceFromMatch(match);
-    if (!evidence) continue;
+  // "N af M" / "N of M" keeps the printed field word for provenance, without
+  // requiring vendor names or issuer-specific labels.
+  const writtenPattern =
+    /\b([\p{L}\p{M}][\p{L}\p{M}'’.-]*)\s*[:#-]?\s*(\d{1,5})\s+(?:af|of)\s+(\d{1,6})\b/giu;
 
-    unique.set(
-      `${evidence.sequenceText}/${evidence.totalText}`,
-      evidence,
-    );
-  }
-
-  if (unique.size === 1) {
-    return unique.values().next().value ?? null;
-  }
-
-  if (unique.size > 1) {
-    return null;
-  }
-
-  // Preserve the old slash form conservatively. Unlike "N af M" / "N of M",
-  // an arbitrary N/M pair can easily be a date, so slash syntax is not made
-  // label-agnostic here.
+  // Slash notation requires installment-shaped vocabulary. Unqualified N/M is
+  // also used for dates, fractions and table cells and cannot prove an instance.
   const slashPatterns = [
-    /\b(Gjalddag(?:i|a))\s*[:#-]?\s*(\d{1,5})\s*\/\s*(\d{1,6})\b/iu,
-    /\b(Afborgun(?:arnumer|arnúmer|arnr\.?| numer| númer| nr\.?)?)\s*[:#-]?\s*(\d{1,5})\s*\/\s*(\d{1,6})\b/iu,
-    /\b(Installment)\s*[:#-]?\s*(\d{1,5})\s*\/\s*(\d{1,6})\b/iu,
+    /\b(Gjalddag(?:i|a))\s*[:#-]?\s*(\d{1,5})\s*\/\s*(\d{1,6})\b/giu,
+    /\b(Afborgun(?:arnumer|arnúmer|arnr\.?| numer| númer| nr\.?)?)\s*[:#-]?\s*(\d{1,5})\s*\/\s*(\d{1,6})\b/giu,
+    /\b(Installment)\s*[:#-]?\s*(\d{1,5})\s*\/\s*(\d{1,6})\b/giu,
   ];
 
-  for (const pattern of slashPatterns) {
-    const match = pattern.exec(normalized);
-    if (!match) continue;
-
-    const evidence = occurrenceEvidenceFromMatch(match);
-    if (evidence) return evidence;
+  for (const pattern of [writtenPattern, ...slashPatterns]) {
+    for (const match of normalized.matchAll(pattern)) {
+      const evidence = occurrenceEvidenceFromMatch(match);
+      if (!evidence) continue;
+      const key = `${evidence.sequenceText}/${evidence.totalText}`;
+      if (!unique.has(key)) unique.set(key, evidence);
+      // Two distinct schedule-like values on one page are ambiguous even if
+      // one was written "af" and another with a slash.
+      if (unique.size > 1) return null;
+    }
   }
 
-  return null;
+  return unique.size === 1 ? unique.values().next().value ?? null : null;
 }
+
+/** Legacy API retained for the reviewed-summary path. */
+export const findReviewedOccurrenceEvidence = findDeterministicOccurrenceEvidence;
 
 export function findReviewedInstallmentEvidence(
   sourceText: string,
@@ -146,7 +131,7 @@ export function findReviewedInstallmentEvidence(
     return null;
   }
 
-  return findReviewedOccurrenceEvidence(sourceText);
+  return findDeterministicOccurrenceEvidence(sourceText);
 }
 
 export function reviewedTextContainsReference(
