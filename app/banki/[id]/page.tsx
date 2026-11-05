@@ -2,7 +2,7 @@ import { formatIsk } from "@/app/banki/_lib/formatting/numbers";
 import { formatDate } from "@/lib/locale";
 import Link from "next/link";
 import { notFound } from "next/navigation";
-import { cookies } from "next/headers";
+import { requireActiveCompanyReadAccess } from "@/lib/core/company-read-access";
 import { prisma } from "@/lib/prisma";
 
 type Props = {
@@ -14,14 +14,11 @@ type Props = {
 export default async function BankareikningurPage({ params }: Props) {
   const { id } = await params;
 
-  const cookieStore = await cookies();
-  const activeCompanyId = Number(
-    cookieStore.get("activeCompanyId")?.value
-  );
-
+  // The cookie only selects a company; authorization requires a live membership check.
+  const { companyId: activeCompanyId } = await requireActiveCompanyReadAccess();
   const bankAccountId = Number(id);
 
-  if (!activeCompanyId || !bankAccountId) {
+  if (!Number.isSafeInteger(bankAccountId) || bankAccountId <= 0) {
     notFound();
   }
 
@@ -29,6 +26,7 @@ export default async function BankareikningurPage({ params }: Props) {
     where: {
       id: bankAccountId,
       companyId: activeCompanyId,
+      isActive: true,
     },
   });
 
@@ -62,33 +60,38 @@ export default async function BankareikningurPage({ params }: Props) {
           {account.iban ?? "Ekki skráð"}
         </p>
 
-        <Link
-  href={`/banki/${account.id}/ny`}
-  className="mt-6 inline-block rounded-lg bg-blue-600 px-4 py-2 font-medium text-white"
->
-  + Ný bankafærsla
-</Link>
-
-<Link
-  href={`/banki/${account.id}/afstemming`}
-  className="ml-3 mt-6 inline-block rounded-lg border border-blue-600 px-4 py-2 font-medium text-blue-600"
->
-  ⚖️ Afstemming
-</Link>
-
-<Link
-  href={`/banki/${account.id}/innflutningur`}
-  className="ml-3 mt-6 inline-block rounded-lg border border-blue-600 px-4 py-2 font-medium text-blue-600"
->
-  📥 Flytja inn bankayfirlit
-</Link>
-
-<Link
-  href={`/banki/${account.id}/greining`}
-  className="ml-3 mt-6 inline-block rounded-lg border border-blue-600 px-4 py-2 font-medium text-blue-600"
->
-  🔎 Greina færslur
-</Link>
+        <div className="mt-6 flex flex-wrap items-center gap-3">
+          <Link
+            href={`/banki/${account.id}/afstemming?layout=visual`}
+            className="inline-block rounded-lg bg-teal-800 px-4 py-2 font-semibold text-white focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-teal-900"
+          >
+            ⚖️ Opna þriggja dálka afstemmingu
+          </Link>
+          <Link
+            href={`/banki/${account.id}/afstemming`}
+            className="inline-block rounded-lg border border-teal-700 px-4 py-2 font-medium text-teal-800"
+          >
+            Hefðbundin afstemming
+          </Link>
+          <Link
+            href={`/banki/${account.id}/ny`}
+            className="inline-block rounded-lg border border-blue-600 px-4 py-2 font-medium text-blue-700"
+          >
+            + Ný bankafærsla
+          </Link>
+          <Link
+            href={`/banki/${account.id}/innflutningur`}
+            className="inline-block rounded-lg border border-blue-600 px-4 py-2 font-medium text-blue-700"
+          >
+            📥 Flytja inn bankayfirlit
+          </Link>
+          <Link
+            href={`/banki/${account.id}/greining`}
+            className="inline-block rounded-lg border border-blue-600 px-4 py-2 font-medium text-blue-700"
+          >
+            🔎 Greina færslur
+          </Link>
+        </div>
 
         <h2 className="mt-8 text-xl font-semibold">
           Bankafærslur
