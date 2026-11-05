@@ -5,6 +5,15 @@ import { ReconciliationCoverageOverview } from "@/app/banki/_components/Reconcil
 import { BankOriginatedFlowOverview } from "@/app/banki/[id]/afstemming/BankOriginatedFlowOverview";
 import { ReviewedDocumentCandidateOverview } from "@/app/banki/[id]/afstemming/ReviewedDocumentCandidateOverview";
 import { bankReconciliationText } from "@/app/banki/_lib/i18n/reconciliation-text";
+import { visualReconciliationText } from "@/app/banki/_lib/i18n/visual-reconciliation-text";
+import { buildVisualReconciliation } from "@/app/banki/_lib/visual-reconciliation";
+import VisualReconciliationWorkspace from "./VisualReconciliationWorkspace";
+import { confirmSelectedVisualDocuments, voidSelectedVisualDocuments } from "./document-set-actions";
+import { getDocumentSetsWithHistory, documentSetStorageEnabled } from "@/lib/financial-reconciliation/document-set-service";
+import { searchVisualDocuments } from "./document-search-actions";
+import { getFamilyTransferBlocks } from "@/lib/personal-finance/transfer-eligibility-repository";
+import { getFamilyTransferSplits } from "@/lib/personal-finance/transfer-split-repository";
+import { familySplitStorageEnabled } from "@/lib/personal-finance/family-storage-policy";
 import type { CandidateReason } from "@/lib/financial-reconciliation/candidates";
 import {
   getBankFinancialEventCandidates,
@@ -36,12 +45,11 @@ import {
   normalizeBankClassificationPatternText,
   suggestBankTransactionClassification,
 } from "@/lib/financial-reconciliation/source-classification";
-import { getCompanyAccess } from "@/lib/core/access-control";
+import { requireActiveCompanyReadAccess } from "@/lib/core/company-read-access";
 import { getCurrentInterfaceLanguage } from "@/lib/i18n/current-language";
 import { reconciliationCoverageText } from "@/lib/i18n/reconciliation-coverage";
 import { financialSourceClassificationText } from "@/lib/i18n/financial-source-classification";
 import { formatNumber } from "@/lib/locale";
-import { cookies } from "next/headers";
 import Link from "next/link";
 import { notFound } from "next/navigation";
 import { prisma } from "@/lib/prisma";
@@ -52,6 +60,7 @@ type Props = {
   }>;
   searchParams: Promise<{
     view?: string;
+    layout?: string;
   }>;
 };
 
@@ -72,20 +81,17 @@ function formatFinancialEventAmount(amount: string, currency: string) {
 
 export default async function AfstemmingPage({ params, searchParams }: Props) {
   const { id } = await params;
-  const { view: rawView } = await searchParams;
-
-  const cookieStore = await cookies();
-  const activeCompanyId = Number(
-    cookieStore.get("activeCompanyId")?.value
-  );
+  const { view: rawView, layout } = await searchParams;
+  // Both views authorize the company before the first business-data query.
+  const { companyId: activeCompanyId, access } = await requireActiveCompanyReadAccess();
 
   const bankAccountId = Number(id);
 
-  if (!activeCompanyId || !bankAccountId) {
+  if (!Number.isSafeInteger(bankAccountId) || bankAccountId <= 0) {
     notFound();
   }
 
-  const [language, account, access] = await Promise.all([
+  const [language, account] = await Promise.all([
     getCurrentInterfaceLanguage(),
     prisma.bankAccount.findFirst({
       where: {
@@ -106,7 +112,6 @@ export default async function AfstemmingPage({ params, searchParams }: Props) {
         },
       },
     }),
-    getCompanyAccess(activeCompanyId),
   ]);
 
   if (!account || !access.allowed) {
@@ -312,6 +317,50 @@ export default async function AfstemmingPage({ params, searchParams }: Props) {
     { all: 0, active: 0, personal: 0, excluded: 0, review: 0 },
   );
 
+  const visualText = visualReconciliationText(language);
+  if (layout === "visual") {
+    // Explicit opt-in only; no default activation or database write here.
+    const familyModule = await prisma.companyModule.findUnique({
+      where: { companyId_moduleId: { companyId: activeCompanyId, moduleId: "fjolskylduvidauki" } },
+      select: { enabled: true },
+    });
+    const familyEnabled = familyModule?.enabled === true;
+    const familyCanEdit = access.canReconcileBookkeeping;
+    const familyPeople = familyEnabled && familyCanEdit ? await prisma.insightEntity.findMany({
+      where: { companyId: activeCompanyId, entityType: "PERSON", status: "ACTIVE" },
+      select: { id: true, name: true }, orderBy: [{ name: "asc" }, { id: "asc" }],
+    }) : [];
+    const model = buildVisualReconciliation({
+      companyId: activeCompanyId,
+      bankAccountId,
+      reconciliation,
+      documents: reviewedDocumentResult,
+      confirmedDocuments: confirmedReviewedDocumentResult,
+      events: eventCandidateResult,
+      confirmedEvents: confirmedEventLinkResult,
+    }, new Set(transactions.map(transaction => transaction.id)));
+    const familyBlocks = familyEnabled && familyCanEdit
+      ? await getFamilyTransferBlocks(activeCompanyId, bankAccountId, model.transactions.map(row=>row.id)) : {};
+    const familySaved = familyEnabled && familyCanEdit ? await getFamilyTransferSplits(bankAccountId) : [];
+    const documentSets = await getDocumentSetsWithHistory(activeCompanyId, bankAccountId);
+    return (
+      <main className="p-3 sm:p-6">
+        <Link className="text-sm underline" href={`/banki/${bankAccountId}/afstemming?view=${requestedView}`}>
+          {visualText.standard}
+        </Link>
+        <VisualReconciliationWorkspace key={`${activeCompanyId}:${bankAccountId}:${requestedView}`}
+          model={model} text={visualText} language={language}
+          documentSearchAction={searchVisualDocuments}
+          documentSets={documentSets}
+          documentSetCanConfirm={access.canReconcileBookkeeping && !model.incomplete && documentSetStorageEnabled()}
+          documentSetConfirmAction={confirmSelectedVisualDocuments}
+          documentSetVoidAction={voidSelectedVisualDocuments}
+          family={{enabled:familyEnabled, canEdit:familyCanEdit, people:familyPeople, blocks:familyBlocks, saved:familySaved,
+            storageEnabled:familySplitStorageEnabled()}} />
+      </main>
+    );
+  }
+
   function reasonText(reason: CandidateReason) {
     switch (reason) {
       case "EXACT_DATE_AMOUNT_PARTY":
@@ -337,6 +386,10 @@ export default async function AfstemmingPage({ params, searchParams }: Props) {
 
   return (
     <main className="p-8">
+      <Link className="mb-4 inline-block rounded-lg bg-teal-800 px-4 py-2 text-white"
+        href={`/banki/${bankAccountId}/afstemming?layout=visual&view=${requestedView}`}>
+        {visualText.title}
+      </Link>
       <h1 className="text-2xl font-bold">
         ⚖️ {t.title}
       </h1>
