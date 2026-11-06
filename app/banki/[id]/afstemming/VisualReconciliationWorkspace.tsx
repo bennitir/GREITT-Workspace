@@ -71,7 +71,11 @@ export default function VisualReconciliationWorkspace({ model, text: t, language
   const [documentSearchTerm, setDocumentSearchTerm] = useState<string | null>(null);
   const [documentSearchFailed, setDocumentSearchFailed] = useState(false);
   const [documentSearchBroadenedTo, setDocumentSearchBroadenedTo] = useState<string | null>(null);
-  const [suggestedDocuments, setSuggestedDocuments] = useState<{ bankId: number; anchor: string; documents: VisualDocumentHit[]; failed: boolean } | null>(null);
+  const [suggestedDocuments, setSuggestedDocuments] = useState<{ bankAccountId: number; bankId: number; anchor: string; documents: VisualDocumentHit[]; failed: boolean } | null>(null);
+  // Read-only search results are cached per bank account and transaction. This avoids
+  // repeating the archive lookup when the user moves between nearby bank movements.
+  const suggestionCache = useRef(new Map<string, { documents: VisualDocumentHit[]; failed: boolean }>());
+  const [suggestionRefresh, setSuggestionRefresh] = useState(0);
   const [suggestionsPending, startSuggestionsSearch] = useTransition();
   const [documentSearchPending, startDocumentSearch] = useTransition();
   const rows = filterVisualTransactions(model.transactions, query);
@@ -81,11 +85,14 @@ export default function VisualReconciliationWorkspace({ model, text: t, language
   const visibleRows = revealCompleted ? [...queue.pending, ...queue.completed] : queue.pending;
   const selected = visibleRows.find(row => row.id === selectedId) ?? visibleRows[0] ?? null;
   const comparison = selected ? comparisonByBank[selected.id] ?? [] : [];
-  const visibleSuggestions = selected?.id === suggestedDocuments?.bankId ? suggestedDocuments : null;
-  const suggestedRanked = selected && visibleSuggestions ? rankVisualDocumentsForBank(selected, visibleSuggestions.documents).slice(0, 8) : [];
   const savedGroup = selected ? documentSets.find(group => group.bankTransactionId === selected.id && group.status === 'CONFIRMED') : undefined;
   const existingConfirmed = selected ? existingConfirmedReconciliations.filter(row => row.bankTransactionId === selected.id) : [];
   const voidHistory = selected ? documentSets.filter(group => group.bankTransactionId === selected.id && group.status === 'VOID') : [];
+  const suggestionAlreadyConfirmed = Boolean(selected && (selected.bankStatus === 'RECONCILED' ||
+    savedGroup || existingConfirmed.length > 0 || selected.evidence.some(item => item.status === 'confirmed')));
+  const visibleSuggestions = !suggestionAlreadyConfirmed && selected?.id === suggestedDocuments?.bankId &&
+    model.bankAccountId === suggestedDocuments?.bankAccountId ? suggestedDocuments : null;
+  const suggestedRanked = selected && visibleSuggestions ? rankVisualDocumentsForBank(selected, visibleSuggestions.documents).slice(0, 8) : [];
   // Same canonical confirmation index controls the bank, source and archive views.
   const confirmedDocumentLinks = indexConfirmedVisualDocumentLinks(existingConfirmedReconciliations, documentSets);
   const comparedAmounts = selected ? compareSelectedVisualDocuments(selected.amount, comparison.map(item => item.amount)) : null;
@@ -227,22 +234,58 @@ export default function VisualReconciliationWorkspace({ model, text: t, language
       return { ...previous, [bankId]: next };
     });
   }
+  // The selected bank movement itself starts the shortlist lookup. It is a
+  // debounced, company-authorized READ only, not an automatic link or selection.
+  // Cleanups prevent a slow response for the previous bank movement from replacing
+  // the shortlist of the newly selected movement.
+  const suggestionBankId = selected?.id ?? null;
+  const suggestionBankText = selected?.text ?? '';
+  useEffect(() => {
+    if (suggestionBankId === null || suggestionAlreadyConfirmed ||
+        !documentSearchAction || !documentPreviewEnabled) return;
+    const anchor = visualMerchantAnchor(suggestionBankText);
+    if (!anchor) return;
+    const accountId = model.bankAccountId;
+    const cacheKey = `${accountId}:${suggestionBankId}:${anchor}`;
+    const cached = suggestionCache.current.get(cacheKey);
+    if (cached) {
+      setSuggestedDocuments({ bankAccountId: accountId, bankId: suggestionBankId, anchor, ...cached });
+      return;
+    }
+
+    let cancelled = false;
+    const timer = setTimeout(() => {
+      if (cancelled) return;
+      setSuggestedDocuments({ bankAccountId: accountId, bankId: suggestionBankId, anchor, documents: [], failed: false });
+      startSuggestionsSearch(async () => {
+        let outcome: { documents: VisualDocumentHit[]; failed: boolean };
+        try {
+          const result = await documentSearchAction(model.bankAccountId, anchor);
+          outcome = { documents: result.ok ? result.documents : [], failed: !result.ok };
+        } catch {
+          outcome = { documents: [], failed: true };
+        }
+        if (cancelled) return;
+        suggestionCache.current.set(cacheKey, outcome);
+        // Keep this temporary cache small; it never leaves the browser session.
+        if (suggestionCache.current.size > 20) {
+          const oldest = suggestionCache.current.keys().next().value;
+          if (oldest) suggestionCache.current.delete(oldest);
+        }
+        setSuggestedDocuments({ bankAccountId: accountId, bankId: suggestionBankId, anchor, ...outcome });
+      });
+    }, 220);
+    return () => { cancelled = true; clearTimeout(timer); };
+  }, [suggestionBankId, suggestionBankText, suggestionAlreadyConfirmed, model.bankAccountId,
+      documentSearchAction, documentPreviewEnabled, suggestionRefresh]);
+
   function suggestDocuments() {
     if (!selected || !documentSearchAction || !documentPreviewEnabled || suggestionsPending) return;
     const anchor = visualMerchantAnchor(selected.text);
     if (!anchor) return;
-    const bankId = selected.id;
-    setSuggestedDocuments({ bankId, anchor, documents: [], failed: false });
-    startSuggestionsSearch(async () => {
-      try {
-        // Only a read-only, company-scoped document search. No background selection,
-        // no AI, no posting and no implied confirmation.
-        const result = await documentSearchAction(model.bankAccountId, anchor);
-        setSuggestedDocuments({ bankId, anchor, documents: result.ok ? result.documents : [], failed: !result.ok });
-      } catch {
-        setSuggestedDocuments({ bankId, anchor, documents: [], failed: true });
-      }
-    });
+    // Optional manual retry. Normal use does not require clicking the title.
+    suggestionCache.current.delete(`${model.bankAccountId}:${selected.id}:${anchor}`);
+    setSuggestionRefresh(value => value + 1);
   }
   function searchArchive() {
     if (!documentSearchAction || !documentPreviewEnabled || documentQuery.trim().length < 2) return;
