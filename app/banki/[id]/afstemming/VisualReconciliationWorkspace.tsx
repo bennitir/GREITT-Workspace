@@ -65,6 +65,7 @@ export default function VisualReconciliationWorkspace({ model, text: t, language
   // Every bank transaction keeps its own temporary selection while navigating the page.
   // Nothing is persisted; changing transactions must never display the previous draft as its match.
   const [comparisonByBank, setComparisonByBank] = useState<Record<number, VisualDocumentHit[]>>({});
+  const middleScroll = useRef<HTMLDivElement>(null);
   const rightScroll = useRef<HTMLDivElement>(null);
   const transactionScroll = useRef<HTMLDivElement>(null);
   const [documentSearchTerm, setDocumentSearchTerm] = useState<string | null>(null);
@@ -217,6 +218,7 @@ export default function VisualReconciliationWorkspace({ model, text: t, language
     // cannot be added as if they were fresh/unlinked documents.
     if (!wasSelected && item.documentId !== null && confirmedDocumentLinks.has(item.documentId)) return;
     setGroupMessage(null);
+    if (!wasSelected && comparison.length === 0) middleScroll.current?.scrollTo({ top: 0, behavior: 'smooth' });
     setComparisonByBank(previous => {
       const old = previous[bankId] ?? [];
       const next = old.some(row => `${row.receiptId}:${row.documentId ?? 'legacy'}` === key)
@@ -329,7 +331,7 @@ export default function VisualReconciliationWorkspace({ model, text: t, language
       </section>
       <section className={panel} aria-label={t.bank}>
         <h2 className={heading}>{t.bank}</h2>
-        <div className="p-4 lg:min-h-0 lg:flex-1 lg:overflow-y-auto lg:overscroll-contain" tabIndex={0}>{selected ? <>
+        <div ref={middleScroll} className="p-4 lg:min-h-0 lg:flex-1 lg:overflow-y-auto lg:overscroll-contain" tabIndex={0}>{selected ? <>
           <h3 className="break-words font-semibold">
             {documentPreviewEnabled && documentSearchAction ? <button type="button"
               data-testid="suggest-documents-from-bank" onClick={suggestDocuments} disabled={suggestionsPending}
@@ -405,37 +407,10 @@ export default function VisualReconciliationWorkspace({ model, text: t, language
               </article>)}
             </div>
           </section>}
-          {visibleSuggestions && <section className="mt-4 rounded-lg border border-emerald-200 bg-emerald-50 p-3 text-sm" data-testid="visual-suggested-documents" aria-live="polite">
-            <h4 className="font-semibold">{t.suggestTitle}</h4>
-            <p className="mt-1 text-xs text-slate-700">{t.suggestSearchFor}: {visibleSuggestions.anchor}. {t.suggestNotProof}</p>
-            {suggestionsPending ? <p className="mt-2">{t.archiveSearching}</p> : visibleSuggestions.failed ?
-              <p role="alert" className="mt-2 text-red-800">{t.archiveSearchFailed}</p> : <>
-                {suggestedRanked.map(({ item, sameAmount, closeDate }) => {
-                  const linked = item.documentId !== null && confirmedDocumentLinks.has(item.documentId);
-                  const isSelected = comparison.some(row => row.receiptId === item.receiptId && row.documentId === item.documentId);
-                  return <article key={`${item.receiptId}:${item.documentId ?? 'legacy'}`} className="mt-2 rounded border border-emerald-100 bg-white p-2">
-                    <strong className="block break-words">{item.title}</strong>
-                    <p className="text-xs">#{item.documentId ?? item.receiptId} · {date(item.date)} · {amount(item.amount)}</p>
-                    <div className="my-1 flex flex-wrap gap-1 text-xs">
-                      {sameAmount && <span className="rounded bg-emerald-100 px-2 py-0.5">{t.suggestSameAmount}</span>}
-                      {closeDate && <span className="rounded bg-slate-100 px-2 py-0.5">{t.suggestNearDate}</span>}
-                      {linked && <span className="rounded bg-amber-100 px-2 py-0.5">{t.alreadyLinked}</span>}
-                    </div>
-                    <div className="mt-1 flex flex-wrap gap-2">
-                      <button type="button" className="rounded border border-teal-700 px-2 py-1 text-xs font-semibold"
-                        onClick={() => openDocument(item.receiptId, item.documentId)}>{t.openDocument}</button>
-                      {!linked && <button type="button" className="rounded border border-teal-700 px-2 py-1 text-xs"
-                        onClick={() => toggleComparison(item)}>{isSelected ? t.archiveRemoveCompare : t.archiveAddCompare}</button>}
-                    </div>
-                  </article>;
-                })}
-                {suggestedRanked.length === 0 && <p className="mt-2">{t.archiveNoResults}</p>}
-              </>}
-          </section>}
           {selected && comparison.length > 0 && <section className="mt-5 rounded-lg border border-teal-200 bg-emerald-50 p-3" aria-label={t.archiveCompareTitle} data-testid="visual-draft-comparison">
             <h4 className="font-semibold">{t.archiveCompareTitle} ({comparison.length})</h4>
             <p className="my-2 text-xs text-slate-700">{t.archiveCompareHelp}</p>
-            <div className="space-y-2">
+            <div className="max-h-[22vh] space-y-2 overflow-y-auto overscroll-contain pr-1" tabIndex={0} data-testid="visual-selected-documents-scroll">
               {comparison.map(item => <div key={`${item.receiptId}:${item.documentId ?? 'legacy'}`} className="rounded-md border border-slate-200 bg-white p-2 text-sm">
                 <strong className="block break-words">{item.title}</strong>
                 <p className="my-1">#{item.documentId ?? item.receiptId} · {date(item.date)} · {amount(item.amount)}</p>
@@ -469,6 +444,35 @@ export default function VisualReconciliationWorkspace({ model, text: t, language
 
           </section>}
           {groupMessage && <p role="alert" className="mt-3 rounded border border-red-300 bg-red-50 p-2 text-xs font-semibold text-red-900">{groupMessage}</p>}
+          {visibleSuggestions && <section className="mt-4 rounded-lg border border-emerald-200 bg-emerald-50 p-3 text-sm" data-testid="visual-suggested-documents" aria-live="polite">
+            <h4 className="font-semibold">{t.suggestTitle}</h4>
+            <p className="mt-1 text-xs text-slate-700">{t.suggestSearchFor}: {visibleSuggestions.anchor}. {t.suggestNotProof}</p>
+            {suggestionsPending ? <p className="mt-2">{t.archiveSearching}</p> : visibleSuggestions.failed ?
+              <p role="alert" className="mt-2 text-red-800">{t.archiveSearchFailed}</p> : <>
+                <div className="mt-2 max-h-[30vh] overflow-y-auto overscroll-contain pr-1" tabIndex={0} aria-label={t.suggestTitle} data-testid="visual-suggestions-scroll">
+                {suggestedRanked.map(({ item, sameAmount, closeDate }) => {
+                  const linked = item.documentId !== null && confirmedDocumentLinks.has(item.documentId);
+                  const isSelected = comparison.some(row => row.receiptId === item.receiptId && row.documentId === item.documentId);
+                  return <article key={`${item.receiptId}:${item.documentId ?? 'legacy'}`} className="mt-2 rounded border border-emerald-100 bg-white p-2">
+                    <strong className="block break-words">{item.title}</strong>
+                    <p className="text-xs">#{item.documentId ?? item.receiptId} · {date(item.date)} · {amount(item.amount)}</p>
+                    <div className="my-1 flex flex-wrap gap-1 text-xs">
+                      {sameAmount && <span className="rounded bg-emerald-100 px-2 py-0.5">{t.suggestSameAmount}</span>}
+                      {closeDate && <span className="rounded bg-slate-100 px-2 py-0.5">{t.suggestNearDate}</span>}
+                      {linked && <span className="rounded bg-amber-100 px-2 py-0.5">{t.alreadyLinked}</span>}
+                    </div>
+                    <div className="mt-1 flex flex-wrap gap-2">
+                      <button type="button" className="rounded border border-teal-700 px-2 py-1 text-xs font-semibold"
+                        onClick={() => openDocument(item.receiptId, item.documentId)}>{t.openDocument}</button>
+                      {!linked && <button type="button" className="rounded border border-teal-700 px-2 py-1 text-xs"
+                        onClick={() => toggleComparison(item)}>{isSelected ? t.archiveRemoveCompare : t.archiveAddCompare}</button>}
+                    </div>
+                  </article>;
+                })}
+                {suggestedRanked.length === 0 && <p className="mt-2">{t.archiveNoResults}</p>}
+                </div>
+              </>}
+          </section>}
           <div data-testid="confirmed-reconciliations" className="mt-4 space-y-2">
             {selected.evidence.filter(item => item.status === 'confirmed').map(item => <button key={item.key} type="button"
               className="block text-left text-sm font-semibold underline" onClick={() => { setSourceKey(item.key); setPreview(null); }}>
