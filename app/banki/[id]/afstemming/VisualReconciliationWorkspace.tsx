@@ -60,6 +60,10 @@ export default function VisualReconciliationWorkspace({ model, text: t, language
   const [showCompleted, setShowCompleted] = useState(initialQueue.pending.length === 0);
   const [sourceKey, setSourceKey] = useState<string | null>(null);
   const [preview, setPreview] = useState<{ receiptId: number; documentId: number | null } | null>(null);
+  // An automatic preview is only a visual suggestion, not a document selection.
+  const [suggestedPreview, setSuggestedPreview] = useState<{ bankId: number; receiptId: number; documentId: number | null } | null>(null);
+  // Never reopen a suggestion after the person explicitly closes the preview for this bank movement.
+  const closedSuggestionPreviews = useRef(new Set<number>());
   const [documentQuery, setDocumentQuery] = useState('');
   const [documentResults, setDocumentResults] = useState<VisualDocumentHit[]>([]);
   // Every bank transaction keeps its own temporary selection while navigating the page.
@@ -93,6 +97,12 @@ export default function VisualReconciliationWorkspace({ model, text: t, language
   const visibleSuggestions = !suggestionAlreadyConfirmed && selected?.id === suggestedDocuments?.bankId &&
     model.bankAccountId === suggestedDocuments?.bankAccountId ? suggestedDocuments : null;
   const suggestedRanked = selected && visibleSuggestions ? rankVisualDocumentsForBank(selected, visibleSuggestions.documents).slice(0, 8) : [];
+  const topSuggestion = selected?.bankStatus === 'UNRECONCILED' && !suggestionAlreadyConfirmed
+    ? suggestedRanked.find(({ item }) => Number.isSafeInteger(item.receiptId) && item.receiptId > 0)?.item ?? null
+    : null;
+  const previewIsSuggestion = Boolean(selected && suggestedPreview && preview &&
+    suggestedPreview.bankId === selected.id && preview.receiptId === suggestedPreview.receiptId &&
+    preview.documentId === suggestedPreview.documentId);
   // Same canonical confirmation index controls the bank, source and archive views.
   const confirmedDocumentLinks = indexConfirmedVisualDocumentLinks(existingConfirmedReconciliations, documentSets);
   const comparedAmounts = selected ? compareSelectedVisualDocuments(selected.amount, comparison.map(item => item.amount)) : null;
@@ -137,6 +147,7 @@ export default function VisualReconciliationWorkspace({ model, text: t, language
         }
         setComparisonByBank(previous => ({ ...previous, [bankTransactionId]: [] }));
         setPreview(null);
+        setSuggestedPreview(null);
         setSourceKey(null);
         transactionScroll.current?.scrollTo({ top: 0 });
         router.refresh();
@@ -193,6 +204,18 @@ export default function VisualReconciliationWorkspace({ model, text: t, language
     if (!documentPreviewEnabled || autoReceiptId === null || autoDocumentId === null) return;
     setPreview(current => current ?? { receiptId: autoReceiptId, documentId: autoDocumentId });
   }, [documentPreviewEnabled, selected?.id, autoReceiptId, autoDocumentId]);
+  // The first ranked authorized document is opened for visual review only.
+  // Never run this for already reconciled movements or override a manually opened
+  // document. Closing a suggested preview stays closed for this bank movement.
+  const topSuggestionReceiptId = topSuggestion?.receiptId ?? null;
+  const topSuggestionDocumentId = topSuggestion?.documentId ?? null;
+  useEffect(() => {
+    if (!documentPreviewEnabled || !selected || topSuggestionReceiptId === null ||
+        !Number.isSafeInteger(topSuggestionReceiptId) || topSuggestionReceiptId <= 0 ||
+        preview !== null || sourceKey !== null || closedSuggestionPreviews.current.has(selected.id)) return;
+    setPreview({ receiptId: topSuggestionReceiptId, documentId: topSuggestionDocumentId });
+    setSuggestedPreview({ bankId: selected.id, receiptId: topSuggestionReceiptId, documentId: topSuggestionDocumentId });
+  }, [documentPreviewEnabled, selected?.id, topSuggestionReceiptId, topSuggestionDocumentId, preview, sourceKey]);
   useEffect(() => {
     if (previewUrl) rightScroll.current?.scrollTo({ top: 0, behavior: 'smooth' });
   }, [previewUrl]);
@@ -202,7 +225,7 @@ export default function VisualReconciliationWorkspace({ model, text: t, language
   function transactionButton(row: VisualModel['transactions'][number]) {
     return <button key={row.id} type="button" aria-pressed={selected?.id === row.id}
       className={`${rowStyle} ${selected?.id === row.id ? 'border-teal-700 bg-emerald-50' : 'border-slate-200 bg-white'}`}
-      onClick={() => { setSelectedId(row.id); setSourceKey(null); setPreview(null); setVoidReason(''); setGroupMessage(null); setDocumentSearchTerm(null); setDocumentSearchBroadenedTo(null); }}>
+      onClick={() => { setSelectedId(row.id); setSourceKey(null); setPreview(null); setSuggestedPreview(null); setVoidReason(''); setGroupMessage(null); setDocumentSearchTerm(null); setDocumentSearchBroadenedTo(null); }}>
       <small className="block">#{row.id} · {date(row.date)}</small>
       <strong className="block break-words">{row.text}</strong>
       <span className="block">{amount(row.amount)}</span>
@@ -213,7 +236,14 @@ export default function VisualReconciliationWorkspace({ model, text: t, language
     </button>;
   }
   function openDocument(receiptId: number, documentId: number | null) {
-    if (Number.isSafeInteger(receiptId) && receiptId > 0) setPreview({ receiptId, documentId });
+    if (!Number.isSafeInteger(receiptId) || receiptId <= 0) return;
+    setSuggestedPreview(null);
+    setPreview({ receiptId, documentId });
+  }
+  function closePreview() {
+    if (selected) closedSuggestionPreviews.current.add(selected.id);
+    setSuggestedPreview(null);
+    setPreview(null);
   }
   function toggleComparison(item: VisualDocumentHit) {
     if (!selected) return;
@@ -333,7 +363,7 @@ export default function VisualReconciliationWorkspace({ model, text: t, language
     <p className="my-3 text-sm">{family?.enabled ? t.familyNotice : t.notice}</p>
     {model.incomplete && <p role="status" className="rounded-lg bg-amber-100 p-3">{t.incomplete}</p>}
     <label className="my-4 block text-sm font-semibold">{t.search}
-      <input type="search" value={query} onChange={event => { setQuery(event.target.value); setPreview(null); setSourceKey(null); }}
+      <input type="search" value={query} onChange={event => { setQuery(event.target.value); setPreview(null); setSuggestedPreview(null); setSourceKey(null); }}
         className="mt-2 w-full rounded-lg border border-emerald-200 bg-white p-3" />
     </label>
     <p aria-live="polite" className="mb-3 text-sm">{rows.length} / {model.transactions.length}</p>
@@ -357,6 +387,7 @@ export default function VisualReconciliationWorkspace({ model, text: t, language
                   // now-hidden bank transaction's original document.
                   setSelectedId(queue.pending[0]?.id ?? null);
                   setPreview(null);
+                  setSuggestedPreview(null);
                   setSourceKey(null);
                   setGroupMessage(null);
                 }
@@ -518,7 +549,7 @@ export default function VisualReconciliationWorkspace({ model, text: t, language
           </section>}
           <div data-testid="confirmed-reconciliations" className="mt-4 space-y-2">
             {selected.evidence.filter(item => item.status === 'confirmed').map(item => <button key={item.key} type="button"
-              className="block text-left text-sm font-semibold underline" onClick={() => { setSourceKey(item.key); setPreview(null); }}>
+              className="block text-left text-sm font-semibold underline" onClick={() => { if (selected) closedSuggestionPreviews.current.add(selected.id); setSourceKey(item.key); setPreview(null); setSuggestedPreview(null); }}>
               {t.confirmed} #{item.confirmationId} · {t[item.kind]} #{item.sourceId}
             </button>)}
           </div>
@@ -541,8 +572,12 @@ export default function VisualReconciliationWorkspace({ model, text: t, language
               {preview?.documentId !== null && preview?.documentId !== undefined && confirmedDocumentLinks.has(preview.documentId) &&
                 <span className="ml-2 inline-block rounded bg-emerald-100 px-2 py-1 text-xs font-semibold text-emerald-900">{t.alreadyLinked}</span>}
             </h3>
-            <button type="button" className="underline" onClick={() => setPreview(null)}>{t.close}</button>
+            <button type="button" className="underline" onClick={closePreview}>{t.close}</button>
           </div>
+          {previewIsSuggestion && <p role="status" data-testid="preview-unconfirmed-suggestion"
+            className="my-2 rounded-md border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-950">
+            {t.suggestPreviewOnly}
+          </p>}
           <p className="my-2 text-sm">{t.security}</p>
           <a className="text-sm font-semibold underline" href={previewUrl} target="_blank" rel="noopener noreferrer">{t.openDocument} ↗</a>
           <iframe
@@ -580,7 +615,7 @@ export default function VisualReconciliationWorkspace({ model, text: t, language
             const confirmedForDocument = item.kind === 'document' ? confirmedDocumentLinks.get(item.sourceId) ?? [] : [];
             return <button key={item.key} type="button" aria-pressed={item.key === evidence?.key}
               className={`${rowStyle} ${item.key === evidence?.key ? 'border-teal-700 bg-emerald-50' : 'border-slate-200'}`}
-              onClick={() => { setSourceKey(item.key); setPreview(null); }}>
+              onClick={() => { if (selected) closedSuggestionPreviews.current.add(selected.id); setSourceKey(item.key); setPreview(null); setSuggestedPreview(null); }}>
               <span className={`inline-block rounded px-2 py-1 text-xs ${item.status === 'confirmed' || confirmedForDocument.length ? 'bg-emerald-100' : 'bg-amber-100'}`}>
                 {confirmedForDocument.length ? t.alreadyLinked : t[item.status]}
               </span>

@@ -60,6 +60,7 @@ const text = {
     suggestTitle: 'Líkleg fylgiskjöl til yfirferðar',
     suggestSearchFor: 'Leitað að seljanda',
     suggestNotProof: 'Tillögur eru ekki staðfest tenging. Yfirfarðu frumskjöl áður en þú velur.',
+    suggestPreviewOnly: 'Sjálfvirk forskoðun á líklegu fylgiskjali. Forskoðun ein og sér myndar enga staðfesta tengingu.',
     suggestSameAmount: 'Sama fjárhæð', suggestNearDate: 'Nálæg dagsetning',
     suggestBroadenedSearch: 'Engin nákvæm niðurstaða. Leitin var víkkuð út í seljanda',
 
@@ -150,6 +151,7 @@ const text = {
     suggestTitle: 'Likely documents to review',
     suggestSearchFor: 'Merchant search',
     suggestNotProof: 'Suggestions are not confirmed links. Review originals before selecting.',
+    suggestPreviewOnly: 'Automatically previewed candidate. A preview alone does not create a confirmed link.',
     suggestSameAmount: 'Equal amount', suggestNearDate: 'Nearby date',
     suggestBroadenedSearch: 'No exact matches. Search was broadened to merchant',
 
@@ -240,6 +242,7 @@ const text = {
     suggestTitle: 'Możliwe dokumenty do sprawdzenia',
     suggestSearchFor: 'Wyszukiwanie sprzedawcy',
     suggestNotProof: 'Propozycje nie są potwierdzonymi powiązaniami. Sprawdź oryginały.',
+    suggestPreviewOnly: 'Automatyczny podgląd sugerowanego dokumentu. Sam podgląd nie tworzy potwierdzonego powiązania.',
     suggestSameAmount: 'Ta sama kwota', suggestNearDate: 'Bliska data',
     suggestBroadenedSearch: 'Brak dokładnych wyników. Rozszerzono wyszukiwanie na sprzedawcę',
 
@@ -330,6 +333,7 @@ const text = {
     suggestTitle: 'Могућа документа за проверу',
     suggestSearchFor: 'Претрага продавца',
     suggestNotProof: 'Предлози нису потврђене везе. Проверите оригинале пре избора.',
+    suggestPreviewOnly: 'Automatski prikaz predloženog dokumenta. Sam prikaz ne stvara potvrđenu vezu.',
     suggestSameAmount: 'Исти износ', suggestNearDate: 'Близак датум',
     suggestBroadenedSearch: 'Нема тачних резултата. Претрага је проширена на продавца',
 
