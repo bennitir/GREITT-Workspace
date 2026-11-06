@@ -15,7 +15,6 @@ async function authorizeVisualConfirmation() {
   if (!access.canReconcileBookkeeping || !sessionUser || !effectiveUser || sessionUser.id !== effectiveUser.id) {
     throw new Error('SAMSTAEDA_EKKI_HEIMILD');
   }
-  if (!documentSetStorageEnabled()) throw new Error('SAMSTAEDA_VISTUN_OHEIMIL');
   return { companyId, userId: sessionUser.id };
 }
 
@@ -28,6 +27,7 @@ function refreshBank(bankAccountId: number) {
 /** Server never trusts the browser's company id, amount or document labels. */
 export async function confirmSelectedVisualDocuments(bankAccountId: number, bankTransactionId: number, documentIds: number[]) {
   const { companyId, userId } = await authorizeVisualConfirmation();
+  if (!documentSetStorageEnabled(process.env, { companyId, bankAccountId })) throw new Error('SAMSTAEDA_VISTUN_OHEIMIL');
   const result = await confirmVisualDocumentSet({
     companyId, userId, bankAccountId, bankTransactionId,
     documentIds: canonicalDocumentIds(documentIds),
@@ -38,6 +38,7 @@ export async function confirmSelectedVisualDocuments(bankAccountId: number, bank
 
 export async function voidSelectedVisualDocuments(bankAccountId: number, reconciliationId: number, reason: string) {
   const { companyId, userId } = await authorizeVisualConfirmation();
+  if (!documentSetStorageEnabled(process.env, { companyId, bankAccountId })) throw new Error('SAMSTAEDA_VISTUN_OHEIMIL');
   const result = await voidVisualDocumentSet({ companyId, userId, bankAccountId, reconciliationId, reason });
   refreshBank(bankAccountId);
   return { ok: true as const, id: result.id };

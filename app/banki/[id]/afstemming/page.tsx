@@ -352,7 +352,7 @@ export default async function AfstemmingPage({ params, searchParams }: Props) {
           model={model} text={visualText} language={language}
           documentSearchAction={searchVisualDocuments}
           documentSets={documentSets}
-          documentSetCanConfirm={access.canReconcileBookkeeping && !model.incomplete && documentSetStorageEnabled()}
+          documentSetCanConfirm={access.canReconcileBookkeeping && !model.incomplete && documentSetStorageEnabled(process.env, { companyId: activeCompanyId, bankAccountId })}
           documentSetConfirmAction={confirmSelectedVisualDocuments}
           documentSetVoidAction={voidSelectedVisualDocuments}
           family={{enabled:familyEnabled, canEdit:familyCanEdit, people:familyPeople, blocks:familyBlocks, saved:familySaved,
