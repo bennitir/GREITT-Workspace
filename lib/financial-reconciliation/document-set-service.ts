@@ -182,15 +182,21 @@ function parseDatabaseConnection(raw: string | undefined): {
   } catch { return null; }
 }
 
+// Supabase documents shared Supavisor endpoints as aws-[INDEX]-[REGION].pooler.supabase.com.
+// INDEX and REGION vary per project; do not guess a single eu-west-1 endpoint. This
+// anchored pattern accepts only official-shaped AWS pooler hostnames, not suffix tricks.
+const SUPABASE_SHARED_POOLER_HOST = /^aws-[0-9]+-[a-z]{2}-[a-z]+-[0-9]+\.pooler\.supabase\.com$/;
+const SUPABASE_REQUIRED_TLS_MODES = ['require', 'verify-ca', 'verify-full'];
+
 function isSupabaseConnection(
   conn: NonNullable<ReturnType<typeof parseDatabaseConnection>>,
   ref: string, login: 'gloggt_preview_runtime' | 'postgres',
 ): boolean {
   if (conn.database !== 'postgres' ||
-      !['require', 'verify-ca', 'verify-full'].includes(conn.sslmode ?? '')) return false;
+      !SUPABASE_REQUIRED_TLS_MODES.includes(conn.sslmode ?? '')) return false;
   return (conn.host === `db.${ref}.supabase.co` && conn.username === login &&
             (!conn.port || conn.port === '5432')) ||
-    (conn.host === 'aws-0-eu-west-1.pooler.supabase.com' &&
+    (SUPABASE_SHARED_POOLER_HOST.test(conn.host) &&
       conn.username === `${login}.${ref}` && ['5432', '6543'].includes(conn.port));
 }
 
@@ -206,6 +212,10 @@ export type DocumentSetStorageState =
   | 'PRODUCTION_SCOPE_MISMATCH'
   | 'PRODUCTION_SUPABASE_PROJECT_MISMATCH'
   | 'PRODUCTION_DATABASE_CONNECTION_NOT_APPROVED'
+  | 'PRODUCTION_DATABASE_TLS_REQUIRED'
+  | 'PRODUCTION_DATABASE_NAME_NOT_APPROVED'
+  | 'PRODUCTION_DATABASE_ROLE_NOT_APPROVED'
+  | 'PRODUCTION_DATABASE_HOST_OR_PORT_NOT_APPROVED'
   | 'PRODUCTION_DIRECT_CONNECTION_NOT_APPROVED'
   | 'ENVIRONMENT_NOT_APPROVED';
 
@@ -229,8 +239,20 @@ export const documentSetStorageState = (
       return 'PRODUCTION_SCOPE_MISMATCH';
     if (env.NEXT_PUBLIC_SUPABASE_URL?.replace(/\/$/, '') !== `https://${productionRef}.supabase.co`)
       return 'PRODUCTION_SUPABASE_PROJECT_MISMATCH';
-    if (!isSupabaseConnection(conn, productionRef, 'postgres'))
+    if (!isSupabaseConnection(conn, productionRef, 'postgres')) {
+      // Non-secret diagnostic, not a relaxation: confirmation still fails closed.
+      if (!SUPABASE_REQUIRED_TLS_MODES.includes(conn.sslmode ?? ''))
+        return 'PRODUCTION_DATABASE_TLS_REQUIRED';
+      if (conn.database !== 'postgres') return 'PRODUCTION_DATABASE_NAME_NOT_APPROVED';
+      const directHost = conn.host === `db.${productionRef}.supabase.co`;
+      const poolerHost = SUPABASE_SHARED_POOLER_HOST.test(conn.host);
+      if (!directHost && !poolerHost) return 'PRODUCTION_DATABASE_HOST_OR_PORT_NOT_APPROVED';
+      if (conn.username !== (directHost ? 'postgres' : `postgres.${productionRef}`))
+        return 'PRODUCTION_DATABASE_ROLE_NOT_APPROVED';
+      if (!(directHost ? (!conn.port || conn.port === '5432') : ['5432', '6543'].includes(conn.port)))
+        return 'PRODUCTION_DATABASE_HOST_OR_PORT_NOT_APPROVED';
       return 'PRODUCTION_DATABASE_CONNECTION_NOT_APPROVED';
+    }
     if (env.DIRECT_URL) {
       const direct = parseDatabaseConnection(env.DIRECT_URL);
       if (!direct || !isSupabaseConnection(direct, productionRef, 'postgres'))

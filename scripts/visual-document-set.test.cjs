@@ -100,6 +100,37 @@ test('Production confirmation is scoped to the approved company and account, nev
   assert.equal(allowed({ DIRECT_URL: production }), true);
 });
 
+test('Production permits valid Supabase pooler index and region, but never another tenant, host or unsafe TLS', () => {
+  const ref = PROD;
+  const good = {
+    DATABASE_URL: `postgresql://postgres.${ref}:secret@aws-0-eu-west-1.pooler.supabase.com:5432/postgres?sslmode=require`,
+    DIRECT_URL: `postgresql://postgres:${'secret'}@db.${ref}.supabase.co:5432/postgres?sslmode=verify-full`,
+    NEXT_PUBLIC_SUPABASE_URL: `https://${ref}.supabase.co`,
+    VERCEL_ENV: 'production', VERCEL: '1',
+    GLOGGT_DOCUMENT_SET_CONFIRM_ENABLED: 'true',
+    GLOGGT_DOCUMENT_SET_PRODUCTION_ENABLE: 'approved-manual-document-sets-v1',
+    GLOGGT_DOCUMENT_SET_PRODUCTION_SCOPE: '8:2',
+  };
+  const scope = { companyId: 8, bankAccountId: 2 };
+  const state = (overrides = {}) => exportsObj.documentSetStorageState({ ...good, ...overrides }, scope);
+  const makeUrl = (host, user = `postgres.${ref}`, mode = 'require', port = '6543') =>
+    `postgresql://${user}:secret@${host}:${port}/postgres?sslmode=${mode}`;
+  assert.equal(state(), 'READY');
+  assert.equal(state({ DATABASE_URL: makeUrl('aws-1-eu-central-1.pooler.supabase.com') }), 'READY');
+  assert.equal(state({ DATABASE_URL: makeUrl('aws-12-us-east-2.pooler.supabase.com') }), 'READY');
+  assert.equal(state({ DATABASE_URL: makeUrl('aws-0-ap-southeast-1.pooler.supabase.com') }), 'READY');
+  assert.equal(state({ DATABASE_URL: makeUrl('aws-1-eu-central-1.pooler.supabase.com', `postgres.${TEST}`) }), 'PRODUCTION_DATABASE_ROLE_NOT_APPROVED');
+  assert.equal(state({ DATABASE_URL: makeUrl('aws-1-eu-central-1.pooler.supabase.com.bad.example') }), 'PRODUCTION_DATABASE_HOST_OR_PORT_NOT_APPROVED');
+  assert.equal(state({ DATABASE_URL: makeUrl('evil-1-eu-central-1.pooler.supabase.com') }), 'PRODUCTION_DATABASE_HOST_OR_PORT_NOT_APPROVED');
+  assert.equal(state({ DATABASE_URL: makeUrl('aws-1-eu-central-1.pooler.supabase.com', `postgres.${ref}`, 'disable') }), 'PRODUCTION_DATABASE_TLS_REQUIRED');
+  assert.equal(state({ DATABASE_URL: makeUrl('aws-1-eu-central-1.pooler.supabase.com', `postgres.${ref}`, 'prefer') }), 'PRODUCTION_DATABASE_TLS_REQUIRED');
+  assert.equal(state({ DATABASE_URL: makeUrl('aws-1-eu-central-1.pooler.supabase.com', `postgres.${ref}`, 'require', '5555') }), 'PRODUCTION_DATABASE_HOST_OR_PORT_NOT_APPROVED');
+  assert.equal(state({ DATABASE_URL: makeUrl('aws-1-eu-central-1.pooler.supabase.com').replace('/postgres?', '/other?') }), 'PRODUCTION_DATABASE_NAME_NOT_APPROVED');
+  assert.equal(state({ DATABASE_URL: makeUrl('aws-1-eu-central-1.pooler.supabase.com').replace('?sslmode=require', '') }), 'PRODUCTION_DATABASE_TLS_REQUIRED');
+  assert.equal(state({ DATABASE_URL: makeUrl('aws-1-eu-central-1.pooler.supabase.com'), GLOGGT_DOCUMENT_SET_PRODUCTION_SCOPE: '7:2' }), 'PRODUCTION_SCOPE_MISMATCH');
+  assert.equal(state({ DIRECT_URL: makeUrl('aws-1-eu-central-1.pooler.supabase.com', `postgres.${TEST}`) }), 'PRODUCTION_DIRECT_CONNECTION_NOT_APPROVED');
+});
+
 test('safe lock diagnostic identifies rejection without leaking connection secrets', () => {
   const ref = 'wjobcdjhqjirgyfbeuze';
   const valid = `postgresql://postgres.${ref}:TOP_SECRET@aws-0-eu-west-1.pooler.supabase.com:5432/postgres?sslmode=require`;
@@ -113,11 +144,11 @@ test('safe lock diagnostic identifies rejection without leaking connection secre
   };
   const scope = { companyId: 8, bankAccountId: 2 };
   assert.equal(exportsObj.documentSetStorageState(env, scope), 'READY');
-  assert.equal(exportsObj.documentSetStorageState({ ...env, DATABASE_URL: valid.replace('sslmode=require', 'sslmode=disable') }, scope), 'PRODUCTION_DATABASE_CONNECTION_NOT_APPROVED');
+  assert.equal(exportsObj.documentSetStorageState({ ...env, DATABASE_URL: valid.replace('sslmode=require', 'sslmode=disable') }, scope), 'PRODUCTION_DATABASE_TLS_REQUIRED');
   assert.equal(exportsObj.documentSetStorageState({ ...env, GLOGGT_DOCUMENT_SET_PRODUCTION_SCOPE: '8:3' }, scope), 'PRODUCTION_SCOPE_MISMATCH');
   assert.equal(exportsObj.documentSetStorageState({ ...env, GLOGGT_DOCUMENT_SET_CONFIRM_ENABLED: undefined }, scope), 'CONFIRM_SWITCH_OFF');
   assert.equal(exportsObj.documentSetStorageState({ ...env, NEXT_PUBLIC_SUPABASE_URL: 'https://invalid.example' }, scope), 'PRODUCTION_SUPABASE_PROJECT_MISMATCH');
-  for (const result of ['READY', 'PRODUCTION_DATABASE_CONNECTION_NOT_APPROVED', 'PRODUCTION_SCOPE_MISMATCH']) {
+  for (const result of ['READY', 'PRODUCTION_DATABASE_TLS_REQUIRED', 'PRODUCTION_SCOPE_MISMATCH']) {
     assert.equal(result.includes('TOP_SECRET'), false);
   }
 });
