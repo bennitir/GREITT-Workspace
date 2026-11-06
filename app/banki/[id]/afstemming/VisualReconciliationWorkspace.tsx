@@ -16,12 +16,13 @@ import { indexConfirmedVisualDocumentLinks } from '@/lib/financial-reconciliatio
 import { splitVisualWorkQueue } from '../../_lib/visual-work-queue';
 
 /** Company-only visual workspace. Evidence and optional family actions are server-authorized. */
-export default function VisualReconciliationWorkspace({ model, text: t, language, family, documentPreviewEnabled = true, documentSearchAction, documentSets = [], existingConfirmedReconciliations = [], historicalEvidenceUnavailable = false, documentSetCanConfirm = false, documentSetConfirmAction, documentSetVoidAction }: {
+export default function VisualReconciliationWorkspace({ model, text: t, language, family, documentPreviewEnabled = true, documentSearchAction, documentSets = [], existingConfirmedReconciliations = [], historicalEvidenceUnavailable = false, documentSetCanConfirm = false, documentSetLockReason, documentSetConfirmAction, documentSetVoidAction }: {
   model: VisualModel; text: VisualReconciliationText; language: string;
   documentSets?: SavedDocumentSet[];
   existingConfirmedReconciliations?: ExistingConfirmedBankReconciliation[];
   historicalEvidenceUnavailable?: boolean;
   documentSetCanConfirm?: boolean;
+  documentSetLockReason?: string;
   documentSetConfirmAction?: (bankAccountId: number, bankTransactionId: number, documentIds: number[]) => Promise<
     { ok: true; id: number; idempotent: boolean } |
     { ok: false; reason: DocumentSetReadinessCode | 'INVALID_SELECTION' | 'UNAVAILABLE' | 'STORAGE_DISABLED' }>;
@@ -382,7 +383,9 @@ export default function VisualReconciliationWorkspace({ model, text: t, language
             {!savedGroup && <div className="mt-3 border-t border-teal-200 pt-3">
               <h5 className="font-semibold">{t.groupConfirmTitle}</h5>
               <p className="my-2 text-xs">{t.groupConfirmHelp}</p>
-              {!documentSetCanConfirm && <p className="mb-2 text-xs font-semibold text-amber-900">{t.groupStorageDisabled}</p>}
+              {!documentSetCanConfirm && <p className="mb-2 text-xs font-semibold text-amber-900">{t.groupStorageDisabled}
+                {documentSetLockReason && documentSetLockReason !== 'READY' && <span className="mt-1 block font-normal">{t.groupLockReasonLabel}: <code>{documentSetLockReason}</code></span>}
+              </p>}
               {comparison.some(item => item.documentId === null) && <p className="mb-2 text-xs text-amber-900">{t.groupLegacyCannotConfirm}</p>}
               {selected.evidence.some(item => item.status === 'confirmed') && <p className="mb-2 text-xs text-amber-900">{t.groupExistingLink}</p>}
               {selected.bankStatus !== 'UNRECONCILED' && <p className="mb-2 text-xs font-semibold text-amber-900">{t.bankStatusBlocksNewSet}</p>}

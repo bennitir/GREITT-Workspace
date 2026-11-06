@@ -100,6 +100,28 @@ test('Production confirmation is scoped to the approved company and account, nev
   assert.equal(allowed({ DIRECT_URL: production }), true);
 });
 
+test('safe lock diagnostic identifies rejection without leaking connection secrets', () => {
+  const ref = 'wjobcdjhqjirgyfbeuze';
+  const valid = `postgresql://postgres.${ref}:TOP_SECRET@aws-0-eu-west-1.pooler.supabase.com:5432/postgres?sslmode=require`;
+  const env = {
+    DATABASE_URL: valid,
+    VERCEL_ENV: 'production', VERCEL: '1',
+    NEXT_PUBLIC_SUPABASE_URL: `https://${ref}.supabase.co`,
+    GLOGGT_DOCUMENT_SET_CONFIRM_ENABLED: 'true',
+    GLOGGT_DOCUMENT_SET_PRODUCTION_ENABLE: 'approved-manual-document-sets-v1',
+    GLOGGT_DOCUMENT_SET_PRODUCTION_SCOPE: '8:2',
+  };
+  const scope = { companyId: 8, bankAccountId: 2 };
+  assert.equal(exportsObj.documentSetStorageState(env, scope), 'READY');
+  assert.equal(exportsObj.documentSetStorageState({ ...env, DATABASE_URL: valid.replace('sslmode=require', 'sslmode=disable') }, scope), 'PRODUCTION_DATABASE_CONNECTION_NOT_APPROVED');
+  assert.equal(exportsObj.documentSetStorageState({ ...env, GLOGGT_DOCUMENT_SET_PRODUCTION_SCOPE: '8:3' }, scope), 'PRODUCTION_SCOPE_MISMATCH');
+  assert.equal(exportsObj.documentSetStorageState({ ...env, GLOGGT_DOCUMENT_SET_CONFIRM_ENABLED: undefined }, scope), 'CONFIRM_SWITCH_OFF');
+  assert.equal(exportsObj.documentSetStorageState({ ...env, NEXT_PUBLIC_SUPABASE_URL: 'https://invalid.example' }, scope), 'PRODUCTION_SUPABASE_PROJECT_MISMATCH');
+  for (const result of ['READY', 'PRODUCTION_DATABASE_CONNECTION_NOT_APPROVED', 'PRODUCTION_SCOPE_MISMATCH']) {
+    assert.equal(result.includes('TOP_SECRET'), false);
+  }
+});
+
 test('local development requires the isolated flag, loopback and explicit test database name', () => {
   const local = 'postgresql://test:pass@127.0.0.1:55432/gloggt_test';
   assert.equal(enabled(local), false);

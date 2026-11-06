@@ -194,48 +194,67 @@ function isSupabaseConnection(
       conn.username === `${login}.${ref}` && ['5432', '6543'].includes(conn.port));
 }
 
-export const documentSetStorageEnabled = (
+/** Safe, non-secret reason for a disabled confirmation switch. This only diagnoses;
+ * it MUST NOT relax or bypass any of the existing fail-closed checks. */
+export type DocumentSetStorageState =
+  | 'READY'
+  | 'CONFIRM_SWITCH_OFF'
+  | 'INVALID_DATABASE_URL'
+  | 'PRODUCTION_RUNTIME_NOT_VERIFIED'
+  | 'PRODUCTION_APPROVAL_MISSING'
+  | 'PRODUCTION_SCOPE_INVALID'
+  | 'PRODUCTION_SCOPE_MISMATCH'
+  | 'PRODUCTION_SUPABASE_PROJECT_MISMATCH'
+  | 'PRODUCTION_DATABASE_CONNECTION_NOT_APPROVED'
+  | 'PRODUCTION_DIRECT_CONNECTION_NOT_APPROVED'
+  | 'ENVIRONMENT_NOT_APPROVED';
+
+export const documentSetStorageState = (
   env: Readonly<Record<string, string | undefined>> = process.env,
   scope?: DocumentSetScope,
-): boolean => {
-  if (env.GLOGGT_DOCUMENT_SET_CONFIRM_ENABLED !== 'true') return false;
+): DocumentSetStorageState => {
+  if (env.GLOGGT_DOCUMENT_SET_CONFIRM_ENABLED !== 'true') return 'CONFIRM_SWITCH_OFF';
   const conn = parseDatabaseConnection(env.DATABASE_URL);
-  if (!conn) return false;
+  if (!conn) return 'INVALID_DATABASE_URL';
   const testRef = 'rfvuzcchsaamrykpdiqm';
   const productionRef = 'wjobcdjhqjirgyfbeuze';
 
-  // An explicit, bank-account-specific Production rollout. A copied .env in a
-  // local or Preview build MUST NOT unlock this, even if it points at Production.
   if (env.VERCEL_ENV === 'production') {
-    if (env.VERCEL !== '1' ||
-        env.GLOGGT_DOCUMENT_SET_PRODUCTION_ENABLE !== 'approved-manual-document-sets-v1' ||
-        !scope || !Number.isSafeInteger(scope.companyId) || !Number.isSafeInteger(scope.bankAccountId) ||
-        scope.companyId < 1 || scope.bankAccountId < 1 ||
-        `${scope.companyId}:${scope.bankAccountId}` !== env.GLOGGT_DOCUMENT_SET_PRODUCTION_SCOPE ||
-        env.NEXT_PUBLIC_SUPABASE_URL?.replace(/\/$/, '') !== `https://${productionRef}.supabase.co` ||
-        !isSupabaseConnection(conn, productionRef, 'postgres')) return false;
-    // If Prisma has an independent direct connection string, it too must
-    // belong to the same project. A mismatch is always a hard stop.
+    if (env.VERCEL !== '1') return 'PRODUCTION_RUNTIME_NOT_VERIFIED';
+    if (env.GLOGGT_DOCUMENT_SET_PRODUCTION_ENABLE !== 'approved-manual-document-sets-v1')
+      return 'PRODUCTION_APPROVAL_MISSING';
+    if (!scope || !Number.isSafeInteger(scope.companyId) || !Number.isSafeInteger(scope.bankAccountId) ||
+        scope.companyId < 1 || scope.bankAccountId < 1) return 'PRODUCTION_SCOPE_INVALID';
+    if (`${scope.companyId}:${scope.bankAccountId}` !== env.GLOGGT_DOCUMENT_SET_PRODUCTION_SCOPE)
+      return 'PRODUCTION_SCOPE_MISMATCH';
+    if (env.NEXT_PUBLIC_SUPABASE_URL?.replace(/\/$/, '') !== `https://${productionRef}.supabase.co`)
+      return 'PRODUCTION_SUPABASE_PROJECT_MISMATCH';
+    if (!isSupabaseConnection(conn, productionRef, 'postgres'))
+      return 'PRODUCTION_DATABASE_CONNECTION_NOT_APPROVED';
     if (env.DIRECT_URL) {
       const direct = parseDatabaseConnection(env.DIRECT_URL);
-      if (!direct || !isSupabaseConnection(direct, productionRef, 'postgres')) return false;
+      if (!direct || !isSupabaseConnection(direct, productionRef, 'postgres'))
+        return 'PRODUCTION_DIRECT_CONNECTION_NOT_APPROVED';
     }
-    return true;
+    return 'READY';
   }
 
-  // Integration TEST writes are allowed only for the restricted RLS runtime
-  // login, never for the Production Supabase project or a service-role login.
+  // Identical isolated test and local acceptance gates as the original function.
   if (isSupabaseConnection(conn, testRef, 'gloggt_preview_runtime') &&
       (!env.NEXT_PUBLIC_SUPABASE_URL ||
-       env.NEXT_PUBLIC_SUPABASE_URL.replace(/\/$/, '') === `https://${testRef}.supabase.co`)) return true;
-
-  // Local tests use a separately named isolated database on loopback.
-  return env.GLOGGT_DOCUMENT_SET_ISOLATED_LOCAL === 'true' &&
-    ['localhost', '127.0.0.1', '[::1]'].includes(conn.host) &&
-    /^\d+$/.test(conn.port) && Number(conn.port) > 0 &&
-    ['gloggt_document_set_test', 'gloggt_test'].includes(conn.database) &&
-    (!env.NEXT_PUBLIC_SUPABASE_URL || !env.NEXT_PUBLIC_SUPABASE_URL.includes(productionRef));
+       env.NEXT_PUBLIC_SUPABASE_URL.replace(/\/$/, '') === `https://${testRef}.supabase.co`)) return 'READY';
+  if (env.GLOGGT_DOCUMENT_SET_ISOLATED_LOCAL === 'true' &&
+      ['localhost', '127.0.0.1', '[::1]'].includes(conn.host) &&
+      /^\d+$/.test(conn.port) && Number(conn.port) > 0 &&
+      ['gloggt_document_set_test', 'gloggt_test'].includes(conn.database) &&
+      (!env.NEXT_PUBLIC_SUPABASE_URL || !env.NEXT_PUBLIC_SUPABASE_URL.includes(productionRef))) return 'READY';
+  return 'ENVIRONMENT_NOT_APPROVED';
 };
+
+export const documentSetStorageEnabled = (
+  env: Readonly<Record<string, string | undefined>> = process.env,
+  scope?: DocumentSetScope,
+): boolean => documentSetStorageState(env, scope) === 'READY';
 
 /** One company and bank account only, including voided history for audit visibility.
  * The page must authorize the company before requesting this read.

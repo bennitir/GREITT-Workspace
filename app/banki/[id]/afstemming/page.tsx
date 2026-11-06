@@ -9,7 +9,7 @@ import { visualReconciliationText } from "@/app/banki/_lib/i18n/visual-reconcili
 import { buildVisualReconciliation } from "@/app/banki/_lib/visual-reconciliation";
 import VisualReconciliationWorkspace from "./VisualReconciliationWorkspace";
 import { confirmSelectedVisualDocuments, voidSelectedVisualDocuments } from "./document-set-actions";
-import { getDocumentSetsWithHistory, documentSetStorageEnabled } from "@/lib/financial-reconciliation/document-set-service";
+import { getDocumentSetsWithHistory, documentSetStorageEnabled, documentSetStorageState } from "@/lib/financial-reconciliation/document-set-service";
 import { getExistingConfirmedBankDocuments } from "@/lib/financial-reconciliation/existing-confirmed-bank-documents";
 import { searchVisualDocuments } from "./document-search-actions";
 import { getFamilyTransferBlocks } from "@/lib/personal-finance/transfer-eligibility-repository";
@@ -375,6 +375,7 @@ export default async function AfstemmingPage({ params, searchParams }: Props) {
           existingConfirmedReconciliations={existingConfirmedRead.reconciliations}
           historicalEvidenceUnavailable={!existingConfirmedRead.ok}
           documentSetCanConfirm={access.canReconcileBookkeeping && !model.incomplete && documentSetStorageEnabled(process.env, { companyId: activeCompanyId, bankAccountId })}
+          documentSetLockReason={!access.canReconcileBookkeeping ? 'ROLE_CANNOT_RECONCILE' : model.incomplete ? 'INCOMPLETE_SOURCE_DATA' : documentSetStorageState(process.env, { companyId: activeCompanyId, bankAccountId })}
           documentSetConfirmAction={confirmSelectedVisualDocuments}
           documentSetVoidAction={voidSelectedVisualDocuments}
           family={{enabled:familyEnabled, canEdit:familyCanEdit, people:familyPeople, blocks:familyBlocks, saved:familySaved,
