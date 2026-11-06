@@ -56,6 +56,13 @@ const text = {
     archiveCompareAmountUnknown: 'Ekki hægt að reikna summu eða mismun: fjárhæð vantar eða er á óþekktu sniði.',
     archiveCompareNotConfirmed: 'Þetta er aðeins reiknað yfirlit valinna skjala, ekki staðfest afstemming. Sama fjárhæð sannar ekki tengsl.',
 
+    suggestClickHint: 'Smelltu á heitið til að finna líkleg fylgiskjöl.',
+    suggestTitle: 'Líkleg fylgiskjöl til yfirferðar',
+    suggestSearchFor: 'Leitað að seljanda',
+    suggestNotProof: 'Tillögur eru ekki staðfest tenging. Yfirfarðu frumskjöl áður en þú velur.',
+    suggestSameAmount: 'Sama fjárhæð', suggestNearDate: 'Nálæg dagsetning',
+    suggestBroadenedSearch: 'Engin nákvæm niðurstaða. Leitin var víkkuð út í seljanda',
+
     groupStorageReady: 'Staðfesting samstæðu virk',
     groupHistoryTitle: 'Saga leiðréttinga',
     groupVoidedStatus: 'Afturkölluð samstæða',
@@ -138,6 +145,13 @@ const text = {
     archiveCompareTotal: 'Selected documents total', archiveCompareDifference: 'Difference from bank amount',
     archiveCompareAmountUnknown: 'Cannot calculate total or difference: an amount is missing or invalid.',
     archiveCompareNotConfirmed: 'Calculation only, not a confirmed reconciliation. An equal amount does not prove a match.',
+
+    suggestClickHint: 'Click the transaction description to find likely documents.',
+    suggestTitle: 'Likely documents to review',
+    suggestSearchFor: 'Merchant search',
+    suggestNotProof: 'Suggestions are not confirmed links. Review originals before selecting.',
+    suggestSameAmount: 'Equal amount', suggestNearDate: 'Nearby date',
+    suggestBroadenedSearch: 'No exact matches. Search was broadened to merchant',
 
     groupStorageReady: 'Document confirmation enabled',
     groupHistoryTitle: 'Correction history',
@@ -222,6 +236,13 @@ const text = {
     archiveCompareAmountUnknown: 'Nie można obliczyć sumy: brak lub niepoprawna kwota.',
     archiveCompareNotConfirmed: 'To tylko porównanie, nie zatwierdzone uzgodnienie. Taka sama kwota nie dowodzi zgodności.',
 
+    suggestClickHint: 'Kliknij opis transakcji, aby znaleźć prawdopodobne dokumenty.',
+    suggestTitle: 'Możliwe dokumenty do sprawdzenia',
+    suggestSearchFor: 'Wyszukiwanie sprzedawcy',
+    suggestNotProof: 'Propozycje nie są potwierdzonymi powiązaniami. Sprawdź oryginały.',
+    suggestSameAmount: 'Ta sama kwota', suggestNearDate: 'Bliska data',
+    suggestBroadenedSearch: 'Brak dokładnych wyników. Rozszerzono wyszukiwanie na sprzedawcę',
+
     groupStorageReady: 'Potwierdzanie dokumentów aktywne',
     groupHistoryTitle: 'Historia korekt',
     groupVoidedStatus: 'Anulowany zestaw dokumentów',
@@ -304,6 +325,13 @@ const text = {
     archiveCompareTotal: 'Укупно изабрани документи', archiveCompareDifference: 'Разлика у односу на банкарску ставку',
     archiveCompareAmountUnknown: 'Није могуће израчунати збир: износ недостаје или није исправан.',
     archiveCompareNotConfirmed: 'Ово је само поређење, не потврђено усаглашавање. Исти износ не доказује повезаност.',
+
+    suggestClickHint: 'Кликните на опис трансакције да пронађете могућа документа.',
+    suggestTitle: 'Могућа документа за проверу',
+    suggestSearchFor: 'Претрага продавца',
+    suggestNotProof: 'Предлози нису потврђене везе. Проверите оригинале пре избора.',
+    suggestSameAmount: 'Исти износ', suggestNearDate: 'Близак датум',
+    suggestBroadenedSearch: 'Нема тачних резултата. Претрага је проширена на продавца',
 
     groupStorageReady: 'Потврда докумената је активна',
     groupHistoryTitle: 'Историја исправки',

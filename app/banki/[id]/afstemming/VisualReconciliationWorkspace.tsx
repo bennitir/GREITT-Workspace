@@ -14,6 +14,7 @@ import type { SavedDocumentSet } from '@/lib/financial-reconciliation/document-s
 import type { ExistingConfirmedBankReconciliation } from '@/lib/financial-reconciliation/existing-confirmed-bank-documents';
 import { indexConfirmedVisualDocumentLinks } from '@/lib/financial-reconciliation/visual-confirmed-document-links';
 import { splitVisualWorkQueue } from '../../_lib/visual-work-queue';
+import { visualMerchantAnchor, fallbackAnchorForBankQuery, rankVisualDocumentsForBank } from '../../_lib/visual-document-suggestions';
 
 /** Company-only visual workspace. Evidence and optional family actions are server-authorized. */
 export default function VisualReconciliationWorkspace({ model, text: t, language, family, documentPreviewEnabled = true, documentSearchAction, documentSets = [], existingConfirmedReconciliations = [], historicalEvidenceUnavailable = false, documentSetCanConfirm = false, documentSetLockReason, documentSetConfirmAction, documentSetVoidAction }: {
@@ -68,6 +69,9 @@ export default function VisualReconciliationWorkspace({ model, text: t, language
   const transactionScroll = useRef<HTMLDivElement>(null);
   const [documentSearchTerm, setDocumentSearchTerm] = useState<string | null>(null);
   const [documentSearchFailed, setDocumentSearchFailed] = useState(false);
+  const [documentSearchBroadenedTo, setDocumentSearchBroadenedTo] = useState<string | null>(null);
+  const [suggestedDocuments, setSuggestedDocuments] = useState<{ bankId: number; anchor: string; documents: VisualDocumentHit[]; failed: boolean } | null>(null);
+  const [suggestionsPending, startSuggestionsSearch] = useTransition();
   const [documentSearchPending, startDocumentSearch] = useTransition();
   const rows = filterVisualTransactions(model.transactions, query);
   const queue = splitVisualWorkQueue(rows, confirmedBankIds);
@@ -76,6 +80,8 @@ export default function VisualReconciliationWorkspace({ model, text: t, language
   const visibleRows = revealCompleted ? [...queue.pending, ...queue.completed] : queue.pending;
   const selected = visibleRows.find(row => row.id === selectedId) ?? visibleRows[0] ?? null;
   const comparison = selected ? comparisonByBank[selected.id] ?? [] : [];
+  const visibleSuggestions = selected?.id === suggestedDocuments?.bankId ? suggestedDocuments : null;
+  const suggestedRanked = selected && visibleSuggestions ? rankVisualDocumentsForBank(selected, visibleSuggestions.documents).slice(0, 8) : [];
   const savedGroup = selected ? documentSets.find(group => group.bankTransactionId === selected.id && group.status === 'CONFIRMED') : undefined;
   const existingConfirmed = selected ? existingConfirmedReconciliations.filter(row => row.bankTransactionId === selected.id) : [];
   const voidHistory = selected ? documentSets.filter(group => group.bankTransactionId === selected.id && group.status === 'VOID') : [];
@@ -188,7 +194,7 @@ export default function VisualReconciliationWorkspace({ model, text: t, language
   function transactionButton(row: VisualModel['transactions'][number]) {
     return <button key={row.id} type="button" aria-pressed={selected?.id === row.id}
       className={`${rowStyle} ${selected?.id === row.id ? 'border-teal-700 bg-emerald-50' : 'border-slate-200 bg-white'}`}
-      onClick={() => { setSelectedId(row.id); setSourceKey(null); setPreview(null); setVoidReason(''); setGroupMessage(null); }}>
+      onClick={() => { setSelectedId(row.id); setSourceKey(null); setPreview(null); setVoidReason(''); setGroupMessage(null); setDocumentSearchTerm(null); setDocumentSearchBroadenedTo(null); }}>
       <small className="block">#{row.id} · {date(row.date)}</small>
       <strong className="block break-words">{row.text}</strong>
       <span className="block">{amount(row.amount)}</span>
@@ -219,11 +225,31 @@ export default function VisualReconciliationWorkspace({ model, text: t, language
       return { ...previous, [bankId]: next };
     });
   }
+  function suggestDocuments() {
+    if (!selected || !documentSearchAction || !documentPreviewEnabled || suggestionsPending) return;
+    const anchor = visualMerchantAnchor(selected.text);
+    if (!anchor) return;
+    const bankId = selected.id;
+    setSuggestedDocuments({ bankId, anchor, documents: [], failed: false });
+    startSuggestionsSearch(async () => {
+      try {
+        // Only a read-only, company-scoped document search. No background selection,
+        // no AI, no posting and no implied confirmation.
+        const result = await documentSearchAction(model.bankAccountId, anchor);
+        setSuggestedDocuments({ bankId, anchor, documents: result.ok ? result.documents : [], failed: !result.ok });
+      } catch {
+        setSuggestedDocuments({ bankId, anchor, documents: [], failed: true });
+      }
+    });
+  }
   function searchArchive() {
     if (!documentSearchAction || !documentPreviewEnabled || documentQuery.trim().length < 2) return;
     const term = documentQuery.trim();
     setDocumentSearchTerm(term);
+    setDocumentSearchBroadenedTo(null);
     setDocumentSearchFailed(false);
+    const selectedBankText = selected?.text ?? '';
+    const selectedBank = selected;
     startDocumentSearch(async () => {
       try {
         const result = await documentSearchAction(model.bankAccountId, term);
@@ -232,7 +258,19 @@ export default function VisualReconciliationWorkspace({ model, text: t, language
           setDocumentSearchFailed(true);
           return;
         }
-        setDocumentResults(result.documents);
+        // If a longer phrase (e.g. "Sjóvá-Almennar líftrygging") does not exist
+        // verbatim in the archive, try the vendor word from the selected bank
+        // movement, and explicitly tell the user that the search was widened.
+        const fallback = result.documents.length === 0 ? fallbackAnchorForBankQuery(selectedBankText, term) : null;
+        if (fallback) {
+          const broader = await documentSearchAction(model.bankAccountId, fallback);
+          if (broader.ok) {
+            setDocumentResults(selectedBank ? rankVisualDocumentsForBank(selectedBank, broader.documents).map(row => row.item) : broader.documents);
+            setDocumentSearchBroadenedTo(fallback);
+            return;
+          }
+        }
+        setDocumentResults(selectedBank ? rankVisualDocumentsForBank(selectedBank, result.documents).map(row => row.item) : result.documents);
       } catch {
         setDocumentResults([]);
         setDocumentSearchFailed(true);
@@ -292,7 +330,14 @@ export default function VisualReconciliationWorkspace({ model, text: t, language
       <section className={panel} aria-label={t.bank}>
         <h2 className={heading}>{t.bank}</h2>
         <div className="p-4 lg:min-h-0 lg:flex-1 lg:overflow-y-auto lg:overscroll-contain" tabIndex={0}>{selected ? <>
-          <h3 className="break-words font-semibold">{selected.text}</h3>
+          <h3 className="break-words font-semibold">
+            {documentPreviewEnabled && documentSearchAction ? <button type="button"
+              data-testid="suggest-documents-from-bank" onClick={suggestDocuments} disabled={suggestionsPending}
+              title={t.suggestClickHint} className="break-words text-left underline decoration-dotted underline-offset-4 hover:text-teal-800 focus-visible:outline-2 focus-visible:outline-teal-700">
+              {selected.text}
+            </button> : selected.text}
+          </h3>
+          {documentPreviewEnabled && documentSearchAction && <p className="mt-1 text-xs text-slate-600">{t.suggestClickHint}</p>}
           <p className="my-4 break-words text-2xl font-bold">{amount(selected.amount)}</p>
           <dl><dt>{t.date}</dt><dd>{date(selected.date)}</dd><dt className="mt-3">BankTransaction</dt><dd>#{selected.id}</dd></dl>
           <p className="mt-3 text-sm"><strong>{t.bankStatusLabel}:</strong> {selected.bankStatus === 'RECONCILED'
@@ -359,6 +404,33 @@ export default function VisualReconciliationWorkspace({ model, text: t, language
                 <p>{t.document}: {group.documentIds.join(', ')}</p>
               </article>)}
             </div>
+          </section>}
+          {visibleSuggestions && <section className="mt-4 rounded-lg border border-emerald-200 bg-emerald-50 p-3 text-sm" data-testid="visual-suggested-documents" aria-live="polite">
+            <h4 className="font-semibold">{t.suggestTitle}</h4>
+            <p className="mt-1 text-xs text-slate-700">{t.suggestSearchFor}: {visibleSuggestions.anchor}. {t.suggestNotProof}</p>
+            {suggestionsPending ? <p className="mt-2">{t.archiveSearching}</p> : visibleSuggestions.failed ?
+              <p role="alert" className="mt-2 text-red-800">{t.archiveSearchFailed}</p> : <>
+                {suggestedRanked.map(({ item, sameAmount, closeDate }) => {
+                  const linked = item.documentId !== null && confirmedDocumentLinks.has(item.documentId);
+                  const isSelected = comparison.some(row => row.receiptId === item.receiptId && row.documentId === item.documentId);
+                  return <article key={`${item.receiptId}:${item.documentId ?? 'legacy'}`} className="mt-2 rounded border border-emerald-100 bg-white p-2">
+                    <strong className="block break-words">{item.title}</strong>
+                    <p className="text-xs">#{item.documentId ?? item.receiptId} · {date(item.date)} · {amount(item.amount)}</p>
+                    <div className="my-1 flex flex-wrap gap-1 text-xs">
+                      {sameAmount && <span className="rounded bg-emerald-100 px-2 py-0.5">{t.suggestSameAmount}</span>}
+                      {closeDate && <span className="rounded bg-slate-100 px-2 py-0.5">{t.suggestNearDate}</span>}
+                      {linked && <span className="rounded bg-amber-100 px-2 py-0.5">{t.alreadyLinked}</span>}
+                    </div>
+                    <div className="mt-1 flex flex-wrap gap-2">
+                      <button type="button" className="rounded border border-teal-700 px-2 py-1 text-xs font-semibold"
+                        onClick={() => openDocument(item.receiptId, item.documentId)}>{t.openDocument}</button>
+                      {!linked && <button type="button" className="rounded border border-teal-700 px-2 py-1 text-xs"
+                        onClick={() => toggleComparison(item)}>{isSelected ? t.archiveRemoveCompare : t.archiveAddCompare}</button>}
+                    </div>
+                  </article>;
+                })}
+                {suggestedRanked.length === 0 && <p className="mt-2">{t.archiveNoResults}</p>}
+              </>}
           </section>}
           {selected && comparison.length > 0 && <section className="mt-5 rounded-lg border border-teal-200 bg-emerald-50 p-3" aria-label={t.archiveCompareTitle} data-testid="visual-draft-comparison">
             <h4 className="font-semibold">{t.archiveCompareTitle} ({comparison.length})</h4>
@@ -514,6 +586,7 @@ export default function VisualReconciliationWorkspace({ model, text: t, language
               : documentSearchFailed ? <p role="alert" className="text-sm text-red-800">{t.archiveSearchFailed}</p>
               : <>
                 <p className="mb-2 text-sm font-semibold">{t.archiveResults}: {documentResults.length} · “{documentSearchTerm}”</p>
+                {documentSearchBroadenedTo && <p role="status" className="mb-2 rounded bg-amber-50 p-2 text-xs text-amber-900">{t.suggestBroadenedSearch}: “{documentSearchBroadenedTo}”. {t.suggestNotProof}</p>}
                 <p className="mb-2 text-xs text-slate-600">{t.archiveNotLinked}</p>
                 {historicalEvidenceUnavailable && <p role="status" className="mb-2 rounded border border-amber-300 bg-amber-50 p-2 text-xs font-semibold text-amber-900">{t.existingEvidenceUnavailable}</p>}
                 <div className="max-h-[40vh] overflow-auto lg:max-h-none lg:overflow-visible">
