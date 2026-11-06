@@ -80,6 +80,83 @@ export function canonicalDocumentIds(values: readonly number[]): number[] {
   return unique.sort((a, b) => a - b);
 }
 
+/** Read-only preflight for the selected bank movement and reviewed documents.
+ * This is guidance for the human, NEVER authorization to skip the transactional
+ * validation in confirmVisualDocumentSet. A READY result does not unlock writes.
+ */
+export type DocumentSetReadinessCode =
+  | 'READY' | 'BANK_NOT_FOUND' | 'BANK_ALREADY_RECONCILED'
+  | 'EXISTING_LINK' | 'PAYMENT_LINK' | 'BANK_ALLOCATED'
+  | 'DOCUMENT_NOT_FOUND' | 'DOCUMENT_ALREADY_LINKED'
+  | 'DOCUMENT_NEEDS_REVIEW' | 'AMOUNT_MISMATCH';
+
+export async function inspectVisualDocumentSet(input: {
+  companyId: number; bankAccountId: number; bankTransactionId: number;
+  documentIds: readonly number[];
+}): Promise<DocumentSetReadinessCode> {
+  requirePositiveInteger(input.companyId);
+  requirePositiveInteger(input.bankAccountId);
+  requirePositiveInteger(input.bankTransactionId);
+  const documentIds = canonicalDocumentIds(input.documentIds);
+  // All database operations below are SELECTs. Confirmation must revalidate
+  // everything under SERIALIZABLE isolation after the operator approves.
+  return prisma.$transaction(async tx => {
+    const bank = await tx.bankTransaction.findFirst({
+      where: { id: input.bankTransactionId, bankAccountId: input.bankAccountId,
+        bankAccount: { companyId: input.companyId, isActive: true } },
+      select: { id: true, status: true, amount: true },
+    });
+    if (!bank) return 'BANK_NOT_FOUND';
+    if (bank.status !== 'UNRECONCILED' || bank.amount.isZero()) return 'BANK_ALREADY_RECONCILED';
+    const existing = await tx.financialReconciliationParticipant.findFirst({
+      where: { sourceType: BANK_SOURCE, sourceKey: String(bank.id),
+        reconciliation: { companyId: input.companyId, status: 'CONFIRMED' } },
+      select: { id: true },
+    });
+    if (existing) return 'EXISTING_LINK';
+    const payment = await tx.financialEventPayment.findFirst({
+      where: { bankTransactionId: bank.id }, select: { id: true },
+    });
+    if (payment) return 'PAYMENT_LINK';
+    const table = await tx.$queryRaw<Array<{ present: boolean }>>`
+      SELECT to_regclass('public."BankAllocationClaim"') IS NOT NULL AS present`;
+    if (table[0]?.present) {
+      const claims = await tx.$queryRaw<Array<{ bankTransactionId: number }>>`
+        SELECT "bankTransactionId" FROM public."BankAllocationClaim"
+        WHERE "bankTransactionId" = ${bank.id}`;
+      if (claims.length) return 'BANK_ALLOCATED';
+    }
+    const claimed = await tx.financialReconciliationParticipant.findFirst({
+      where: { sourceType: DOCUMENT_SOURCE, sourceKey: { in: documentIds.map(String) },
+        reconciliation: { companyId: input.companyId, status: 'CONFIRMED' } },
+      select: { id: true },
+    });
+    if (claimed) return 'DOCUMENT_ALREADY_LINKED';
+    const documents = await tx.aiDetectedDocument.findMany({
+      where: { id: { in: documentIds }, receipt: { companyId: input.companyId } },
+      select: {
+        id: true, reviewedAt: true, reviewedContentRevision: true, contentRevision: true,
+        duplicateMarkedAt: true, needsAttentionAt: true, documentType: true,
+        documentRole: true, totalAmount: true,
+        financialEventLinks: { where: { role: 'PRIMARY' }, select: { id: true } },
+      },
+    });
+    if (documents.length !== documentIds.length) return 'DOCUMENT_NOT_FOUND';
+    let total = new Prisma.Decimal(0);
+    for (const document of documents) {
+      if (!document.reviewedAt || document.reviewedContentRevision !== document.contentRevision ||
+          document.duplicateMarkedAt || document.needsAttentionAt || document.financialEventLinks.length ||
+          document.documentRole === 'INSIGHT_ONLY' ||
+          ['OFFER', 'CONTRACT', 'INFORMATION'].includes((document.documentType ?? '').toUpperCase()) ||
+          document.totalAmount === null || !Number.isFinite(document.totalAmount) || document.totalAmount <= 0) {
+        return 'DOCUMENT_NEEDS_REVIEW';
+      }
+      total = total.add(new Prisma.Decimal(String(document.totalAmount)));
+    }
+    return total.eq(bank.amount.abs()) ? 'READY' : 'AMOUNT_MISMATCH';
+  });
+}
+
 // The switch must never be inferred from a browser prop or a token embedded in a URL.
 // Production is opt-in for ONE company and ONE bank account, never globally.
 // The flag is intentionally NOT set by this release. The owner must separately
@@ -264,13 +341,16 @@ export async function confirmVisualDocumentSet(input: ConfirmationInput) {
         const existingBankLinks = await tx.financialReconciliation.findMany({
           where: {
             companyId: input.companyId, status: 'CONFIRMED',
-            participants: { some: { sourceType: BANK_SOURCE, sourceKey: String(bank.id), role: 'MONEY_MOVEMENT' } },
+            participants: { some: { sourceType: BANK_SOURCE, sourceKey: String(bank.id) } },
           },
           select: { id: true, reconciliationType: true, participants: { select: { sourceType: true, sourceKey: true, role: true } } },
         });
         if (existingBankLinks.length > 0) {
           const same = existingBankLinks.length === 1 && existingBankLinks[0].reconciliationType === RECONCILIATION_TYPE &&
-            existingBankLinks[0].participants.filter(p => p.sourceType === DOCUMENT_SOURCE && p.role === 'EVIDENCE')
+            existingBankLinks[0].participants.some(p => p.sourceType === BANK_SOURCE && p.sourceKey === String(bank.id) && p.role === 'MONEY_MOVEMENT') &&
+            existingBankLinks[0].participants.filter(p => p.sourceType === DOCUMENT_SOURCE)
+              .every(p => p.role === 'EVIDENCE') &&
+            existingBankLinks[0].participants.filter(p => p.sourceType === DOCUMENT_SOURCE)
               .map(p => Number(p.sourceKey)).sort((a, b) => a - b).join(',') === documentIds.join(',');
           if (same) return { id: existingBankLinks[0].id, idempotent: true };
           throw new Error('SAMSTAEDA_BANKI_THEGAR_STADFESTUR');
@@ -290,7 +370,7 @@ export async function confirmVisualDocumentSet(input: ConfirmationInput) {
           }),
           tx.financialReconciliationParticipant.findMany({
             where: {
-              sourceType: DOCUMENT_SOURCE, role: 'EVIDENCE', sourceKey: { in: documentIds.map(String) },
+              sourceType: DOCUMENT_SOURCE, sourceKey: { in: documentIds.map(String) },
               reconciliation: { companyId: input.companyId, status: 'CONFIRMED' },
             }, select: { sourceKey: true },
           }),

@@ -10,6 +10,7 @@ import { buildVisualReconciliation } from "@/app/banki/_lib/visual-reconciliatio
 import VisualReconciliationWorkspace from "./VisualReconciliationWorkspace";
 import { confirmSelectedVisualDocuments, voidSelectedVisualDocuments } from "./document-set-actions";
 import { getDocumentSetsWithHistory, documentSetStorageEnabled } from "@/lib/financial-reconciliation/document-set-service";
+import { getExistingConfirmedBankDocuments } from "@/lib/financial-reconciliation/existing-confirmed-bank-documents";
 import { searchVisualDocuments } from "./document-search-actions";
 import { getFamilyTransferBlocks } from "@/lib/personal-finance/transfer-eligibility-repository";
 import { getFamilyTransferSplits } from "@/lib/personal-finance/transfer-split-repository";
@@ -339,19 +340,40 @@ export default async function AfstemmingPage({ params, searchParams }: Props) {
       events: eventCandidateResult,
       confirmedEvents: confirmedEventLinkResult,
     }, new Set(transactions.map(transaction => transaction.id)));
+    // BankTransaction.status is authoritative even when the reconciliation
+    // candidate layers contain no confirmed evidence. Never infer that a bank
+    // movement is UNRECONCILED from an empty document/evidence projection.
+    const bankStatuses = model.transactions.length ? await prisma.bankTransaction.findMany({
+      where: {
+        id: { in: model.transactions.map(row => row.id) },
+        bankAccountId,
+        bankAccount: { companyId: activeCompanyId, isActive: true },
+      },
+      select: { id: true, status: true },
+    }) : [];
+    const statusById = new Map(bankStatuses.map(row => [row.id, row.status]));
+    const modelWithBankStatuses = {
+      ...model,
+      transactions: model.transactions.map(row => ({ ...row, bankStatus: statusById.get(row.id) ?? null })),
+    };
     const familyBlocks = familyEnabled && familyCanEdit
       ? await getFamilyTransferBlocks(activeCompanyId, bankAccountId, model.transactions.map(row=>row.id)) : {};
     const familySaved = familyEnabled && familyCanEdit ? await getFamilyTransferSplits(bankAccountId) : [];
-    const documentSets = await getDocumentSetsWithHistory(activeCompanyId, bankAccountId);
+    const [documentSets, existingConfirmedRead] = await Promise.all([
+      getDocumentSetsWithHistory(activeCompanyId, bankAccountId),
+      getExistingConfirmedBankDocuments(activeCompanyId, bankAccountId, model.transactions.map(row => row.id)),
+    ]);
     return (
       <main className="p-3 sm:p-6">
         <Link className="text-sm underline" href={`/banki/${bankAccountId}/afstemming?view=${requestedView}`}>
           {visualText.standard}
         </Link>
         <VisualReconciliationWorkspace key={`${activeCompanyId}:${bankAccountId}:${requestedView}`}
-          model={model} text={visualText} language={language}
+          model={modelWithBankStatuses} text={visualText} language={language}
           documentSearchAction={searchVisualDocuments}
           documentSets={documentSets}
+          existingConfirmedReconciliations={existingConfirmedRead.reconciliations}
+          historicalEvidenceUnavailable={!existingConfirmedRead.ok}
           documentSetCanConfirm={access.canReconcileBookkeeping && !model.incomplete && documentSetStorageEnabled(process.env, { companyId: activeCompanyId, bankAccountId })}
           documentSetConfirmAction={confirmSelectedVisualDocuments}
           documentSetVoidAction={voidSelectedVisualDocuments}

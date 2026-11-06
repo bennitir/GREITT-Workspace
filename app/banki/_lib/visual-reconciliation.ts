@@ -42,7 +42,7 @@ export type VisualDocumentHit = {
   date: string | null;
   voucherNumber: number | null;
 };
-export type VisualTransaction = { id: number; date: string; text: string; amount: string; evidence: VisualEvidence[] };
+export type VisualTransaction = { id: number; date: string; text: string; amount: string; evidence: VisualEvidence[]; bankStatus?: string | null };
 export type VisualModel = Scope & { transactions: VisualTransaction[]; incomplete: boolean };
 const iso = (d: Date | null) => d && Number.isFinite(d.getTime()) ? d.toISOString() : null;
 function sourceDocuments(documents: readonly FinancialEventSourceDocumentContext[]) {

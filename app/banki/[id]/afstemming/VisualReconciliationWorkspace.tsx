@@ -9,14 +9,22 @@ import type { FamilyDraft } from '@/lib/personal-finance/transfer-split';
 import { filterVisualTransactions, formatVisualAmount, type VisualModel, type VisualDocumentHit } from '../../_lib/visual-reconciliation';
 import type { VisualReconciliationText } from '../../_lib/i18n/visual-reconciliation-text';
 import { compareSelectedVisualDocuments } from '../../_lib/visual-amounts';
+import type { DocumentSetReadinessCode } from '@/lib/financial-reconciliation/document-set-service';
 import type { SavedDocumentSet } from '@/lib/financial-reconciliation/document-set-service';
+import type { ExistingConfirmedBankReconciliation } from '@/lib/financial-reconciliation/existing-confirmed-bank-documents';
+import { indexConfirmedVisualDocumentLinks } from '@/lib/financial-reconciliation/visual-confirmed-document-links';
+import { splitVisualWorkQueue } from '../../_lib/visual-work-queue';
 
 /** Company-only visual workspace. Evidence and optional family actions are server-authorized. */
-export default function VisualReconciliationWorkspace({ model, text: t, language, family, documentPreviewEnabled = true, documentSearchAction, documentSets = [], documentSetCanConfirm = false, documentSetConfirmAction, documentSetVoidAction }: {
+export default function VisualReconciliationWorkspace({ model, text: t, language, family, documentPreviewEnabled = true, documentSearchAction, documentSets = [], existingConfirmedReconciliations = [], historicalEvidenceUnavailable = false, documentSetCanConfirm = false, documentSetConfirmAction, documentSetVoidAction }: {
   model: VisualModel; text: VisualReconciliationText; language: string;
   documentSets?: SavedDocumentSet[];
+  existingConfirmedReconciliations?: ExistingConfirmedBankReconciliation[];
+  historicalEvidenceUnavailable?: boolean;
   documentSetCanConfirm?: boolean;
-  documentSetConfirmAction?: (bankAccountId: number, bankTransactionId: number, documentIds: number[]) => Promise<{ ok: true; id: number; idempotent: boolean }>;
+  documentSetConfirmAction?: (bankAccountId: number, bankTransactionId: number, documentIds: number[]) => Promise<
+    { ok: true; id: number; idempotent: boolean } |
+    { ok: false; reason: DocumentSetReadinessCode | 'INVALID_SELECTION' | 'UNAVAILABLE' | 'STORAGE_DISABLED' }>;
   documentSetVoidAction?: (bankAccountId: number, reconciliationId: number, reason: string) => Promise<{ ok: true; id: number }>;
   documentPreviewEnabled?: boolean;
   documentSearchAction?: (bankAccountId: number, query: string) => Promise<
@@ -33,12 +41,21 @@ export default function VisualReconciliationWorkspace({ model, text: t, language
   };
 }) {
   const router = useRouter();
-  const [groupReviewed, setGroupReviewed] = useState<Record<number, boolean>>({});
   const [groupMessage, setGroupMessage] = useState<string | null>(null);
   const [voidReason, setVoidReason] = useState('');
   const [groupPending, startGroupAction] = useTransition();
   const [query, setQuery] = useState('');
-  const [selectedId, setSelectedId] = useState<number | null>(model.transactions[0]?.id ?? null);
+  // The next unfinished transaction is the default work item. Existing reconciliations
+  // remain accessible in a collapsed history section, never removed from the source data.
+  const confirmedBankIds = new Set<number>([
+    ...existingConfirmedReconciliations.map(row => row.bankTransactionId),
+    ...documentSets.filter(row => row.status === 'CONFIRMED').map(row => row.bankTransactionId),
+  ]);
+  const initialQueue = splitVisualWorkQueue(model.transactions, confirmedBankIds);
+  const [selectedId, setSelectedId] = useState<number | null>(
+    initialQueue.pending[0]?.id ?? initialQueue.completed[0]?.id ?? null,
+  );
+  const [showCompleted, setShowCompleted] = useState(initialQueue.pending.length === 0);
   const [sourceKey, setSourceKey] = useState<string | null>(null);
   const [preview, setPreview] = useState<{ receiptId: number; documentId: number | null } | null>(null);
   const [documentQuery, setDocumentQuery] = useState('');
@@ -47,31 +64,69 @@ export default function VisualReconciliationWorkspace({ model, text: t, language
   // Nothing is persisted; changing transactions must never display the previous draft as its match.
   const [comparisonByBank, setComparisonByBank] = useState<Record<number, VisualDocumentHit[]>>({});
   const rightScroll = useRef<HTMLDivElement>(null);
+  const transactionScroll = useRef<HTMLDivElement>(null);
   const [documentSearchTerm, setDocumentSearchTerm] = useState<string | null>(null);
   const [documentSearchFailed, setDocumentSearchFailed] = useState(false);
   const [documentSearchPending, startDocumentSearch] = useTransition();
   const rows = filterVisualTransactions(model.transactions, query);
-  const selected = rows.find(row => row.id === selectedId) ?? rows[0] ?? null;
+  const queue = splitVisualWorkQueue(rows, confirmedBankIds);
+  // Searching must also find completed transactions, even if history is folded away.
+  const revealCompleted = showCompleted || query.trim().length > 0;
+  const visibleRows = revealCompleted ? [...queue.pending, ...queue.completed] : queue.pending;
+  const selected = visibleRows.find(row => row.id === selectedId) ?? visibleRows[0] ?? null;
   const comparison = selected ? comparisonByBank[selected.id] ?? [] : [];
   const savedGroup = selected ? documentSets.find(group => group.bankTransactionId === selected.id && group.status === 'CONFIRMED') : undefined;
+  const existingConfirmed = selected ? existingConfirmedReconciliations.filter(row => row.bankTransactionId === selected.id) : [];
   const voidHistory = selected ? documentSets.filter(group => group.bankTransactionId === selected.id && group.status === 'VOID') : [];
+  // Same canonical confirmation index controls the bank, source and archive views.
+  const confirmedDocumentLinks = indexConfirmedVisualDocumentLinks(existingConfirmedReconciliations, documentSets);
   const comparedAmounts = selected ? compareSelectedVisualDocuments(selected.amount, comparison.map(item => item.amount)) : null;
-  const canSubmitGroup = Boolean(selected && comparison.length && comparison.every(item => item.documentId !== null) &&
-    comparedAmounts?.remaining === '0' && !savedGroup && !selected.evidence.some(item => item.status === 'confirmed'));
+  // A missing confirmed link in the projection does NOT mean the actual bank
+  // movement is unreconciled: legacy matching may already have closed it.
+  const canSubmitGroup = Boolean(selected && selected.bankStatus === 'UNRECONCILED' && comparison.length &&
+    comparison.every(item => item.documentId !== null && !confirmedDocumentLinks.has(item.documentId)) &&
+    !historicalEvidenceUnavailable && comparedAmounts?.remaining === '0' &&
+    !savedGroup && existingConfirmed.length === 0 && !selected.evidence.some(item => item.status === 'confirmed'));
+
+  function confirmationFailureMessage(reason: DocumentSetReadinessCode | 'INVALID_SELECTION' | 'UNAVAILABLE' | 'STORAGE_DISABLED'): string {
+    switch (reason) {
+      case 'BANK_NOT_FOUND': return t.groupInspectBankMissing;
+      case 'BANK_ALREADY_RECONCILED':
+      case 'EXISTING_LINK': return t.groupInspectAlreadyReconciled;
+      case 'PAYMENT_LINK':
+      case 'BANK_ALLOCATED': return t.groupInspectOtherClaim;
+      case 'DOCUMENT_NOT_FOUND': return t.groupInspectDocumentMissing;
+      case 'DOCUMENT_ALREADY_LINKED': return t.groupInspectDocumentLinked;
+      case 'DOCUMENT_NEEDS_REVIEW': return t.groupInspectNeedsReview;
+      case 'AMOUNT_MISMATCH': return t.groupInspectAmountMismatch;
+      case 'STORAGE_DISABLED': return t.groupStorageDisabled;
+      case 'UNAVAILABLE': return t.groupSaveFailed;
+      case 'INVALID_SELECTION': return t.groupLegacyCannotConfirm;
+      default: return t.groupSaveFailed;
+    }
+  }
 
   function confirmGroup() {
-    if (!selected || !groupReviewed[selected.id] || !canSubmitGroup || !documentSetCanConfirm || !documentSetConfirmAction) return;
+    if (!selected || !canSubmitGroup || !documentSetCanConfirm || !documentSetConfirmAction) return;
     const bankTransactionId = selected.id;
     const ids = comparison.map(item => item.documentId).filter((id): id is number => id !== null);
     setGroupMessage(null);
     startGroupAction(async () => {
       try {
-        await documentSetConfirmAction(model.bankAccountId, bankTransactionId, ids);
-        setGroupReviewed(previous => ({ ...previous, [bankTransactionId]: false }));
+        // Exactly one intentional click. The server checks every condition again
+        // inside a SERIALIZABLE transaction before any link or audit is written.
+        const result = await documentSetConfirmAction(model.bankAccountId, bankTransactionId, ids);
+        if (!result.ok) {
+          setGroupMessage(confirmationFailureMessage(result.reason));
+          return;
+        }
         setComparisonByBank(previous => ({ ...previous, [bankTransactionId]: [] }));
+        setPreview(null);
+        setSourceKey(null);
+        transactionScroll.current?.scrollTo({ top: 0 });
         router.refresh();
       } catch (error) {
-        setGroupMessage(error instanceof Error ? error.message : t.groupSaveFailed);
+        setGroupMessage(t.groupSaveFailed);
       }
     });
   }
@@ -112,12 +167,36 @@ export default function VisualReconciliationWorkspace({ model, text: t, language
   const embeddedFileUrl = previewUrl && preview
     ? `/fylgiskjol/${preview.receiptId}/frumskjal/skra`
     : null;
+  // Open the proven original automatically on bank selection, but never infer
+  // an original from a mere merchant/amount search match. Closing stays closed.
+  const firstExistingOriginal = existingConfirmed.flatMap(group => group.documents)
+    .find(doc => !doc.sourceMissing && doc.receiptId !== null && doc.receiptId > 0);
+  const firstSavedOriginal = savedGroup?.documents.find(doc => doc.receiptId > 0);
+  const autoReceiptId = firstExistingOriginal?.receiptId ?? firstSavedOriginal?.receiptId ?? null;
+  const autoDocumentId = firstExistingOriginal?.documentId ?? firstSavedOriginal?.documentId ?? null;
+  useEffect(() => {
+    if (!documentPreviewEnabled || autoReceiptId === null || autoDocumentId === null) return;
+    setPreview(current => current ?? { receiptId: autoReceiptId, documentId: autoDocumentId });
+  }, [documentPreviewEnabled, selected?.id, autoReceiptId, autoDocumentId]);
   useEffect(() => {
     if (previewUrl) rightScroll.current?.scrollTo({ top: 0, behavior: 'smooth' });
   }, [previewUrl]);
   const panel = 'min-w-0 overflow-hidden rounded-xl border border-emerald-100 bg-white lg:flex lg:h-[calc(100dvh-18rem)] lg:min-h-[26rem] lg:flex-col';
   const heading = 'border-b border-emerald-100 p-4 text-base font-semibold lg:shrink-0';
   const rowStyle = 'mb-2 block w-full rounded-lg border p-3 text-left focus-visible:outline-2 focus-visible:outline-teal-700';
+  function transactionButton(row: VisualModel['transactions'][number]) {
+    return <button key={row.id} type="button" aria-pressed={selected?.id === row.id}
+      className={`${rowStyle} ${selected?.id === row.id ? 'border-teal-700 bg-emerald-50' : 'border-slate-200 bg-white'}`}
+      onClick={() => { setSelectedId(row.id); setSourceKey(null); setPreview(null); setVoidReason(''); setGroupMessage(null); }}>
+      <small className="block">#{row.id} · {date(row.date)}</small>
+      <strong className="block break-words">{row.text}</strong>
+      <span className="block">{amount(row.amount)}</span>
+      {row.bankStatus === 'RECONCILED' && <span className="mt-2 inline-block rounded bg-blue-100 px-2 py-1 text-xs font-semibold text-blue-900">{t.bankAlreadyReconciledBadge}</span>}
+      {existingConfirmedReconciliations.some(item => item.bankTransactionId === row.id) && <span className="ml-1 mt-2 inline-block rounded bg-emerald-100 px-2 py-1 text-xs font-semibold text-emerald-900">{t.existingConfirmedBadge} #{existingConfirmedReconciliations.find(item => item.bankTransactionId === row.id)?.id}</span>}
+      {row.evidence.some(item => item.status === 'confirmed') && <span data-testid={`confirmed-bank-${row.id}`} className="mt-2 inline-block rounded bg-emerald-100 px-2 py-1 text-xs">{t.confirmed}</span>}
+      {documentSets.some(group => group.bankTransactionId === row.id && group.status === 'CONFIRMED') && <span className="mt-2 inline-block rounded bg-emerald-100 px-2 py-1 text-xs">{t.groupSaved}</span>}
+    </button>;
+  }
   function openDocument(receiptId: number, documentId: number | null) {
     if (Number.isSafeInteger(receiptId) && receiptId > 0) setPreview({ receiptId, documentId });
   }
@@ -125,7 +204,11 @@ export default function VisualReconciliationWorkspace({ model, text: t, language
     if (!selected) return;
     const bankId = selected.id;
     const key = `${item.receiptId}:${item.documentId ?? 'legacy'}`;
-    setGroupReviewed(old => ({ ...old, [bankId]: false }));
+    const wasSelected = (comparisonByBank[bankId] ?? []).some(row =>
+      `${row.receiptId}:${row.documentId ?? 'legacy'}` === key);
+    // Previously confirmed documents may be removed from a stale draft but
+    // cannot be added as if they were fresh/unlinked documents.
+    if (!wasSelected && item.documentId !== null && confirmedDocumentLinks.has(item.documentId)) return;
     setGroupMessage(null);
     setComparisonByBank(previous => {
       const old = previous[bankId] ?? [];
@@ -173,16 +256,35 @@ export default function VisualReconciliationWorkspace({ model, text: t, language
     <div className="grid items-start gap-4 lg:grid-cols-[minmax(200px,.8fr)_minmax(240px,1fr)_minmax(300px,1.2fr)]">
       <section className={panel} aria-label={t.transactions}>
         <h2 className={heading}>{t.transactions}</h2>
-        <div className="max-h-[65vh] overflow-y-auto p-3 lg:min-h-0 lg:max-h-none lg:flex-1 lg:overscroll-contain" tabIndex={0}>
-          {rows.map(row => <button key={row.id} type="button" aria-pressed={selected?.id === row.id}
-            className={`${rowStyle} ${selected?.id === row.id ? 'border-teal-700 bg-emerald-50' : 'border-slate-200 bg-white'}`}
-            onClick={() => { setSelectedId(row.id); setSourceKey(null); setPreview(null); setVoidReason(''); setGroupMessage(null); }}>
-            <small className="block">#{row.id} · {date(row.date)}</small>
-            <strong className="block break-words">{row.text}</strong>
-            <span className="block">{amount(row.amount)}</span>
-            {row.evidence.some(item => item.status === 'confirmed') && <span data-testid={`confirmed-bank-${row.id}`} className="mt-2 inline-block rounded bg-emerald-100 px-2 py-1 text-xs">{t.confirmed}</span>}
-            {documentSets.some(group => group.bankTransactionId === row.id && group.status === 'CONFIRMED') && <span className="mt-2 inline-block rounded bg-emerald-100 px-2 py-1 text-xs">{t.groupSaved}</span>}
-          </button>)}
+        <div ref={transactionScroll} className="max-h-[65vh] overflow-y-auto p-3 lg:min-h-0 lg:max-h-none lg:flex-1 lg:overscroll-contain" tabIndex={0}>
+          <p className="mb-2 text-xs font-semibold text-slate-600" data-testid="pending-transaction-count">
+            {t.pendingTransactions} ({queue.pending.length})
+          </p>
+          {queue.pending.map(row => transactionButton(row))}
+          {!queue.pending.length && <p className="mb-3 text-sm text-slate-600">{t.noPendingTransactions}</p>}
+          {queue.completed.length > 0 && <section className="mt-3 border-t border-slate-200 pt-3" data-testid="completed-transactions">
+            {query.trim().length > 0 ? <p className="mb-2 text-xs font-semibold text-slate-600">
+              {t.completedTransactions} ({queue.completed.length})
+            </p> : <button type="button" aria-expanded={showCompleted} aria-controls="visual-completed-transactions"
+              className="mb-2 flex w-full items-center justify-between gap-2 rounded-md border border-slate-300 bg-slate-50 px-3 py-2 text-left text-sm font-semibold"
+              onClick={() => {
+                if (showCompleted) {
+                  // Closing history must not leave the right pane on a different,
+                  // now-hidden bank transaction's original document.
+                  setSelectedId(queue.pending[0]?.id ?? null);
+                  setPreview(null);
+                  setSourceKey(null);
+                  setGroupMessage(null);
+                }
+                setShowCompleted(old => !old);
+              }}>
+              <span>{showCompleted ? t.hideCompleted : t.showCompleted} ({queue.completed.length})</span>
+              <span aria-hidden="true">{showCompleted ? '▴' : '▾'}</span>
+            </button>}
+            {revealCompleted && <div id="visual-completed-transactions">
+              {queue.completed.map(row => transactionButton(row))}
+            </div>}
+          </section>}
           {!rows.length && <p>{t.empty}</p>}
         </div>
       </section>
@@ -192,6 +294,35 @@ export default function VisualReconciliationWorkspace({ model, text: t, language
           <h3 className="break-words font-semibold">{selected.text}</h3>
           <p className="my-4 break-words text-2xl font-bold">{amount(selected.amount)}</p>
           <dl><dt>{t.date}</dt><dd>{date(selected.date)}</dd><dt className="mt-3">BankTransaction</dt><dd>#{selected.id}</dd></dl>
+          <p className="mt-3 text-sm"><strong>{t.bankStatusLabel}:</strong> {selected.bankStatus === 'RECONCILED'
+            ? t.bankAlreadyReconciledBadge : selected.bankStatus === 'UNRECONCILED' ? t.bankUnreconciledBadge : t.bankStatusUnknown}</p>
+          {existingConfirmed.map(group => <section key={group.id} data-testid={`existing-reconciliation-${group.id}`}
+            className="mt-3 rounded-lg border border-emerald-300 bg-emerald-50 p-3 text-sm">
+            <h4 className="font-bold text-emerald-950">{t.existingConfirmedTitle} #{group.id}</h4>
+            <p className="mt-1 text-xs text-emerald-900">{t.existingConfirmedDescription}</p>
+            <p className="mt-2 text-xs">{t.existingConfirmedAt}: {date(group.confirmedAt)}
+              {group.confirmedByUserId !== null ? ` · ${t.groupConfirmedBy} #${group.confirmedByUserId}` : ''}</p>
+            {group.documents.length ? <ul className="mt-3 space-y-2">
+              {group.documents.map(document => <li key={document.documentId}
+                className="rounded border border-emerald-200 bg-white p-2">
+                <strong className="block break-words">{document.merchantName || t.document} #{document.documentId}</strong>
+                <p>#{document.documentId}{document.amount !== null ? ` · ${amount(document.amount)}` : ''}</p>
+                {document.sourceMissing ? <p className="mt-1 text-amber-800">{t.existingDocumentUnavailable}</p>
+                  : documentPreviewEnabled && document.receiptId !== null && <button type="button"
+                    className="mt-1 font-semibold underline" onClick={() => openDocument(document.receiptId!, document.documentId)}>{t.openDocument}</button>}
+              </li>)}
+            </ul> : <p className="mt-2 text-amber-900">{t.existingNoDocument}</p>}
+          </section>)}
+          {historicalEvidenceUnavailable && selected.bankStatus === 'RECONCILED' && <p role="status"
+            className="mt-3 rounded border border-amber-300 bg-amber-50 p-3 text-sm">{t.existingEvidenceUnavailable}</p>}
+          {selected.bankStatus === 'RECONCILED' && <aside role="status" data-testid="legacy-bank-reconciled"
+            className="mt-3 rounded-lg border border-amber-300 bg-amber-50 p-3 text-sm text-amber-950">
+            <p className="font-semibold">{existingConfirmed.length || savedGroup ? t.bankAlreadyReconciledWithLink : t.bankAlreadyReconciledNotice}</p>
+            <a className="mt-2 inline-block underline"
+              href={`/banki/${model.bankAccountId}/afstemming?view=all#transaction-${selected.id}`}>{t.standard}</a>
+          </aside>}
+          {selected.bankStatus !== 'RECONCILED' && selected.bankStatus !== 'UNRECONCILED' &&
+            <p role="status" className="mt-3 rounded-lg border border-amber-200 bg-amber-50 p-3 text-sm text-amber-900">{t.bankStatusUnverifiedNotice}</p>}
           {savedGroup && <section className="mt-5 rounded-lg border border-emerald-300 bg-emerald-50 p-3" data-testid="confirmed-document-set">
             <h4 className="font-bold text-emerald-900">{t.groupSaved} #{savedGroup.id}</h4>
             <p className="mt-1 text-sm">{t.groupConfirmedBy} #{savedGroup.confirmedByUserId ?? '?'} · {savedGroup.confirmedAt ? date(savedGroup.confirmedAt) : t.unknown}</p>
@@ -235,6 +366,8 @@ export default function VisualReconciliationWorkspace({ model, text: t, language
               {comparison.map(item => <div key={`${item.receiptId}:${item.documentId ?? 'legacy'}`} className="rounded-md border border-slate-200 bg-white p-2 text-sm">
                 <strong className="block break-words">{item.title}</strong>
                 <p className="my-1">#{item.documentId ?? item.receiptId} · {date(item.date)} · {amount(item.amount)}</p>
+                {item.documentId !== null && confirmedDocumentLinks.has(item.documentId) &&
+                  <p className="my-1 text-xs font-semibold text-emerald-900">{t.alreadyLinked}: {confirmedDocumentLinks.get(item.documentId)?.map(link => `${t.reconciliation} #${link.reconciliationId}`).join(' / ')}</p>}
                 <div className="flex flex-wrap gap-2">
                   {documentPreviewEnabled && <button type="button" className="rounded border border-teal-700 px-2 py-1 text-xs font-semibold" onClick={() => openDocument(item.receiptId, item.documentId)}>{t.openDocument}</button>}
                   <button type="button" className="rounded border border-slate-300 px-2 py-1 text-xs" onClick={() => toggleComparison(item)}>{t.archiveRemoveCompare}</button>
@@ -252,12 +385,8 @@ export default function VisualReconciliationWorkspace({ model, text: t, language
               {!documentSetCanConfirm && <p className="mb-2 text-xs font-semibold text-amber-900">{t.groupStorageDisabled}</p>}
               {comparison.some(item => item.documentId === null) && <p className="mb-2 text-xs text-amber-900">{t.groupLegacyCannotConfirm}</p>}
               {selected.evidence.some(item => item.status === 'confirmed') && <p className="mb-2 text-xs text-amber-900">{t.groupExistingLink}</p>}
-              <label className="flex items-start gap-2 text-xs">
-                <input type="checkbox" checked={groupReviewed[selected.id] ?? false} disabled={!canSubmitGroup || !documentSetCanConfirm || groupPending}
-                  onChange={event => setGroupReviewed(old => ({ ...old, [selected.id]: event.target.checked }))} />
-                <span>{t.groupReviewedStatement}</span>
-              </label>
-              <button type="button" disabled={!canSubmitGroup || !groupReviewed[selected.id] || !documentSetCanConfirm || groupPending}
+              {selected.bankStatus !== 'UNRECONCILED' && <p className="mb-2 text-xs font-semibold text-amber-900">{t.bankStatusBlocksNewSet}</p>}
+              <button type="button" disabled={!canSubmitGroup || !documentSetCanConfirm || groupPending}
                 className="mt-3 rounded bg-teal-800 px-3 py-2 text-sm font-semibold text-white disabled:opacity-45" onClick={confirmGroup}>
                 {groupPending ? t.groupSaving : t.groupConfirmButton}
               </button>
@@ -286,7 +415,10 @@ export default function VisualReconciliationWorkspace({ model, text: t, language
         <div ref={rightScroll} className="lg:min-h-0 lg:flex-1 lg:overflow-y-auto lg:overscroll-contain" tabIndex={0}>
         {previewUrl && <section data-testid="document-preview" className="border-t border-emerald-100 p-3">
           <div className="flex flex-wrap items-center justify-between gap-3">
-            <h3 className="font-semibold">{t.openDocument} #{preview?.documentId ?? preview?.receiptId}</h3>
+            <h3 className="font-semibold">{t.openDocument} #{preview?.documentId ?? preview?.receiptId}
+              {preview?.documentId !== null && preview?.documentId !== undefined && confirmedDocumentLinks.has(preview.documentId) &&
+                <span className="ml-2 inline-block rounded bg-emerald-100 px-2 py-1 text-xs font-semibold text-emerald-900">{t.alreadyLinked}</span>}
+            </h3>
             <button type="button" className="underline" onClick={() => setPreview(null)}>{t.close}</button>
           </div>
           <p className="my-2 text-sm">{t.security}</p>
@@ -300,14 +432,44 @@ export default function VisualReconciliationWorkspace({ model, text: t, language
           />
         </section>}
         <div className="max-h-[45vh] overflow-auto p-3 lg:max-h-none lg:overflow-visible">
-          {selected?.evidence.map(item => <button key={item.key} type="button" aria-pressed={item.key === evidence?.key}
-            className={`${rowStyle} ${item.key === evidence?.key ? 'border-teal-700 bg-emerald-50' : 'border-slate-200'}`}
-            onClick={() => { setSourceKey(item.key); setPreview(null); }}>
-            <span className={`inline-block rounded px-2 py-1 text-xs ${item.status === 'confirmed' ? 'bg-emerald-100' : 'bg-amber-100'}`}>{t[item.status]}</span>
-            <strong className="mt-2 block break-words">{item.title || t[item.kind]}</strong>
-            <small>{t[item.kind]} #{item.sourceId} · {amount(item.amount, item.currency)}</small>
-          </button>)}
-          {!selected?.evidence.length && <p>{t.noSources}</p>}
+          {(existingConfirmed.length > 0 || savedGroup) && <section data-testid="linked-sources-confirmed" className="mb-3 rounded-lg border border-emerald-300 bg-emerald-50 p-3 text-sm">
+            <h3 className="font-bold text-emerald-950">{t.confirmedSourcesTitle}</h3>
+            {existingConfirmed.map(group => <article key={`existing-${group.id}`} className="mt-2 rounded-md border border-emerald-200 bg-white p-2">
+              <p className="font-semibold">{t.existingConfirmedTitle} #{group.id}</p>
+              <p className="text-xs">{t.existingConfirmedAt}: {date(group.confirmedAt)}{group.confirmedByUserId !== null ? ` · ${t.groupConfirmedBy} #${group.confirmedByUserId}` : ''}</p>
+              {group.documents.map(doc => <div key={doc.documentId} className="mt-2 border-t border-emerald-100 pt-2">
+                <p className="font-semibold">{t.document} #{doc.documentId} · {t.alreadyLinked}</p>
+                {doc.merchantName && <p>{doc.merchantName}</p>}
+                {doc.amount !== null && <p>{amount(doc.amount)}</p>}
+                {doc.sourceMissing ? <p className="text-amber-900">{t.existingDocumentUnavailable}</p>
+                  : documentPreviewEnabled && doc.receiptId !== null && <button type="button" className="font-semibold underline" onClick={() => openDocument(doc.receiptId!, doc.documentId)}>{t.openDocument}</button>}
+              </div>)}
+              {!group.documents.length && <p className="text-amber-900">{t.existingNoDocument}</p>}
+            </article>)}
+            {savedGroup && <article className="mt-2 rounded-md border border-emerald-200 bg-white p-2">
+              <p className="font-semibold">{t.groupSaved} #{savedGroup.id}</p>
+              {savedGroup.documents.map(doc => <div key={doc.documentId} className="mt-2 border-t border-emerald-100 pt-2">
+                <p>{t.document} #{doc.documentId} · {t.alreadyLinked}</p>
+                {documentPreviewEnabled && doc.receiptId > 0 && <button type="button" className="underline" onClick={() => openDocument(doc.receiptId, doc.documentId)}>{t.openDocument}</button>}
+              </div>)}
+            </article>}
+          </section>}
+          {selected?.evidence.map(item => {
+            const confirmedForDocument = item.kind === 'document' ? confirmedDocumentLinks.get(item.sourceId) ?? [] : [];
+            return <button key={item.key} type="button" aria-pressed={item.key === evidence?.key}
+              className={`${rowStyle} ${item.key === evidence?.key ? 'border-teal-700 bg-emerald-50' : 'border-slate-200'}`}
+              onClick={() => { setSourceKey(item.key); setPreview(null); }}>
+              <span className={`inline-block rounded px-2 py-1 text-xs ${item.status === 'confirmed' || confirmedForDocument.length ? 'bg-emerald-100' : 'bg-amber-100'}`}>
+                {confirmedForDocument.length ? t.alreadyLinked : t[item.status]}
+              </span>
+              <strong className="mt-2 block break-words">{item.title || t[item.kind]}</strong>
+              <small>{t[item.kind]} #{item.sourceId} · {amount(item.amount, item.currency)}</small>
+              {confirmedForDocument.length > 0 && <small className="mt-1 block">
+                {confirmedForDocument.map(link => `${t.reconciliation} #${link.reconciliationId} · ${t.bankTransactionShort} #${link.bankTransactionId}`).join(' / ')}
+              </small>}
+            </button>;
+          })}
+          {!selected?.evidence.length && !existingConfirmed.length && !savedGroup && <p>{t.noSources}</p>}
           {evidence && <article className="mt-4 border-t pt-4">
             <h3 className="font-semibold">{t[evidence.kind]} #{evidence.sourceId}</h3>
             <dl className="my-3 space-y-1">
@@ -350,9 +512,11 @@ export default function VisualReconciliationWorkspace({ model, text: t, language
               : <>
                 <p className="mb-2 text-sm font-semibold">{t.archiveResults}: {documentResults.length} · “{documentSearchTerm}”</p>
                 <p className="mb-2 text-xs text-slate-600">{t.archiveNotLinked}</p>
+                {historicalEvidenceUnavailable && <p role="status" className="mb-2 rounded border border-amber-300 bg-amber-50 p-2 text-xs font-semibold text-amber-900">{t.existingEvidenceUnavailable}</p>}
                 <div className="max-h-[40vh] overflow-auto lg:max-h-none lg:overflow-visible">
                   {documentResults.map(item => {
                     const isSelected = comparison.some(row => row.receiptId === item.receiptId && row.documentId === item.documentId);
+                    const alreadyLinked = item.documentId === null ? [] : confirmedDocumentLinks.get(item.documentId) ?? [];
                     return <div key={`${item.receiptId}:${item.documentId ?? 'legacy'}`}
                       className="mb-2 rounded-lg border border-slate-200 bg-white p-2">
                       <button type="button" aria-pressed={preview?.receiptId === item.receiptId && preview.documentId === item.documentId}
@@ -363,11 +527,16 @@ export default function VisualReconciliationWorkspace({ model, text: t, language
                         {item.reference && <small className="block break-all">{t.reference}: {item.reference}</small>}
                         {item.voucherNumber !== null && <small className="block">{t.archiveVoucher}: {item.voucherNumber}</small>}
                       </button>
-                      <button type="button" aria-pressed={isSelected}
+                      {alreadyLinked.length > 0 && <div data-testid={`archive-confirmed-${item.documentId}`} className="mt-1 rounded bg-emerald-50 px-2 py-1 text-xs font-semibold text-emerald-900">
+                        {t.alreadyLinked}: {alreadyLinked.map(link => `${t.reconciliation} #${link.reconciliationId} · ${t.bankTransactionShort} #${link.bankTransactionId}`).join(' / ')}
+                        {alreadyLinked.some(link => link.bankTransactionId !== selected?.id) && <p className="mt-1 text-amber-900">{t.linkedToAnotherBank}</p>}
+                      </div>}
+                      {alreadyLinked.length === 0 ? <button type="button" aria-pressed={isSelected}
                         className="mt-1 rounded-md border border-teal-700 px-2 py-1 text-xs font-semibold"
                         onClick={() => toggleComparison(item)}>
                         {isSelected ? t.archiveRemoveCompare : t.archiveAddCompare}
-                      </button>
+                      </button> : isSelected && <button type="button" className="mt-1 rounded border border-slate-300 px-2 py-1 text-xs"
+                        onClick={() => toggleComparison(item)}>{t.archiveRemoveCompare}</button>}
                     </div>;
                   })}
                   {!documentResults.length && <p className="text-sm">{t.archiveNoResults}</p>}
