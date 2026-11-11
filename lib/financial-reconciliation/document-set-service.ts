@@ -2,6 +2,7 @@ import 'server-only';
 
 import { Prisma } from '@/app/generated/prisma/client';
 import { prisma } from '@/lib/prisma';
+import { hasVerifiedCaTlsConfigWithoutUrlMode } from '@/lib/core/verified-database-tls';
 
 /**
  * Human-confirmed one bank transfer -> many already-reviewed source documents.
@@ -89,6 +90,19 @@ export type DocumentSetReadinessCode =
   | 'EXISTING_LINK' | 'PAYMENT_LINK' | 'BANK_ALLOCATED'
   | 'DOCUMENT_NOT_FOUND' | 'DOCUMENT_ALREADY_LINKED'
   | 'DOCUMENT_NEEDS_REVIEW' | 'AMOUNT_MISMATCH';
+
+export async function assertProductionDatabaseTls(tx: Prisma.TransactionClient): Promise<void> {
+  if (process.env.VERCEL_ENV !== 'production') return;
+
+  const sessions = await tx.$queryRaw<Array<{ ssl: boolean }>>`
+    SELECT ssl
+    FROM pg_catalog.pg_stat_ssl
+    WHERE pid = pg_catalog.pg_backend_pid()
+  `;
+  if (sessions.length !== 1 || sessions[0]?.ssl !== true) {
+    throw new Error('PRODUCTION_DATABASE_TLS_UNVERIFIED');
+  }
+}
 
 export async function inspectVisualDocumentSet(input: {
   companyId: number; bankAccountId: number; bankTransactionId: number;
@@ -191,9 +205,10 @@ const SUPABASE_REQUIRED_TLS_MODES = ['require', 'verify-ca', 'verify-full'];
 function isSupabaseConnection(
   conn: NonNullable<ReturnType<typeof parseDatabaseConnection>>,
   ref: string, login: 'gloggt_preview_runtime' | 'postgres',
+  verifiedCaWithoutUrlMode = false,
 ): boolean {
   if (conn.database !== 'postgres' ||
-      !SUPABASE_REQUIRED_TLS_MODES.includes(conn.sslmode ?? '')) return false;
+      !(SUPABASE_REQUIRED_TLS_MODES.includes(conn.sslmode ?? '') || verifiedCaWithoutUrlMode)) return false;
   return (conn.host === `db.${ref}.supabase.co` && conn.username === login &&
             (!conn.port || conn.port === '5432')) ||
     (SUPABASE_SHARED_POOLER_HOST.test(conn.host) &&
@@ -239,9 +254,12 @@ export const documentSetStorageState = (
       return 'PRODUCTION_SCOPE_MISMATCH';
     if (env.NEXT_PUBLIC_SUPABASE_URL?.replace(/\/$/, '') !== `https://${productionRef}.supabase.co`)
       return 'PRODUCTION_SUPABASE_PROJECT_MISMATCH';
-    if (!isSupabaseConnection(conn, productionRef, 'postgres')) {
+    // An explicit verified CA policy can replace a *missing* URL sslmode,
+    // never a disabled/weaker mode. prisma.ts must use the same helper.
+    const verifiedCaWithoutUrlMode = hasVerifiedCaTlsConfigWithoutUrlMode(env);
+    if (!isSupabaseConnection(conn, productionRef, 'postgres', verifiedCaWithoutUrlMode)) {
       // Non-secret diagnostic, not a relaxation: confirmation still fails closed.
-      if (!SUPABASE_REQUIRED_TLS_MODES.includes(conn.sslmode ?? ''))
+      if (!SUPABASE_REQUIRED_TLS_MODES.includes(conn.sslmode ?? '') && !verifiedCaWithoutUrlMode)
         return 'PRODUCTION_DATABASE_TLS_REQUIRED';
       if (conn.database !== 'postgres') return 'PRODUCTION_DATABASE_NAME_NOT_APPROVED';
       const directHost = conn.host === `db.${productionRef}.supabase.co`;
@@ -371,6 +389,7 @@ export async function confirmVisualDocumentSet(input: ConfirmationInput) {
   for (let attempt = 0; ; attempt++) {
     try {
       return await prisma.$transaction(async tx => {
+        await assertProductionDatabaseTls(tx);
         const bank = await tx.bankTransaction.findFirst({
           where: {
             id: input.bankTransactionId, bankAccountId: input.bankAccountId,
@@ -514,6 +533,7 @@ export async function voidVisualDocumentSet(input: {
   for (let attempt = 0; ; attempt++) {
     try {
       return await prisma.$transaction(async tx => {
+        await assertProductionDatabaseTls(tx);
         const group = await tx.financialReconciliation.findFirst({
           where: {
             id: input.reconciliationId, companyId: input.companyId,

@@ -13,6 +13,15 @@ const transpiled = ts.transpileModule(source, {
   reportDiagnostics: true,
 });
 assert.equal(transpiled.diagnostics?.length ?? 0, 0, 'Source TypeScript must be syntactically valid');
+// Transpile the real TLS helper for this database-free VM test.
+// Never replace it with a constant true stub: the policy must be exercised.
+const tlsSource = fs.readFileSync(path.join(__dirname, '../lib/core/verified-database-tls.ts'), 'utf8');
+const tlsTranspiled = ts.transpileModule(tlsSource, {
+  fileName: 'verified-database-tls.ts',
+  compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022 },
+});
+const tlsExports = {};
+new Function('exports', 'require', tlsTranspiled.outputText)(tlsExports, require);
 const exportsObj = {};
 const db = {
   bankAccount: { findFirst: async () => ({ id: 2 }) },
@@ -29,6 +38,7 @@ const sandbox = {
     if (name === 'server-only') return {};
     if (name === '@/app/generated/prisma/client') return { Prisma: {} };
     if (name === '@/lib/prisma') return { prisma: db };
+    if (name === '@/lib/core/verified-database-tls') return tlsExports;
     throw Error(`Unexpected module: ${name}`);
   },
 };
@@ -151,6 +161,51 @@ test('safe lock diagnostic identifies rejection without leaking connection secre
   for (const result of ['READY', 'PRODUCTION_DATABASE_TLS_REQUIRED', 'PRODUCTION_SCOPE_MISMATCH']) {
     assert.equal(result.includes('TOP_SECRET'), false);
   }
+});
+
+test('Production writes require verified TLS on their PostgreSQL transaction', async t => {
+  const originalEnvironment = sandbox.process.env.VERCEL_ENV;
+  sandbox.process.env.VERCEL_ENV = 'production';
+  t.after(() => {
+    if (originalEnvironment === undefined) delete sandbox.process.env.VERCEL_ENV;
+    else sandbox.process.env.VERCEL_ENV = originalEnvironment;
+  });
+
+  const queryText = strings => strings.join('?');
+  const verify = rows => exportsObj.assertProductionDatabaseTls({
+    $queryRaw: async strings => {
+      assert.match(queryText(strings), /pg_catalog\.pg_stat_ssl/);
+      assert.match(queryText(strings), /pg_catalog\.pg_backend_pid\(\)/);
+      return rows;
+    },
+  });
+
+  await verify([{ ssl: true }]);
+  await assert.rejects(verify([{ ssl: false }]), /PRODUCTION_DATABASE_TLS_UNVERIFIED/);
+  await assert.rejects(verify([]), /PRODUCTION_DATABASE_TLS_UNVERIFIED/);
+  await assert.rejects(verify([{ ssl: null }]), /PRODUCTION_DATABASE_TLS_UNVERIFIED/);
+  await assert.rejects(exportsObj.assertProductionDatabaseTls({
+    $queryRaw: async () => { throw new Error('pg_stat_ssl unavailable'); },
+  }), /pg_stat_ssl unavailable/);
+});
+
+test('non-Production writes do not require the Production TLS catalog check', async t => {
+  const originalEnvironment = sandbox.process.env.VERCEL_ENV;
+  delete sandbox.process.env.VERCEL_ENV;
+  t.after(() => {
+    if (originalEnvironment !== undefined) sandbox.process.env.VERCEL_ENV = originalEnvironment;
+  });
+  await exportsObj.assertProductionDatabaseTls({
+    $queryRaw: async () => { throw new Error('unexpected catalog query'); },
+  });
+});
+
+test('TLS verification precedes business reads in both write transactions', () => {
+  const confirmBody = source.slice(source.indexOf('export async function confirmVisualDocumentSet'),
+    source.indexOf('export async function voidVisualDocumentSet'));
+  const voidBody = source.slice(source.indexOf('export async function voidVisualDocumentSet'));
+  assert.match(confirmBody, /prisma\.\$transaction\(async tx => \{\s*await assertProductionDatabaseTls\(tx\);\s*const bank/);
+  assert.match(voidBody, /prisma\.\$transaction\(async tx => \{\s*await assertProductionDatabaseTls\(tx\);\s*const group/);
 });
 
 test('local development requires the isolated flag, loopback and explicit test database name', () => {
