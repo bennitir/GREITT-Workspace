@@ -15,7 +15,8 @@ export type SavedFamilyTransfer = {
 async function familyContext() {
   const {companyId,access}=await requireActiveCompanyReadAccess();
   const {sessionUser,effectiveUser,sessionToken}=await getRequestAuthContext();
-  if(!access.canReconcileBookkeeping || !sessionUser || !sessionToken || sessionUser.id!==effectiveUser?.id) throw Error('FAMILY_ACCESS_DENIED');
+  if((access.role !== 'OWNER' && access.role !== 'ADMIN') ||
+    !access.canReconcileBookkeeping || !sessionUser || !sessionToken || sessionUser.id!==effectiveUser?.id) throw Error('FAMILY_ACCESS_DENIED');
   return {companyId,userId:sessionUser.id,sessionToken};
 }
 

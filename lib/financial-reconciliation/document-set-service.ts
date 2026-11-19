@@ -2,6 +2,9 @@ import 'server-only';
 
 import { Prisma } from '@/app/generated/prisma/client';
 import { prisma } from '@/lib/prisma';
+import { assertVerifiedBankAllocationContract } from '@/lib/financial-reconciliation/bank-allocation-contract';
+import { hasVerifiedCaTlsConfigWithoutUrlMode } from '@/lib/core/verified-database-tls';
+import { assertVerifiedDocumentSetTls } from '@/lib/core/verified-document-set-database-tls';
 
 /**
  * Human-confirmed one bank transfer -> many already-reviewed source documents.
@@ -90,6 +93,12 @@ export type DocumentSetReadinessCode =
   | 'DOCUMENT_NOT_FOUND' | 'DOCUMENT_ALREADY_LINKED'
   | 'DOCUMENT_NEEDS_REVIEW' | 'AMOUNT_MISMATCH';
 
+/** Same policy as the existing own-account-transfer service: verify Node's TLS
+ * handshake, not a pooler's unrelated PostgreSQL backend hop. */
+export async function assertProductionDatabaseTls(tx: Prisma.TransactionClient): Promise<void> {
+  await assertVerifiedDocumentSetTls(tx);
+}
+
 export async function inspectVisualDocumentSet(input: {
   companyId: number; bankAccountId: number; bankTransactionId: number;
   documentIds: readonly number[];
@@ -115,7 +124,7 @@ export async function inspectVisualDocumentSet(input: {
     });
     if (existing) return 'EXISTING_LINK';
     const payment = await tx.financialEventPayment.findFirst({
-      where: { bankTransactionId: bank.id }, select: { id: true },
+      where: { bankTransactionId: bank.id, status: 'CONFIRMED' }, select: { id: true },
     });
     if (payment) return 'PAYMENT_LINK';
     const table = await tx.$queryRaw<Array<{ present: boolean }>>`
@@ -123,7 +132,7 @@ export async function inspectVisualDocumentSet(input: {
     if (table[0]?.present) {
       const claims = await tx.$queryRaw<Array<{ bankTransactionId: number }>>`
         SELECT "bankTransactionId" FROM public."BankAllocationClaim"
-        WHERE "bankTransactionId" = ${bank.id}`;
+        WHERE "bankTransactionId" = ${bank.id} AND "state" = 'ACTIVE'`;
       if (claims.length) return 'BANK_ALLOCATED';
     }
     const claimed = await tx.financialReconciliationParticipant.findFirst({
@@ -191,9 +200,10 @@ const SUPABASE_REQUIRED_TLS_MODES = ['require', 'verify-ca', 'verify-full'];
 function isSupabaseConnection(
   conn: NonNullable<ReturnType<typeof parseDatabaseConnection>>,
   ref: string, login: 'gloggt_preview_runtime' | 'postgres',
+  verifiedCaWithoutUrlMode = false,
 ): boolean {
   if (conn.database !== 'postgres' ||
-      !SUPABASE_REQUIRED_TLS_MODES.includes(conn.sslmode ?? '')) return false;
+      !(SUPABASE_REQUIRED_TLS_MODES.includes(conn.sslmode ?? '') || verifiedCaWithoutUrlMode)) return false;
   return (conn.host === `db.${ref}.supabase.co` && conn.username === login &&
             (!conn.port || conn.port === '5432')) ||
     (SUPABASE_SHARED_POOLER_HOST.test(conn.host) &&
@@ -239,9 +249,12 @@ export const documentSetStorageState = (
       return 'PRODUCTION_SCOPE_MISMATCH';
     if (env.NEXT_PUBLIC_SUPABASE_URL?.replace(/\/$/, '') !== `https://${productionRef}.supabase.co`)
       return 'PRODUCTION_SUPABASE_PROJECT_MISMATCH';
-    if (!isSupabaseConnection(conn, productionRef, 'postgres')) {
+    // An explicit verified CA policy can replace a *missing* URL sslmode,
+    // never a disabled/weaker mode. prisma.ts must use the same helper.
+    const verifiedCaWithoutUrlMode = hasVerifiedCaTlsConfigWithoutUrlMode(env);
+    if (!isSupabaseConnection(conn, productionRef, 'postgres', verifiedCaWithoutUrlMode)) {
       // Non-secret diagnostic, not a relaxation: confirmation still fails closed.
-      if (!SUPABASE_REQUIRED_TLS_MODES.includes(conn.sslmode ?? ''))
+      if (!SUPABASE_REQUIRED_TLS_MODES.includes(conn.sslmode ?? '') && !verifiedCaWithoutUrlMode)
         return 'PRODUCTION_DATABASE_TLS_REQUIRED';
       if (conn.database !== 'postgres') return 'PRODUCTION_DATABASE_NAME_NOT_APPROVED';
       const directHost = conn.host === `db.${productionRef}.supabase.co`;
@@ -371,6 +384,10 @@ export async function confirmVisualDocumentSet(input: ConfirmationInput) {
   for (let attempt = 0; ; attempt++) {
     try {
       return await prisma.$transaction(async tx => {
+        await assertProductionDatabaseTls(tx);
+        // Existing explicit Production gate, with a second DB-side guard contract.
+        // No change to local tests or unrelated reconciliation services.
+        if (process.env.VERCEL_ENV === 'production') await assertVerifiedBankAllocationContract(tx);
         const bank = await tx.bankTransaction.findFirst({
           where: {
             id: input.bankTransactionId, bankAccountId: input.bankAccountId,
@@ -398,8 +415,10 @@ export async function confirmVisualDocumentSet(input: ConfirmationInput) {
         }
         if (bank.status !== 'UNRECONCILED') throw new Error('SAMSTAEDA_BANKI_THEGAR_AFGREIDDUR');
 
-        const [documents, documentClaims, payment] = await Promise.all([
-          tx.aiDetectedDocument.findMany({
+        // Prisma's interactive transaction shares one pg connection. Execute these
+        // independent checks sequentially: concurrent client.query() calls on that
+        // connection are deprecated and may be rejected in newer pg versions.
+        const documents = await tx.aiDetectedDocument.findMany({
             where: { id: { in: documentIds }, receipt: { companyId: input.companyId } },
             select: {
               id: true, receiptId: true, merchantName: true, receiptNumber: true, totalAmount: true,
@@ -408,15 +427,16 @@ export async function confirmVisualDocumentSet(input: ConfirmationInput) {
               receipt: { select: { description: true, fileHash: true } },
               financialEventLinks: { where: { role: 'PRIMARY' }, select: { id: true } },
             },
-          }),
-          tx.financialReconciliationParticipant.findMany({
+          });
+        const documentClaims = await tx.financialReconciliationParticipant.findMany({
             where: {
               sourceType: DOCUMENT_SOURCE, sourceKey: { in: documentIds.map(String) },
               reconciliation: { companyId: input.companyId, status: 'CONFIRMED' },
             }, select: { sourceKey: true },
-          }),
-          tx.financialEventPayment.findFirst({ where: { bankTransactionId: bank.id }, select: { id: true } }),
-        ]);
+          });
+        const payment = await tx.financialEventPayment.findFirst({
+          where: { bankTransactionId: bank.id, status: 'CONFIRMED' }, select: { id: true },
+        });
         if (payment) throw new Error('SAMSTAEDA_BANKI_THEGAR_GREIDSLA');
         // A family transfer owns the same movement through BankAllocationClaim.
         // Refuse the confirmation if we cannot prove that no such claim exists.
@@ -425,7 +445,7 @@ export async function confirmVisualDocumentSet(input: ConfirmationInput) {
         if (table[0]?.present) {
           const claims = await tx.$queryRaw<Array<{ bankTransactionId: number }>>`
             SELECT "bankTransactionId" FROM public."BankAllocationClaim"
-            WHERE "bankTransactionId" = ${bank.id}`;
+            WHERE "bankTransactionId" = ${bank.id} AND "state" = 'ACTIVE'`;
           if (claims.length) throw new Error('SAMSTAEDA_BANKI_THEGAR_UTHLUTADUR');
         }
         if (documents.length !== documentIds.length) throw new Error('SAMSTAEDA_SKJAL_EKKI_FUNDID');
@@ -514,6 +534,10 @@ export async function voidVisualDocumentSet(input: {
   for (let attempt = 0; ; attempt++) {
     try {
       return await prisma.$transaction(async tx => {
+        await assertProductionDatabaseTls(tx);
+        // Existing explicit Production gate, with a second DB-side guard contract.
+        // No change to local tests or unrelated reconciliation services.
+        if (process.env.VERCEL_ENV === 'production') await assertVerifiedBankAllocationContract(tx);
         const group = await tx.financialReconciliation.findFirst({
           where: {
             id: input.reconciliationId, companyId: input.companyId,
@@ -531,14 +555,23 @@ export async function voidVisualDocumentSet(input: {
         const table = await tx.$queryRaw<Array<{ present: boolean }>>`
           SELECT to_regclass('public."BankAllocationClaim"') IS NOT NULL AS present`;
         if (table[0]?.present) {
-          const claims = await tx.$queryRaw<Array<{ bankTransactionId: number }>>`
-            SELECT "bankTransactionId" FROM public."BankAllocationClaim"
+          // A confirmed document set owns its own sticky DB claim. That same
+          // claim must NOT prevent voiding its owner. Other claims still block.
+          const claims = await tx.$queryRaw<Array<{
+            bankTransactionId: number; kind: string; ownerFamily: string; ownerKey: string;
+          }>>`
+            SELECT "bankTransactionId", kind, "ownerFamily", "ownerKey"
+            FROM public."BankAllocationClaim"
             WHERE "bankTransactionId" = ${bank.id}`;
-          if (claims.length) throw new Error('SAMSTAEDA_BANKI_THEGAR_UTHLUTADUR');
+          if (claims.some(claim => claim.kind !== 'ORDINARY' ||
+              claim.ownerFamily !== 'RECONCILIATION' ||
+              claim.ownerKey !== String(group.id))) {
+            throw new Error('SAMSTAEDA_BANKI_THEGAR_UTHLUTADUR');
+          }
         }
         // A subsequent payment event must not be detached by voiding this set.
         const subsequentPayment = await tx.financialEventPayment.findFirst({
-          where: { bankTransactionId: bank.id }, select: { id: true },
+          where: { bankTransactionId: bank.id, status: 'CONFIRMED' }, select: { id: true },
         });
         if (subsequentPayment) throw new Error('SAMSTAEDA_BANKI_THEGAR_GREIDSLA');
         const other = await tx.financialReconciliationParticipant.findFirst({

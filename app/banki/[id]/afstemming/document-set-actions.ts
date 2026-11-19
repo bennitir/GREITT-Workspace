@@ -6,7 +6,7 @@ import { requireActiveCompanyReadAccess } from '@/lib/core/company-read-access';
 import { getRequestAuthContext } from '@/lib/core/request-context';
 import {
   confirmVisualDocumentSet, voidVisualDocumentSet, documentSetStorageEnabled,
-  canonicalDocumentIds,
+  inspectVisualDocumentSet, canonicalDocumentIds,
 } from '@/lib/financial-reconciliation/document-set-service';
 
 async function authorizeVisualConfirmation() {
@@ -44,6 +44,27 @@ function safeConfirmationFailure(error: unknown): DocumentSetReadinessCode | 'IN
     case 'SAMSTAEDA_TVITEKIN_SKJOL':
     case 'SAMSTAEDA_OGILT_AUDKENNI': return 'INVALID_SELECTION';
     default: return 'UNAVAILABLE';
+  }
+}
+
+/** A real, read-only server preflight against the selected company/account.
+ * It can explain why a proposed match is blocked even when writes are disabled.
+ * READY never grants permission to write. Confirmation always rechecks in its
+ * own SERIALIZABLE transaction.
+ */
+export async function inspectSelectedVisualDocuments(
+  bankAccountId: number, bankTransactionId: number, documentIds: number[],
+): Promise<{ ok: true; reason: DocumentSetReadinessCode } | { ok: false; reason: 'INVALID_SELECTION' | 'UNAVAILABLE' }> {
+  const { companyId } = await authorizeVisualConfirmation();
+  try {
+    const reason = await inspectVisualDocumentSet({
+      companyId, bankAccountId, bankTransactionId,
+      documentIds: canonicalDocumentIds(documentIds),
+    });
+    return { ok: true, reason };
+  } catch (error) {
+    const status = safeConfirmationFailure(error);
+    return { ok: false, reason: status === 'INVALID_SELECTION' ? 'INVALID_SELECTION' : 'UNAVAILABLE' };
   }
 }
 

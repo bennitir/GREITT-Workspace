@@ -8,13 +8,20 @@ import { bankReconciliationText } from "@/app/banki/_lib/i18n/reconciliation-tex
 import { visualReconciliationText } from "@/app/banki/_lib/i18n/visual-reconciliation-text";
 import { buildVisualReconciliation } from "@/app/banki/_lib/visual-reconciliation";
 import VisualReconciliationWorkspace from "./VisualReconciliationWorkspace";
-import { confirmSelectedVisualDocuments, voidSelectedVisualDocuments } from "./document-set-actions";
+import { confirmSelectedVisualDocuments, inspectSelectedVisualDocuments, voidSelectedVisualDocuments } from "./document-set-actions";
 import { getDocumentSetsWithHistory, documentSetStorageEnabled, documentSetStorageState } from "@/lib/financial-reconciliation/document-set-service";
 import { getExistingConfirmedBankDocuments } from "@/lib/financial-reconciliation/existing-confirmed-bank-documents";
 import { searchVisualDocuments } from "./document-search-actions";
+import { inspectPossibleInternalTransfer, confirmOwnTransferAction, voidOwnTransferAction } from "./internal-transfer-actions";
+import { ownTransferAccountReady } from "@/lib/personal-finance/own-transfer-policy";
+import { getSavedOwnTransfers } from "@/lib/financial-reconciliation/own-account-transfer-service";
 import { getFamilyTransferBlocks } from "@/lib/personal-finance/transfer-eligibility-repository";
 import { getFamilyTransferSplits } from "@/lib/personal-finance/transfer-split-repository";
+import { getFamilyLoanRegistry } from "@/lib/personal-finance/family-loan-registry-repository";
 import { familySplitStorageEnabled } from "@/lib/personal-finance/family-storage-policy";
+import { familyLoanJournalLocalEnabled } from "@/lib/personal-finance/family-loan-journal-policy";
+import { getFamilyLoanJournal } from "@/lib/personal-finance/family-loan-journal-repository";
+import { createFamilyLoanJournalAction, addFamilyLoanJournalMovementAction } from "./family-loan-journal-actions";
 import type { CandidateReason } from "@/lib/financial-reconciliation/candidates";
 import {
   getBankFinancialEventCandidates,
@@ -102,6 +109,7 @@ export default async function AfstemmingPage({ params, searchParams }: Props) {
       },
       select: {
         id: true,
+        name: true,
         bankName: true,
         accountNumber: true,
         company: {
@@ -325,8 +333,13 @@ export default async function AfstemmingPage({ params, searchParams }: Props) {
       where: { companyId_moduleId: { companyId: activeCompanyId, moduleId: "fjolskylduvidauki" } },
       select: { enabled: true },
     });
-    const familyEnabled = familyModule?.enabled === true;
-    const familyCanEdit = access.canReconcileBookkeeping;
+    // A company flag is never sufficient for personal information access.
+    const familyOwner = access.role === "OWNER" || access.role === "ADMIN";
+    // Release boundary: the unfinished family workspace is local-dev only.
+    // A company module flag alone must never expose it in a Vercel deployment.
+    const familyWorkspaceLocalOnly = process.env.NODE_ENV === "development" && process.env.VERCEL !== "1";
+    const familyEnabled = familyWorkspaceLocalOnly && familyOwner && familyModule?.enabled === true;
+    const familyCanEdit = familyEnabled && access.canReconcileBookkeeping;
     const familyPeople = familyEnabled && familyCanEdit ? await prisma.insightEntity.findMany({
       where: { companyId: activeCompanyId, entityType: "PERSON", status: "ACTIVE" },
       select: { id: true, name: true }, orderBy: [{ name: "asc" }, { id: "asc" }],
@@ -359,9 +372,13 @@ export default async function AfstemmingPage({ params, searchParams }: Props) {
     const familyBlocks = familyEnabled && familyCanEdit
       ? await getFamilyTransferBlocks(activeCompanyId, bankAccountId, model.transactions.map(row=>row.id)) : {};
     const familySaved = familyEnabled && familyCanEdit ? await getFamilyTransferSplits(bankAccountId) : [];
-    const [documentSets, existingConfirmedRead] = await Promise.all([
+    const familyLoanRegistry = familyEnabled && familyCanEdit ? await getFamilyLoanRegistry(activeCompanyId) : { loans: [], truncated: false };
+    const journalEnabled = familyEnabled && familyCanEdit && familyLoanJournalLocalEnabled();
+    const familyJournal = journalEnabled ? await getFamilyLoanJournal() : null;
+    const [documentSets, existingConfirmedRead, ownTransfers] = await Promise.all([
       getDocumentSetsWithHistory(activeCompanyId, bankAccountId),
       getExistingConfirmedBankDocuments(activeCompanyId, bankAccountId, model.transactions.map(row => row.id)),
+      familyOwner ? getSavedOwnTransfers(activeCompanyId, bankAccountId) : Promise.resolve([]),
     ]);
     return (
       <main className="p-3 sm:p-6">
@@ -376,10 +393,22 @@ export default async function AfstemmingPage({ params, searchParams }: Props) {
           historicalEvidenceUnavailable={!existingConfirmedRead.ok}
           documentSetCanConfirm={access.canReconcileBookkeeping && !model.incomplete && documentSetStorageEnabled(process.env, { companyId: activeCompanyId, bankAccountId })}
           documentSetLockReason={!access.canReconcileBookkeeping ? 'ROLE_CANNOT_RECONCILE' : model.incomplete ? 'INCOMPLETE_SOURCE_DATA' : documentSetStorageState(process.env, { companyId: activeCompanyId, bankAccountId })}
+          documentSetInspectAction={inspectSelectedVisualDocuments}
           documentSetConfirmAction={confirmSelectedVisualDocuments}
           documentSetVoidAction={voidSelectedVisualDocuments}
-          family={{enabled:familyEnabled, canEdit:familyCanEdit, people:familyPeople, blocks:familyBlocks, saved:familySaved,
-            storageEnabled:familySplitStorageEnabled()}} />
+          transferReview={familyOwner ? {
+            bankAccountName: `${account.name} · ${account.bankName}`,
+            bankAccountNumber: account.accountNumber,
+            inspectAction: inspectPossibleInternalTransfer,
+            confirmEnabled: access.canReconcileBookkeeping && ownTransferAccountReady(process.env, { companyId: activeCompanyId, bankAccountId }),
+            saved: ownTransfers,
+            confirmAction: confirmOwnTransferAction,
+            voidAction: voidOwnTransferAction,
+          } : undefined}
+          family={{enabled:familyEnabled, draftOnly:familyWorkspaceLocalOnly && familyOwner && !familyEnabled, canEdit:familyCanEdit, people:familyPeople, blocks:familyBlocks, saved:familySaved,
+            loanRegistry:familyLoanRegistry.loans, loanRegistryTruncated:familyLoanRegistry.truncated,
+            storageEnabled:familySplitStorageEnabled(), journalSnapshot:familyJournal, journalEnabled,
+            createJournalAction:createFamilyLoanJournalAction, movementJournalAction:addFamilyLoanJournalMovementAction}} />
       </main>
     );
   }
