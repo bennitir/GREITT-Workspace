@@ -3,17 +3,31 @@ import { PrismaClient } from "../app/generated/prisma/client";
 import { assertSafeVercelPreviewEnvironment } from "./core/preview-environment";
 import { prismaPgConnectionOptions } from "./core/verified-database-tls";
 
-assertSafeVercelPreviewEnvironment();
-const adapter = new PrismaPg(prismaPgConnectionOptions());
-
 const globalForPrisma = globalThis as unknown as {
   prismaV11: PrismaClient | undefined;
 };
 
-export const prisma =
-  globalForPrisma.prismaV11 ??
-  new PrismaClient({
-    adapter,
-  });
+/**
+ * Next.js imports server modules while collecting route metadata during builds.
+ * Importing prisma must not require a live Preview database connection.
+ * Every actual Prisma property access still validates the current environment
+ * BEFORE the adapter or cached client can be used.
+ */
+function verifiedClient(): PrismaClient {
+  assertSafeVercelPreviewEnvironment();
 
-globalForPrisma.prismaV11 = prisma;
+  if (!globalForPrisma.prismaV11) {
+    const adapter = new PrismaPg(prismaPgConnectionOptions());
+    globalForPrisma.prismaV11 = new PrismaClient({ adapter });
+  }
+
+  return globalForPrisma.prismaV11;
+}
+
+export const prisma: PrismaClient = new Proxy({} as PrismaClient, {
+  get(_unused, property) {
+    const client = verifiedClient();
+    const value = Reflect.get(client, property, client);
+    return typeof value === "function" ? value.bind(client) : value;
+  },
+});
