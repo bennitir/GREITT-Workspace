@@ -12,7 +12,9 @@ import { confirmSelectedVisualDocuments, inspectSelectedVisualDocuments, voidSel
 import { getDocumentSetsWithHistory, documentSetStorageEnabled, documentSetStorageState } from "@/lib/financial-reconciliation/document-set-service";
 import { getExistingConfirmedBankDocuments } from "@/lib/financial-reconciliation/existing-confirmed-bank-documents";
 import { searchVisualDocuments } from "./document-search-actions";
-import { inspectPossibleInternalTransfer, confirmOwnTransferAction, voidOwnTransferAction } from "./internal-transfer-actions";
+import { inspectPossibleInternalTransfer, confirmOwnTransferAction, voidOwnTransferAction,
+  reviewBankAccountOwnersAction, confirmBankAccountOwnerAction, revokeBankAccountOwnerAction,
+} from "./internal-transfer-actions";
 import { ownTransferAccountReady } from "@/lib/personal-finance/own-transfer-policy";
 import { getSavedOwnTransfers } from "@/lib/financial-reconciliation/own-account-transfer-service";
 import { getFamilyTransferBlocks } from "@/lib/personal-finance/transfer-eligibility-repository";
@@ -404,6 +406,9 @@ export default async function AfstemmingPage({ params, searchParams }: Props) {
             saved: ownTransfers,
             confirmAction: confirmOwnTransferAction,
             voidAction: voidOwnTransferAction,
+            ownerReviewAction: reviewBankAccountOwnersAction,
+            ownerConfirmAction: confirmBankAccountOwnerAction,
+            ownerRevokeAction: revokeBankAccountOwnerAction,
           } : undefined}
           family={{enabled:familyEnabled, draftOnly:familyWorkspaceLocalOnly && familyOwner && !familyEnabled, canEdit:familyCanEdit, people:familyPeople, blocks:familyBlocks, saved:familySaved,
             loanRegistry:familyLoanRegistry.loans, loanRegistryTruncated:familyLoanRegistry.truncated,

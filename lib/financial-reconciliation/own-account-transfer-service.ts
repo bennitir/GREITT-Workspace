@@ -5,6 +5,7 @@ import { Client } from 'pg';
 import { prismaPgConnectionOptions } from '@/lib/core/verified-database-tls';
 import { prisma } from '@/lib/prisma';
 import { assertVerifiedBankAllocationContract } from '@/lib/financial-reconciliation/bank-allocation-contract';
+import { assertCommonConfirmedBankAccountOwner } from '@/lib/financial-reconciliation/bank-account-owner-service';
 import { ownTransferSelectionStatus, ownTransferStorageEnabled, ownTransferAccountReady, ownTransferScopedStorageEnabled } from '@/lib/personal-finance/own-transfer-policy';
 
 const TYPE = 'BANK_TO_BANK_OWN_TRANSFER';
@@ -202,6 +203,11 @@ export async function confirmOwnAccountTransfer(input: {
           sourceStatus: source.status, targetStatus: target.status, ownershipAttested: input.ownershipAttested,
         });
         if (status) throw new Error(status);
+        // This is separate from per-transfer attestation: both *accounts* must
+        // have current, same-owner evidence recorded by an authorized operator.
+        const accountOwner = await assertCommonConfirmedBankAccountOwner(
+          tx, input.companyId, source.bankAccountId, target.bankAccountId,
+        );
         await requireNoOtherClaims(tx, input.companyId, [low, high]);
 
         const now = new Date();
@@ -213,6 +219,8 @@ export async function confirmOwnAccountTransfer(input: {
             metadata: { version: VERSION, ownership: 'ATTESTED_BY_OPERATOR',
               bankTransactionIds: [source.id, target.id],
               bankAccountIds: [source.bankAccountId, target.bankAccountId],
+              verifiedAccountOwner: { ownerKind: accountOwner.ownerKind,
+                ownerId: accountOwner.ownerId, evidenceAuditIds: accountOwner.evidenceAuditIds },
               bankAmounts: [source.amount.toString(), target.amount.toString()],
               note: 'Eigin millifærsla; hvorki gjald, tekjur, lán né gjöf.' },
             participants: { create: [source, target].map(row => ({

@@ -70,11 +70,16 @@ function approvedIsolatedV03(env: Readonly<Record<string, string | undefined>>):
 }
 
 const APPROVAL = 'reviewed-single-own-transfer-v1';
+// Separate company-wide approval: no hardcoded individual transaction IDs.
+// This is an interim rollout gate; the long-term control belongs on the
+// company configuration in GLÖGGT, not in Vercel environment variables.
+const COMPANY_APPROVAL = 'reviewed-company-own-transfer-v1';
 const LOCAL_PRODUCTION_APPROVAL = 'reviewed-local-production-single-pair-v1';
 const PRODUCTION_REF = 'wjobcdjhqjirgyfbeuze';
 const SHARED_POOLER = /^aws-[0-9]+-[a-z]{2}-[a-z]+-[0-9]+\.pooler\.supabase\.com$/;
 
 type Approval = { companyId: number; bankAccountId: number; firstId: number; secondId: number };
+type CompanyApproval = { mode: 'COMPANY'; companyId: number };
 
 function approvedPair(env: Readonly<Record<string, string | undefined>>): Approval | null {
   if (env.GLOGGT_OWN_TRANSFER_PRODUCTION_APPROVAL !== APPROVAL) return null;
@@ -83,6 +88,15 @@ function approvedPair(env: Readonly<Record<string, string | undefined>>): Approv
   const [companyId, bankAccountId, firstId, secondId] = parts.map(Number);
   if ([companyId, bankAccountId, firstId, secondId].some(n => !Number.isSafeInteger(n)) || firstId === secondId) return null;
   return { companyId, bankAccountId, firstId, secondId };
+}
+
+/** One explicit company, rather than one particular transaction pair. */
+function approvedCompany(env: Readonly<Record<string, string | undefined>>): CompanyApproval | null {
+  if (env.GLOGGT_OWN_TRANSFER_PRODUCTION_APPROVAL !== COMPANY_APPROVAL) return null;
+  const raw = env.GLOGGT_OWN_TRANSFER_PRODUCTION_SCOPE || '';
+  if (!/^[1-9]\d*$/.test(raw)) return null;
+  const companyId = Number(raw);
+  return Number.isSafeInteger(companyId) && companyId > 0 ? { mode: 'COMPANY', companyId } : null;
 }
 
 function verifiedProdUrl(raw: string | undefined, env: Readonly<Record<string, string | undefined>>): boolean {
@@ -123,20 +137,21 @@ function plausibleVerifiedCa(env: Readonly<Record<string, string | undefined>>):
   } catch { return false; }
 }
 
-/** A narrowly scoped, opt-in production gate for a SINGLE transfer.
- * Unlike the old V03-only path this can eventually authorize a production pair,
- * but defaults to closed. It requires a separate, explicit human approval for
- * actual Production writes. Localhost connected to Supabase remains blocked
- * unless a second, independent, explicitly reviewed local-only approval is set.
+/** Explicit, fail-closed Production approval.
+ * Legacy one-pair approval remains available and unchanged. A separate
+ * company approval permits ANY human-reviewed pair of active bank accounts
+ * in that same company, not a specific transaction ID.
+ * Production server actions and DB transactions independently enforce
+ * owner/admin access, operator attestation, status/amount/date, V3 claims,
+ * TLS and auditability. This gate alone never proves account ownership.
+ * General company approval is forbidden for local runs against Production.
  */
 function approvedProdAccount(
   env: Readonly<Record<string, string | undefined>>,
   scope: OwnTransferAccountScope,
-): Approval | null {
+): Approval | CompanyApproval | null {
   const verifiedVercel = env.VERCEL_ENV === 'production' && env.VERCEL === '1';
-  // Optional local GLÖGGT route is NEVER active by default. It requires a
-  // SECOND explicit one-pair approval, distinct from the Production approval.
-  // VERCEL variables must be absent, and the running app must be dev-only.
+  // The old isolated local acceptance route remains limited to an exact pair.
   const verifiedLocal = env.VERCEL_ENV === undefined && env.VERCEL === undefined &&
     env.NODE_ENV === 'development' &&
     env.GLOGGT_OWN_TRANSFER_LOCAL_PRODUCTION_APPROVAL === LOCAL_PRODUCTION_APPROVAL;
@@ -144,15 +159,19 @@ function approvedProdAccount(
   if (!verifiedProdUrl(env.DATABASE_URL, env) ||
       (env.DIRECT_URL !== undefined && !verifiedProdUrl(env.DIRECT_URL, env)) ||
       env.NEXT_PUBLIC_SUPABASE_URL?.replace(/\/$/, '') !== `https://${PRODUCTION_REF}.supabase.co`) return null;
-  const approved = approvedPair(env);
-  if (!approved || !Number.isSafeInteger(scope.companyId) || !Number.isSafeInteger(scope.bankAccountId) ||
-      scope.companyId !== approved.companyId || scope.bankAccountId !== approved.bankAccountId) return null;
-  return approved;
+  if (!Number.isSafeInteger(scope.companyId) || scope.companyId <= 0 ||
+      !Number.isSafeInteger(scope.bankAccountId) || scope.bankAccountId <= 0) return null;
+
+  const pair = approvedPair(env);
+  if (pair && scope.companyId === pair.companyId &&
+      scope.bankAccountId === pair.bankAccountId) return pair;
+  if (!verifiedVercel) return null; // no company-wide local Production writes
+
+  const company = approvedCompany(env);
+  return company && company.companyId === scope.companyId ? company : null;
 }
 
-/** Visible read-only review becomes write-capable for ONE account only after approval.
- * This does NOT approve an arbitrary selected pair; each server mutation rechecks IDs.
- */
+/** Account view is enabled only after explicit, valid runtime approval. */
 export function ownTransferAccountReady(
   env: Readonly<Record<string, string | undefined>> = process.env,
   scope?: OwnTransferAccountScope,
@@ -171,7 +190,10 @@ export function ownTransferScopedStorageEnabled(
   if (approvedIsolatedV03(env)) return true;
   if (!scope) return false;
   const approved = approvedProdAccount(env, scope);
-  return !!approved &&
-    ((scope.sourceId === approved.firstId && scope.targetId === approved.secondId) ||
-     (scope.sourceId === approved.secondId && scope.targetId === approved.firstId));
+  if (!approved || !Number.isSafeInteger(scope.sourceId) || scope.sourceId <= 0 ||
+      !Number.isSafeInteger(scope.targetId) || scope.targetId <= 0 ||
+      scope.sourceId === scope.targetId) return false;
+  if ('mode' in approved) return approved.mode === 'COMPANY';
+  return (scope.sourceId === approved.firstId && scope.targetId === approved.secondId) ||
+    (scope.sourceId === approved.secondId && scope.targetId === approved.firstId);
 }

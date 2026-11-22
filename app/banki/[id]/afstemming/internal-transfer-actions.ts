@@ -72,18 +72,25 @@ import { revalidatePath } from 'next/cache';
 import { getRequestAuthContext } from '@/lib/core/request-context';
 import { ownTransferAccountReady, ownTransferScopedStorageEnabled } from '@/lib/personal-finance/own-transfer-policy';
 import { confirmOwnAccountTransfer, voidOwnAccountTransfer } from '@/lib/financial-reconciliation/own-account-transfer-service';
+import { confirmBankAccountOwner, revokeBankAccountOwner } from '@/lib/financial-reconciliation/bank-account-owner-service';
+import { latestConfirmedBankAccountOwner, commonConfirmedBankAccountOwner,
+  BANK_OWNER_CONFIRM, BANK_OWNER_REVOKE,
+  type ConfirmedBankOwner, type BankOwnerAudit,
+  type BankOwnerKind, type BankOwnerEvidenceKind,
+} from '@/lib/personal-finance/bank-account-owner-policy';
+import { registeredPrivatePersonCategory } from '@/lib/personal-finance/private-person-registry-policy';
 
 export type OwnTransferActionResult =
   | { ok: true; id: number }
   | { ok: false; code: 'STORAGE_DISABLED' | 'NOT_AUTHORIZED' | 'INVALID_SELECTION' |
       'OWNERSHIP_NOT_ATTESTED' | 'ACCOUNT_NOT_DISTINCT' | 'AMOUNT_OR_DATE_MISMATCH' |
-      'ALREADY_RECONCILED' | 'CLASSIFICATION_CONFLICT' | 'REASON_REQUIRED' | 'NOT_FOUND' | 'UNAVAILABLE' };
+      'ALREADY_RECONCILED' | 'CLASSIFICATION_CONFLICT' | 'BANK_ACCOUNT_OWNER_UNVERIFIED' | 'REASON_REQUIRED' | 'NOT_FOUND' | 'UNAVAILABLE' };
 
 function safeOwnTransferFailure(error: unknown): OwnTransferActionResult {
   const code = error instanceof Error ? error.message : '';
   const allowed = ['STORAGE_DISABLED','NOT_AUTHORIZED','INVALID_SELECTION','OWNERSHIP_NOT_ATTESTED',
     'ACCOUNT_NOT_DISTINCT','AMOUNT_OR_DATE_MISMATCH','ALREADY_RECONCILED',
-    'CLASSIFICATION_CONFLICT','REASON_REQUIRED','NOT_FOUND'];
+    'CLASSIFICATION_CONFLICT','BANK_ACCOUNT_OWNER_UNVERIFIED','REASON_REQUIRED','NOT_FOUND'];
   return { ok: false, code: allowed.includes(code) ? code as Extract<OwnTransferActionResult, {ok:false}>['code'] : 'UNAVAILABLE' };
 }
 
@@ -129,5 +136,102 @@ export async function voidOwnTransferAction(
     const result = await voidOwnAccountTransfer({ ...auth, bankAccountId, reconciliationId, reason });
     refreshOwnTransfer(bankAccountId);
     return { ok: true, id: result.id };
+  } catch (error) { return safeOwnTransferFailure(error); }
+}
+
+
+
+/** UI projection is a scoped, read-only snapshot. The write service revalidates inside SERIALIZABLE. */
+export type BankAccountOwnerReviewResult =
+  | { ok: true;
+      source: ConfirmedBankOwner | null;
+      target: ConfirmedBankOwner | null;
+      sameOwner: boolean;
+      choices: { kind: BankOwnerKind; id: number; label: string }[] }
+  | { ok: false; code: 'NOT_AUTHORIZED' | 'INVALID_SELECTION' | 'NOT_FOUND' | 'UNAVAILABLE' };
+
+export async function reviewBankAccountOwnersAction(
+  sourceBankAccountId: number, targetBankAccountId: number,
+): Promise<BankAccountOwnerReviewResult> {
+  const auth = await authorizedOwnTransferWrite();
+  if (!auth) return { ok: false, code: 'NOT_AUTHORIZED' };
+  if (![sourceBankAccountId, targetBankAccountId].every(value => Number.isSafeInteger(value) && value > 0) ||
+      sourceBankAccountId === targetBankAccountId) return { ok: false, code: 'INVALID_SELECTION' };
+  try {
+    const accounts = await prisma.bankAccount.findMany({
+      where: { id: { in: [sourceBankAccountId, targetBankAccountId] }, companyId: auth.companyId, isActive: true },
+      select: { id: true },
+    });
+    if (accounts.length !== 2) return { ok: false, code: 'NOT_FOUND' };
+    const latest = (bankAccountId: number) => prisma.auditEvent.findFirst({
+      where: { companyId: auth.companyId, entityType: 'BankAccount', entityId: bankAccountId,
+        action: { in: [BANK_OWNER_CONFIRM, BANK_OWNER_REVOKE] } },
+      orderBy: { id: 'desc' },
+      select: { id: true, companyId: true, entityType: true, entityId: true,
+        action: true, source: true, userId: true, afterData: true },
+    });
+    const [company, people, sourceEvent, targetEvent] = await Promise.all([
+      prisma.company.findFirst({ where: { id: auth.companyId, isActive: true }, select: { id: true, name: true } }),
+      prisma.insightEntity.findMany({
+        where: { companyId: auth.companyId, entityType: 'PERSON', status: 'ACTIVE' },
+        select: { id: true, name: true, metadata: true }, orderBy: { id: 'asc' }, take: 501,
+      }),
+      latest(sourceBankAccountId), latest(targetBankAccountId),
+    ]);
+    // Never show a truncated owner picker or claim an owner who cannot be resolved.
+    if (!company || people.length > 500) return { ok: false, code: 'UNAVAILABLE' };
+    const choices: { kind: BankOwnerKind; id: number; label: string }[] = [
+      { kind: 'COMPANY', id: company.id, label: `Fyrirtæki: ${company.name}` },
+      ...people.filter(p => registeredPrivatePersonCategory(p.metadata) !== null)
+        .map(p => ({ kind: 'PRIVATE_PERSON' as const, id: p.id, label: `Einstaklingur: ${p.name}` })),
+    ];
+    const choiceKeys = new Set(choices.map(choice => `${choice.kind}:${choice.id}`));
+    const verified = (event: typeof sourceEvent, accountId: number) => {
+      const owner = latestConfirmedBankAccountOwner(
+        event ? [event as BankOwnerAudit] : [], auth.companyId, accountId,
+      );
+      return owner && choiceKeys.has(`${owner.ownerKind}:${owner.ownerId}`) ? owner : null;
+    };
+    const source = verified(sourceEvent, sourceBankAccountId);
+    const target = verified(targetEvent, targetBankAccountId);
+    return { ok: true, source, target, choices,
+      sameOwner: commonConfirmedBankAccountOwner(source, target, auth.companyId,
+        sourceBankAccountId, targetBankAccountId) !== null };
+  } catch {
+    return { ok: false, code: 'UNAVAILABLE' };
+  }
+}
+
+/** Explicit, logged bank-account ownership, NOT a transfer confirmation. */
+export async function confirmBankAccountOwnerAction(
+  bankAccountId: number, ownerKind: BankOwnerKind, ownerId: number,
+  evidenceKind: BankOwnerEvidenceKind, ownershipAttested: boolean,
+): Promise<OwnTransferActionResult> {
+  const auth = await authorizedOwnTransferWrite();
+  if (!auth) return { ok: false, code: 'NOT_AUTHORIZED' };
+  if (!ownTransferAccountReady(process.env, { companyId: auth.companyId, bankAccountId })) {
+    return { ok: false, code: 'STORAGE_DISABLED' };
+  }
+  try {
+    const event = await confirmBankAccountOwner({ ...auth, bankAccountId,
+      ownerKind, ownerId, evidenceKind, ownershipAttested });
+    refreshOwnTransfer(bankAccountId);
+    return { ok: true, id: event.id };
+  } catch (error) { return safeOwnTransferFailure(error); }
+}
+
+/** Future UI entry point: revoke evidence, preserving the original audit event. */
+export async function revokeBankAccountOwnerAction(
+  bankAccountId: number, reason: string,
+): Promise<OwnTransferActionResult> {
+  const auth = await authorizedOwnTransferWrite();
+  if (!auth) return { ok: false, code: 'NOT_AUTHORIZED' };
+  if (!ownTransferAccountReady(process.env, { companyId: auth.companyId, bankAccountId })) {
+    return { ok: false, code: 'STORAGE_DISABLED' };
+  }
+  try {
+    const event = await revokeBankAccountOwner({ ...auth, bankAccountId, reason });
+    refreshOwnTransfer(bankAccountId);
+    return { ok: true, id: event.id };
   } catch (error) { return safeOwnTransferFailure(error); }
 }

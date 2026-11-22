@@ -7,7 +7,8 @@ import FamilyLoanDraftOnlyPanel from './FamilyLoanDraftOnlyPanel';
 import FamilyOverviewPanel from './FamilyOverviewPanel';
 import BankFlowReviewPanel from './BankFlowReviewPanel';
 import type { SavedOwnTransfer } from '@/lib/financial-reconciliation/own-account-transfer-service';
-import type { OwnTransferActionResult } from './internal-transfer-actions';
+import type { OwnTransferActionResult, BankAccountOwnerReviewResult } from './internal-transfer-actions';
+import type { BankOwnerKind, BankOwnerEvidenceKind } from '@/lib/personal-finance/bank-account-owner-policy';
 import type { InternalTransferReviewResult } from '@/lib/personal-finance/internal-transfer-evidence';
 import type { FamilyPerson } from '@/lib/personal-finance/transfer-split';
 import type { SavedFamilyTransfer } from '@/lib/personal-finance/transfer-split-repository';
@@ -51,6 +52,10 @@ export default function VisualReconciliationWorkspace({ model, text: t, language
     saved: SavedOwnTransfer[];
     confirmAction: (bankAccountId: number, sourceId: number, targetId: number, ownershipAttested: boolean) => Promise<OwnTransferActionResult>;
     voidAction: (bankAccountId: number, reconciliationId: number, reason: string) => Promise<OwnTransferActionResult>;
+    ownerReviewAction: (sourceId: number, targetId: number) => Promise<BankAccountOwnerReviewResult>;
+    ownerConfirmAction: (bankAccountId: number, ownerKind: BankOwnerKind, ownerId: number,
+      evidence: BankOwnerEvidenceKind, attested: boolean) => Promise<OwnTransferActionResult>;
+    ownerRevokeAction: (bankAccountId: number, reason: string) => Promise<OwnTransferActionResult>;
   };
   family?: {
     enabled: boolean;
@@ -532,6 +537,9 @@ export default function VisualReconciliationWorkspace({ model, text: t, language
             saved={transferReview.saved.find(link => link.bankTransactionId === selected.id)}
             confirmEnabled={transferReview.confirmEnabled}
             confirmAction={transferReview.confirmAction} voidAction={transferReview.voidAction}
+            ownerReviewAction={transferReview.ownerReviewAction}
+            ownerConfirmAction={transferReview.ownerConfirmAction}
+            ownerRevokeAction={transferReview.ownerRevokeAction}
             onBeginOwnTransferReview={() => {
               // Keep a manually chosen document, but close a mere automatic suggestion:
               // evidence for an own-account transfer consists of the two bank movements.

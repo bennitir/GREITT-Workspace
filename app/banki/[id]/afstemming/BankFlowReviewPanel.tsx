@@ -6,6 +6,9 @@ import type { SavedOwnTransfer } from '@/lib/financial-reconciliation/own-accoun
 import type { OwnTransferActionResult } from './internal-transfer-actions';
 import type { InternalTransferReviewResult } from '@/lib/personal-finance/internal-transfer-evidence';
 import { formatCounterBankDate } from './format-counter-bank-date';
+import BankAccountOwnerPanel from './BankAccountOwnerPanel';
+import type { BankAccountOwnerReviewResult } from './internal-transfer-actions';
+import type { BankOwnerEvidenceKind, BankOwnerKind } from '@/lib/personal-finance/bank-account-owner-policy';
 
 const translations = {
   is: {
@@ -73,7 +76,8 @@ const translations = {
 } as const;
 
 export default function BankFlowReviewPanel({ language, bankAccountId, bankAccountName, bankAccountNumber,
-  bankTransactionId, bankAmount, bankText, inspectAction, saved, confirmEnabled, confirmAction, voidAction, onBeginOwnTransferReview }: {
+  bankTransactionId, bankAmount, bankText, inspectAction, saved, confirmEnabled, confirmAction, voidAction,
+  ownerReviewAction, ownerConfirmAction, ownerRevokeAction, onBeginOwnTransferReview }: {
   language: string; bankAccountId: number; bankAccountName: string; bankAccountNumber: string | null;
   bankTransactionId: number; bankAmount: string; bankText: string;
   inspectAction: (bankAccountId: number, transactionId: number) => Promise<InternalTransferReviewResult>;
@@ -81,6 +85,10 @@ export default function BankFlowReviewPanel({ language, bankAccountId, bankAccou
   confirmEnabled: boolean;
   confirmAction: (bankAccountId: number, sourceId: number, targetId: number, ownershipAttested: boolean) => Promise<OwnTransferActionResult>;
   voidAction: (bankAccountId: number, reconciliationId: number, reason: string) => Promise<OwnTransferActionResult>;
+  ownerReviewAction: (sourceAccountId: number, targetAccountId: number) => Promise<BankAccountOwnerReviewResult>;
+  ownerConfirmAction: (bankAccountId: number, ownerKind: BankOwnerKind, ownerId: number,
+    evidence: BankOwnerEvidenceKind, attested: boolean) => Promise<OwnTransferActionResult>;
+  ownerRevokeAction: (bankAccountId: number, reason: string) => Promise<OwnTransferActionResult>;
   onBeginOwnTransferReview?: () => void;
 }) {
   const t = translations[language as keyof typeof translations] ?? translations.is;
@@ -88,6 +96,7 @@ export default function BankFlowReviewPanel({ language, bankAccountId, bankAccou
   const [result, setResult] = useState<InternalTransferReviewResult | null>(null);
   const [chosenId, setChosenId] = useState<number | null>(null);
   const [ownershipAttested, setOwnershipAttested] = useState(false);
+  const [accountOwnersMatch, setAccountOwnersMatch] = useState(false);
   const [voidReason, setVoidReason] = useState('');
   const [actionMessage, setActionMessage] = useState<string | null>(null);
   const [pending, startTransition] = useTransition();
@@ -96,14 +105,14 @@ export default function BankFlowReviewPanel({ language, bankAccountId, bankAccou
   function inspect() {
     // An own-transfer review must not leave an unrelated automatic receipt preview on screen.
     onBeginOwnTransferReview?.();
-    setResult(null); setChosenId(null); setOwnershipAttested(false); setActionMessage(null);
+    setResult(null); setChosenId(null); setOwnershipAttested(false); setAccountOwnersMatch(false); setActionMessage(null);
     startTransition(async () => {
       try { setResult(await inspectAction(bankAccountId, bankTransactionId)); }
       catch { setResult({ ok: false, code: 'UNAVAILABLE' }); }
     });
   }
   function confirmSelected() {
-    if (!confirmEnabled || !chosenId || !ownershipAttested || saved) return;
+    if (!confirmEnabled || !chosenId || !ownershipAttested || !accountOwnersMatch || saved) return;
     setActionMessage(null);
     startTransition(async () => {
       try {
@@ -158,7 +167,7 @@ export default function BankFlowReviewPanel({ language, bankAccountId, bankAccou
             <p>{t.bankMovement} #{hit.transactionId} · {formatCounterBankDate(hit.date, language)} · {hit.amount} ISK</p>
             <p className="break-words text-slate-700">{hit.text}</p>
             {hit.status !== 'UNRECONCILED' ? <p className="mt-1 text-xs text-amber-900">{t.noMatchStatus}</p> :
-              <button type="button" onClick={() => {setChosenId(hit.transactionId); setOwnershipAttested(false); setActionMessage(null);}}
+              <button type="button" onClick={() => {setChosenId(hit.transactionId); setOwnershipAttested(false); setAccountOwnersMatch(false); setActionMessage(null);}}
                 className="mt-2 rounded border border-teal-700 px-2 py-1 text-teal-900" aria-pressed={chosenId === hit.transactionId}>{t.choose}</button>}
           </li>)}
         </ul>}
@@ -168,11 +177,17 @@ export default function BankFlowReviewPanel({ language, bankAccountId, bankAccou
           <p>#{chosen.transactionId}: {chosen.bankAccountName} · {chosen.amount} ISK</p>
           <p className="mt-1 text-xs">{t.chooseHint}</p>
           <p className="mt-2 text-xs text-slate-700">{t.noReceiptNeeded}</p>
+          <BankAccountOwnerPanel key={`${bankAccountId}:${chosen.bankAccountId}`}
+            language={language} sourceAccountId={bankAccountId}
+            targetAccountId={chosen.bankAccountId} sourceName={bankAccountName}
+            targetName={chosen.bankAccountName} canWrite={confirmEnabled}
+            reviewAction={ownerReviewAction} confirmAction={ownerConfirmAction}
+            revokeAction={ownerRevokeAction} onPairableChange={setAccountOwnersMatch} />
           <label className="mt-2 flex items-start gap-2">
             <input type="checkbox" checked={ownershipAttested} onChange={e => setOwnershipAttested(e.target.checked)} />
             <span>{t.ownership}</span>
           </label>
-          <button type="button" onClick={confirmSelected} disabled={!ownershipAttested || !confirmEnabled || pending}
+          <button type="button" onClick={confirmSelected} disabled={!ownershipAttested || !accountOwnersMatch || !confirmEnabled || pending}
             className="mt-3 rounded bg-teal-800 px-3 py-2 font-semibold text-white disabled:opacity-50">{t.confirm}</button>
         </section>}
         {result.matches.length > 0 && <p className="mt-2 text-xs font-semibold text-amber-900">{t.warning}</p>}
