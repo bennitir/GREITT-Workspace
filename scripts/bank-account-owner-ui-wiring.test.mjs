@@ -12,8 +12,11 @@ test('bank-account owner read checks tenant and distinct accounts', () => {
   assert.match(actions, /sourceBankAccountId === targetBankAccountId/);
   assert.match(actions, /companyId: auth\.companyId, isActive: true/);
   assert.match(actions, /registeredPrivatePersonCategory/);
-  assert.match(actions, /latestConfirmedBankAccountOwner/);
-  assert.match(actions, /commonConfirmedBankAccountOwner/);
+  // The newest explicit owner decision is read; ordinary company registration remains sufficient.
+  assert.match(actions, /BANK_OWNER_CONFIRM, BANK_OWNER_REVOKE/);
+  assert.match(actions, /orderBy: \{ id: 'desc' \}/);
+  assert.match(actions, /resolveRegisteredBankOwner/);
+  assert.match(actions, /commonRegisteredBankOwner/);
 });
 test('owner writes fail closed when own-transfer scope is disabled', () => {
   for (const name of ['confirmBankAccountOwnerAction', 'revokeBankAccountOwnerAction']) {
@@ -26,19 +29,25 @@ test('owner writes fail closed when own-transfer scope is disabled', () => {
     assert.match(block, /STORAGE_DISABLED/);
   }
 });
-test('ownership controls wired only through existing bank-flow review', () => {
+test('registered-owner review wired into existing bank-flow review without an extra owner form', () => {
   assert.match(page, /ownerReviewAction: reviewBankAccountOwnersAction/);
-  assert.match(page, /ownerConfirmAction: confirmBankAccountOwnerAction/);
-  assert.match(page, /ownerRevokeAction: revokeBankAccountOwnerAction/);
+  assert.match(page, /confirmAction: confirmOwnTransferAction/);
+  assert.match(page, /voidAction: voidOwnTransferAction/);
+  assert.doesNotMatch(page, /ownerConfirmAction:|ownerRevokeAction:/);
   assert.match(workspace, /ownerReviewAction=\{transferReview\.ownerReviewAction\}/);
   assert.match(flow, /<BankAccountOwnerPanel/);
+  assert.match(flow, /reviewAction=\{ownerReviewAction\}/);
   assert.match(flow, /!accountOwnersMatch/);
 });
-test('UI never treats matching amounts as proof and keeps user confirmation', () => {
+test('UI requires successful registered-owner review AND an explicit confirmation click', () => {
   assert.match(ui, /reviewAction\(sourceAccountId, targetAccountId\)/);
-  assert.match(ui, /onPairableChange\(next\.ok && next\.sameOwner\)/);
-  assert.match(ui, /ownership not verified|Eignarhald ekki staðfest/i);
-  assert.match(ui, /attested/);
-  assert.match(ui, /revokeAction/);
-  assert.match(flow, /ownershipAttested/);
+  assert.match(ui, /onPairableChange\(false\)/);
+  assert.match(ui, /onPairableChange\(value\.ok && value\.sameOwner\)/);
+  assert.match(ui, /!review\.ok/);
+  assert.match(ui, /review\?\.ok && review\.sameOwner/);
+  assert.match(ui, /Pörun er læst|Pairing is locked/);
+  assert.match(flow, /if \(!confirmEnabled \|\| !chosenId \|\| !accountOwnersMatch \|\| saved\) return/);
+  assert.match(flow, /<button type="button" onClick=\{confirmSelected\} disabled=\{!accountOwnersMatch \|\| !confirmEnabled \|\| pending\}/);
+  assert.match(flow, /await confirmAction\(bankAccountId, bankTransactionId, chosenId\)/);
+  assert.doesNotMatch(ui, /revokeAction|confirmBankAccountOwnerAction/);
 });

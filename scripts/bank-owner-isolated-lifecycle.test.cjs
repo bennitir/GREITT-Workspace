@@ -254,13 +254,11 @@ function fixture({ failSecondStatusUpdate = false } = {}) {
 
 const errorCode = (message) => ({ message });
 
-test('staðfestir báða reikninga og eina eigin millifærslu, án bókunar eða tvítalningar', async () => {
+test('skráðir reikningar sama fyrirtækis leyfa mannlega staðfesta millifærslu án aukaforms', async () => {
   const f = fixture();
-  await assert.rejects(f.transferService.confirmOwnAccountTransfer(f.transfer()), errorCode('BANK_ACCOUNT_OWNER_UNVERIFIED'));
+  // The bookkeeper already registered both ACTIVE accounts in the same company.
+  // No new account-owner attestation may be required on every transfer.
   assert.equal(f.state.auditEvents.length, 0);
-  await f.ownerService.confirmBankAccountOwner(f.accountOwner(1201));
-  await assert.rejects(f.transferService.confirmOwnAccountTransfer(f.transfer()), errorCode('BANK_ACCOUNT_OWNER_UNVERIFIED'));
-  await f.ownerService.confirmBankAccountOwner(f.accountOwner(1301));
   const match = await f.ownerService.assertCommonConfirmedBankAccountOwner(
     /* read-only synthetic tx checked inside service transaction below */
     { $queryRaw: (strings, ...values) => {
@@ -277,6 +275,9 @@ test('staðfestir báða reikninga og eina eigin millifærslu, án bókunar eða
     }, 801, 1201, 1301,
   );
   assert.equal(match.ownerId, 801);
+  assert.equal(match.ownerKind, 'COMPANY');
+  assert.equal(match.basis, 'COMPANY_ACCOUNT_REGISTRATION');
+  assert.deepEqual(match.evidenceAuditIds, []);
   const result = await f.transferService.confirmOwnAccountTransfer(f.transfer());
   assert.equal(result.id, 1);
   assert.equal(f.state.reconciliations.length, 1);
@@ -286,11 +287,12 @@ test('staðfestir báða reikninga og eina eigin millifærslu, án bókunar eða
   assert.equal(rec.participants.length, 2);
   assert.deepEqual(rec.participants.map(p => p.sourceKey).sort(), ['44001', '44002']);
   assert.deepEqual(rec.metadata.verifiedAccountOwner, {
-    ownerKind: 'COMPANY', ownerId: 801, evidenceAuditIds: [1, 2],
+    ownerKind: 'COMPANY', ownerId: 801, basis: 'COMPANY_ACCOUNT_REGISTRATION', evidenceAuditIds: [],
   });
   assert.deepEqual(f.state.transactions.map(t => t.status), ['RECONCILED', 'RECONCILED']);
   assert.equal(f.state.payments.length, 0);
   assert.equal(f.state.ledgerWrites, 0);
+  assert.equal(f.state.auditEvents.length, 1, 'no extra owner-certification audit was created');
   assert.equal(f.state.auditEvents.filter(e => e.action === 'CONFIRM_BANK_TO_BANK_OWN_TRANSFER').length, 1);
   await assert.rejects(f.transferService.confirmOwnAccountTransfer(f.transfer()), errorCode('ALREADY_RECONCILED'));
   assert.equal(f.state.reconciliations.length, 1);
