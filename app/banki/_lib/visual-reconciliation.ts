@@ -24,6 +24,8 @@ export type VisualEvidence = {
   date: string | null;
   reference: string | null;
   confirmationId: number | null;
+  /** FinancialEventPayment.id from the existing confirmed-event reader. */
+  paymentId?: number;
   sourceDocuments?: {
     receiptId: number;
     documentId: number | null;
@@ -42,7 +44,7 @@ export type VisualDocumentHit = {
   date: string | null;
   voucherNumber: number | null;
 };
-export type VisualTransaction = { id: number; date: string; text: string; amount: string; evidence: VisualEvidence[] };
+export type VisualTransaction = { id: number; date: string; text: string; amount: string; evidence: VisualEvidence[]; bankStatus?: string | null };
 export type VisualModel = Scope & { transactions: VisualTransaction[]; incomplete: boolean };
 const iso = (d: Date | null) => d && Number.isFinite(d.getTime()) ? d.toISOString() : null;
 function sourceDocuments(documents: readonly FinancialEventSourceDocumentContext[]) {
@@ -101,7 +103,7 @@ export function buildVisualReconciliation(input: VisualInput, visibleIds?: Reado
     add(c.bankTransactionId, { key: 'confirmed-event:' + c.reconciliationId + ':' + c.paymentId,
       kind: 'event', status: 'confirmed', sourceId: c.eventId, receiptId: null,
       title: c.externalReference || '', amount: c.amount, currency: c.currency, date: iso(c.eventDate),
-      reference: c.externalReference, confirmationId: c.reconciliationId,
+      reference: c.externalReference, confirmationId: c.reconciliationId, paymentId: c.paymentId,
       sourceDocuments: sourceDocuments(c.sourceDocuments ?? []) });
   }
   for (const row of transactions) row.evidence.sort((a, b) => Number(b.status === 'confirmed') - Number(a.status === 'confirmed') || a.key.localeCompare(b.key));
