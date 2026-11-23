@@ -134,7 +134,7 @@ export default function BankFlowReviewPanel({ language, bankAccountId, bankAccou
     <p className="mt-1 font-medium text-slate-800">{direction}</p>
     <dl className="mt-2 space-y-2">
       <div><dt className="font-semibold">{t.source}</dt><dd className="break-words">{bankAccountName} · {bankAccountNumber || t.missingAccount}</dd></div>
-      <div><dt className="font-semibold">{t.target}</dt><dd className="font-semibold text-amber-900">{t.unknown}</dd></div>
+      <div><dt className="font-semibold">{t.target}</dt><dd className={saved ? "font-semibold text-emerald-900" : "font-semibold text-amber-900"}>{saved ? <>{t.confirmed}: {saved.oppositeBankAccountName} · {saved.oppositeBankAccountNumber || t.missingAccount}</> : t.unknown}</dd></div>
       <div><dt className="font-semibold">{t.bankText}</dt><dd className="break-words">{bankText}</dd></div>
     </dl>
     <p className="mt-2 text-xs text-slate-700">{t.explain}</p>
