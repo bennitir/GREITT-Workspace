@@ -2,6 +2,9 @@ import 'server-only';
 
 import { Prisma } from '@/app/generated/prisma/client';
 import { prisma } from '@/lib/prisma';
+import { assertVerifiedBankAllocationContract } from '@/lib/financial-reconciliation/bank-allocation-contract';
+import { hasVerifiedCaTlsConfigWithoutUrlMode } from '@/lib/core/verified-database-tls';
+import { assertVerifiedDocumentSetTls } from '@/lib/core/verified-document-set-database-tls';
 
 /**
  * Human-confirmed one bank transfer -> many already-reviewed source documents.
@@ -80,42 +83,213 @@ export function canonicalDocumentIds(values: readonly number[]): number[] {
   return unique.sort((a, b) => a - b);
 }
 
-// Deliberately isolated from the visual view itself. Neither a browser prop nor
-// an arbitrary substring in DATABASE_URL can enable a database write.
-// Production activation needs a separate, reviewed release; it is *not* enabled
-// by this development switch.
-export const documentSetStorageEnabled = (env: Readonly<Record<string, string | undefined>> = process.env): boolean => {
-  if (env.GLOGGT_DOCUMENT_SET_CONFIRM_ENABLED !== 'true' || env.VERCEL_ENV === 'production') return false;
-  const raw = env.DATABASE_URL;
-  if (!raw) return false;
+/** Read-only preflight for the selected bank movement and reviewed documents.
+ * This is guidance for the human, NEVER authorization to skip the transactional
+ * validation in confirmVisualDocumentSet. A READY result does not unlock writes.
+ */
+export type DocumentSetReadinessCode =
+  | 'READY' | 'BANK_NOT_FOUND' | 'BANK_ALREADY_RECONCILED'
+  | 'EXISTING_LINK' | 'PAYMENT_LINK' | 'BANK_ALLOCATED'
+  | 'DOCUMENT_NOT_FOUND' | 'DOCUMENT_ALREADY_LINKED'
+  | 'DOCUMENT_NEEDS_REVIEW' | 'AMOUNT_MISMATCH';
+
+/** Same policy as the existing own-account-transfer service: verify Node's TLS
+ * handshake, not a pooler's unrelated PostgreSQL backend hop. */
+export async function assertProductionDatabaseTls(tx: Prisma.TransactionClient): Promise<void> {
+  await assertVerifiedDocumentSetTls(tx);
+}
+
+export async function inspectVisualDocumentSet(input: {
+  companyId: number; bankAccountId: number; bankTransactionId: number;
+  documentIds: readonly number[];
+}): Promise<DocumentSetReadinessCode> {
+  requirePositiveInteger(input.companyId);
+  requirePositiveInteger(input.bankAccountId);
+  requirePositiveInteger(input.bankTransactionId);
+  const documentIds = canonicalDocumentIds(input.documentIds);
+  // All database operations below are SELECTs. Confirmation must revalidate
+  // everything under SERIALIZABLE isolation after the operator approves.
+  return prisma.$transaction(async tx => {
+    const bank = await tx.bankTransaction.findFirst({
+      where: { id: input.bankTransactionId, bankAccountId: input.bankAccountId,
+        bankAccount: { companyId: input.companyId, isActive: true } },
+      select: { id: true, status: true, amount: true },
+    });
+    if (!bank) return 'BANK_NOT_FOUND';
+    if (bank.status !== 'UNRECONCILED' || bank.amount.isZero()) return 'BANK_ALREADY_RECONCILED';
+    const existing = await tx.financialReconciliationParticipant.findFirst({
+      where: { sourceType: BANK_SOURCE, sourceKey: String(bank.id),
+        reconciliation: { companyId: input.companyId, status: 'CONFIRMED' } },
+      select: { id: true },
+    });
+    if (existing) return 'EXISTING_LINK';
+    const payment = await tx.financialEventPayment.findFirst({
+      where: { bankTransactionId: bank.id, status: 'CONFIRMED' }, select: { id: true },
+    });
+    if (payment) return 'PAYMENT_LINK';
+    const table = await tx.$queryRaw<Array<{ present: boolean }>>`
+      SELECT to_regclass('public."BankAllocationClaim"') IS NOT NULL AS present`;
+    if (table[0]?.present) {
+      const claims = await tx.$queryRaw<Array<{ bankTransactionId: number }>>`
+        SELECT "bankTransactionId" FROM public."BankAllocationClaim"
+        WHERE "bankTransactionId" = ${bank.id} AND "state" = 'ACTIVE'`;
+      if (claims.length) return 'BANK_ALLOCATED';
+    }
+    const claimed = await tx.financialReconciliationParticipant.findFirst({
+      where: { sourceType: DOCUMENT_SOURCE, sourceKey: { in: documentIds.map(String) },
+        reconciliation: { companyId: input.companyId, status: 'CONFIRMED' } },
+      select: { id: true },
+    });
+    if (claimed) return 'DOCUMENT_ALREADY_LINKED';
+    const documents = await tx.aiDetectedDocument.findMany({
+      where: { id: { in: documentIds }, receipt: { companyId: input.companyId } },
+      select: {
+        id: true, reviewedAt: true, reviewedContentRevision: true, contentRevision: true,
+        duplicateMarkedAt: true, needsAttentionAt: true, documentType: true,
+        documentRole: true, totalAmount: true,
+        financialEventLinks: { where: { role: 'PRIMARY' }, select: { id: true } },
+      },
+    });
+    if (documents.length !== documentIds.length) return 'DOCUMENT_NOT_FOUND';
+    let total = new Prisma.Decimal(0);
+    for (const document of documents) {
+      if (!document.reviewedAt || document.reviewedContentRevision !== document.contentRevision ||
+          document.duplicateMarkedAt || document.needsAttentionAt || document.financialEventLinks.length ||
+          document.documentRole === 'INSIGHT_ONLY' ||
+          ['OFFER', 'CONTRACT', 'INFORMATION'].includes((document.documentType ?? '').toUpperCase()) ||
+          document.totalAmount === null || !Number.isFinite(document.totalAmount) || document.totalAmount <= 0) {
+        return 'DOCUMENT_NEEDS_REVIEW';
+      }
+      total = total.add(new Prisma.Decimal(String(document.totalAmount)));
+    }
+    return total.eq(bank.amount.abs()) ? 'READY' : 'AMOUNT_MISMATCH';
+  });
+}
+
+// The switch must never be inferred from a browser prop or a token embedded in a URL.
+// Production is opt-in for ONE company and ONE bank account, never globally.
+// The flag is intentionally NOT set by this release. The owner must separately
+// approve activation after inspecting the deployed scope and database identity.
+type DocumentSetScope = { companyId: number; bankAccountId: number };
+
+function parseDatabaseConnection(raw: string | undefined): {
+  host: string; username: string; database: string; port: string; sslmode: string | null;
+} | null {
+  if (!raw) return null;
   let url: URL;
-  try { url = new URL(raw); } catch { return false; }
+  try { url = new URL(raw); } catch { return null; }
   if (!['postgresql:', 'postgres:'].includes(url.protocol) || !url.username || !url.password ||
       url.hash || url.searchParams.has('host') || url.searchParams.has('hostaddr') ||
-      url.searchParams.has('service') || url.searchParams.has('options')) return false;
-  let database: string;
-  let username: string;
+      url.searchParams.has('service') || url.searchParams.has('options') ||
+      url.searchParams.getAll('sslmode').length > 1) return null;
   try {
-    database = decodeURIComponent(url.pathname.slice(1));
-    username = decodeURIComponent(url.username);
-  } catch { return false; }
-  const host = url.hostname.toLowerCase();
-  const ref = 'rfvuzcchsaamrykpdiqm';
-  const testDirect = host === `db.${ref}.supabase.co` &&
-    username === 'gloggt_preview_runtime' && (!url.port || url.port === '5432');
-  const testPooler = host === 'aws-0-eu-west-1.pooler.supabase.com' &&
-    username === `gloggt_preview_runtime.${ref}` && ['5432', '6543'].includes(url.port);
-  if ((testDirect || testPooler) && database === 'postgres' &&
-      ['require', 'verify-ca', 'verify-full'].includes(url.searchParams.get('sslmode') ?? '') &&
-      (!env.NEXT_PUBLIC_SUPABASE_URL || env.NEXT_PUBLIC_SUPABASE_URL === `https://${ref}.supabase.co`)) return true;
+    return {
+      host: url.hostname.toLowerCase(), username: decodeURIComponent(url.username),
+      database: decodeURIComponent(url.pathname.slice(1)), port: url.port,
+      sslmode: url.searchParams.get('sslmode'),
+    };
+  } catch { return null; }
+}
 
-  // Only a *separately named* local test database, never an arbitrary local DB.
-  const localHost = ['localhost', '127.0.0.1', '[::1]'].includes(host);
-  return env.GLOGGT_DOCUMENT_SET_ISOLATED_LOCAL === 'true' && localHost &&
-    /^\d+$/.test(url.port) && Number(url.port) > 0 &&
-    ['gloggt_document_set_test', 'gloggt_test'].includes(database) &&
-    (!env.NEXT_PUBLIC_SUPABASE_URL || !env.NEXT_PUBLIC_SUPABASE_URL.includes('wjobcdjhqjirgyfbeuze'));
+// Supabase documents shared Supavisor endpoints as aws-[INDEX]-[REGION].pooler.supabase.com.
+// INDEX and REGION vary per project; do not guess a single eu-west-1 endpoint. This
+// anchored pattern accepts only official-shaped AWS pooler hostnames, not suffix tricks.
+const SUPABASE_SHARED_POOLER_HOST = /^aws-[0-9]+-[a-z]{2}-[a-z]+-[0-9]+\.pooler\.supabase\.com$/;
+const SUPABASE_REQUIRED_TLS_MODES = ['require', 'verify-ca', 'verify-full'];
+
+function isSupabaseConnection(
+  conn: NonNullable<ReturnType<typeof parseDatabaseConnection>>,
+  ref: string, login: 'gloggt_preview_runtime' | 'postgres',
+  verifiedCaWithoutUrlMode = false,
+): boolean {
+  if (conn.database !== 'postgres' ||
+      !(SUPABASE_REQUIRED_TLS_MODES.includes(conn.sslmode ?? '') || verifiedCaWithoutUrlMode)) return false;
+  return (conn.host === `db.${ref}.supabase.co` && conn.username === login &&
+            (!conn.port || conn.port === '5432')) ||
+    (SUPABASE_SHARED_POOLER_HOST.test(conn.host) &&
+      conn.username === `${login}.${ref}` && ['5432', '6543'].includes(conn.port));
+}
+
+/** Safe, non-secret reason for a disabled confirmation switch. This only diagnoses;
+ * it MUST NOT relax or bypass any of the existing fail-closed checks. */
+export type DocumentSetStorageState =
+  | 'READY'
+  | 'CONFIRM_SWITCH_OFF'
+  | 'INVALID_DATABASE_URL'
+  | 'PRODUCTION_RUNTIME_NOT_VERIFIED'
+  | 'PRODUCTION_APPROVAL_MISSING'
+  | 'PRODUCTION_SCOPE_INVALID'
+  | 'PRODUCTION_SCOPE_MISMATCH'
+  | 'PRODUCTION_SUPABASE_PROJECT_MISMATCH'
+  | 'PRODUCTION_DATABASE_CONNECTION_NOT_APPROVED'
+  | 'PRODUCTION_DATABASE_TLS_REQUIRED'
+  | 'PRODUCTION_DATABASE_NAME_NOT_APPROVED'
+  | 'PRODUCTION_DATABASE_ROLE_NOT_APPROVED'
+  | 'PRODUCTION_DATABASE_HOST_OR_PORT_NOT_APPROVED'
+  | 'PRODUCTION_DIRECT_CONNECTION_NOT_APPROVED'
+  | 'ENVIRONMENT_NOT_APPROVED';
+
+export const documentSetStorageState = (
+  env: Readonly<Record<string, string | undefined>> = process.env,
+  scope?: DocumentSetScope,
+): DocumentSetStorageState => {
+  if (env.GLOGGT_DOCUMENT_SET_CONFIRM_ENABLED !== 'true') return 'CONFIRM_SWITCH_OFF';
+  const conn = parseDatabaseConnection(env.DATABASE_URL);
+  if (!conn) return 'INVALID_DATABASE_URL';
+  const testRef = 'rfvuzcchsaamrykpdiqm';
+  const productionRef = 'wjobcdjhqjirgyfbeuze';
+
+  if (env.VERCEL_ENV === 'production') {
+    if (env.VERCEL !== '1') return 'PRODUCTION_RUNTIME_NOT_VERIFIED';
+    if (env.GLOGGT_DOCUMENT_SET_PRODUCTION_ENABLE !== 'approved-manual-document-sets-v1')
+      return 'PRODUCTION_APPROVAL_MISSING';
+    if (!scope || !Number.isSafeInteger(scope.companyId) || !Number.isSafeInteger(scope.bankAccountId) ||
+        scope.companyId < 1 || scope.bankAccountId < 1) return 'PRODUCTION_SCOPE_INVALID';
+    if (`${scope.companyId}:${scope.bankAccountId}` !== env.GLOGGT_DOCUMENT_SET_PRODUCTION_SCOPE)
+      return 'PRODUCTION_SCOPE_MISMATCH';
+    if (env.NEXT_PUBLIC_SUPABASE_URL?.replace(/\/$/, '') !== `https://${productionRef}.supabase.co`)
+      return 'PRODUCTION_SUPABASE_PROJECT_MISMATCH';
+    // An explicit verified CA policy can replace a *missing* URL sslmode,
+    // never a disabled/weaker mode. prisma.ts must use the same helper.
+    const verifiedCaWithoutUrlMode = hasVerifiedCaTlsConfigWithoutUrlMode(env);
+    if (!isSupabaseConnection(conn, productionRef, 'postgres', verifiedCaWithoutUrlMode)) {
+      // Non-secret diagnostic, not a relaxation: confirmation still fails closed.
+      if (!SUPABASE_REQUIRED_TLS_MODES.includes(conn.sslmode ?? '') && !verifiedCaWithoutUrlMode)
+        return 'PRODUCTION_DATABASE_TLS_REQUIRED';
+      if (conn.database !== 'postgres') return 'PRODUCTION_DATABASE_NAME_NOT_APPROVED';
+      const directHost = conn.host === `db.${productionRef}.supabase.co`;
+      const poolerHost = SUPABASE_SHARED_POOLER_HOST.test(conn.host);
+      if (!directHost && !poolerHost) return 'PRODUCTION_DATABASE_HOST_OR_PORT_NOT_APPROVED';
+      if (conn.username !== (directHost ? 'postgres' : `postgres.${productionRef}`))
+        return 'PRODUCTION_DATABASE_ROLE_NOT_APPROVED';
+      if (!(directHost ? (!conn.port || conn.port === '5432') : ['5432', '6543'].includes(conn.port)))
+        return 'PRODUCTION_DATABASE_HOST_OR_PORT_NOT_APPROVED';
+      return 'PRODUCTION_DATABASE_CONNECTION_NOT_APPROVED';
+    }
+    if (env.DIRECT_URL) {
+      const direct = parseDatabaseConnection(env.DIRECT_URL);
+      if (!direct || !isSupabaseConnection(direct, productionRef, 'postgres'))
+        return 'PRODUCTION_DIRECT_CONNECTION_NOT_APPROVED';
+    }
+    return 'READY';
+  }
+
+  // Identical isolated test and local acceptance gates as the original function.
+  if (isSupabaseConnection(conn, testRef, 'gloggt_preview_runtime') &&
+      (!env.NEXT_PUBLIC_SUPABASE_URL ||
+       env.NEXT_PUBLIC_SUPABASE_URL.replace(/\/$/, '') === `https://${testRef}.supabase.co`)) return 'READY';
+  if (env.GLOGGT_DOCUMENT_SET_ISOLATED_LOCAL === 'true' &&
+      ['localhost', '127.0.0.1', '[::1]'].includes(conn.host) &&
+      /^\d+$/.test(conn.port) && Number(conn.port) > 0 &&
+      ['gloggt_document_set_test', 'gloggt_test'].includes(conn.database) &&
+      (!env.NEXT_PUBLIC_SUPABASE_URL || !env.NEXT_PUBLIC_SUPABASE_URL.includes(productionRef))) return 'READY';
+  return 'ENVIRONMENT_NOT_APPROVED';
 };
+
+export const documentSetStorageEnabled = (
+  env: Readonly<Record<string, string | undefined>> = process.env,
+  scope?: DocumentSetScope,
+): boolean => documentSetStorageState(env, scope) === 'READY';
 
 /** One company and bank account only, including voided history for audit visibility.
  * The page must authorize the company before requesting this read.
@@ -200,7 +374,7 @@ type ConfirmationInput = {
 
 /** No write is possible until expressly enabled for a safe, authorized environment. */
 export async function confirmVisualDocumentSet(input: ConfirmationInput) {
-  if (!documentSetStorageEnabled()) throw new Error('SAMSTAEDA_VISTUN_OHEIMIL');
+  if (!documentSetStorageEnabled(process.env, { companyId: input.companyId, bankAccountId: input.bankAccountId })) throw new Error('SAMSTAEDA_VISTUN_OHEIMIL');
   requirePositiveInteger(input.companyId);
   requirePositiveInteger(input.userId);
   requirePositiveInteger(input.bankAccountId);
@@ -210,6 +384,10 @@ export async function confirmVisualDocumentSet(input: ConfirmationInput) {
   for (let attempt = 0; ; attempt++) {
     try {
       return await prisma.$transaction(async tx => {
+        await assertProductionDatabaseTls(tx);
+        // Existing explicit Production gate, with a second DB-side guard contract.
+        // No change to local tests or unrelated reconciliation services.
+        if (process.env.VERCEL_ENV === 'production') await assertVerifiedBankAllocationContract(tx);
         const bank = await tx.bankTransaction.findFirst({
           where: {
             id: input.bankTransactionId, bankAccountId: input.bankAccountId,
@@ -221,21 +399,26 @@ export async function confirmVisualDocumentSet(input: ConfirmationInput) {
         const existingBankLinks = await tx.financialReconciliation.findMany({
           where: {
             companyId: input.companyId, status: 'CONFIRMED',
-            participants: { some: { sourceType: BANK_SOURCE, sourceKey: String(bank.id), role: 'MONEY_MOVEMENT' } },
+            participants: { some: { sourceType: BANK_SOURCE, sourceKey: String(bank.id) } },
           },
           select: { id: true, reconciliationType: true, participants: { select: { sourceType: true, sourceKey: true, role: true } } },
         });
         if (existingBankLinks.length > 0) {
           const same = existingBankLinks.length === 1 && existingBankLinks[0].reconciliationType === RECONCILIATION_TYPE &&
-            existingBankLinks[0].participants.filter(p => p.sourceType === DOCUMENT_SOURCE && p.role === 'EVIDENCE')
+            existingBankLinks[0].participants.some(p => p.sourceType === BANK_SOURCE && p.sourceKey === String(bank.id) && p.role === 'MONEY_MOVEMENT') &&
+            existingBankLinks[0].participants.filter(p => p.sourceType === DOCUMENT_SOURCE)
+              .every(p => p.role === 'EVIDENCE') &&
+            existingBankLinks[0].participants.filter(p => p.sourceType === DOCUMENT_SOURCE)
               .map(p => Number(p.sourceKey)).sort((a, b) => a - b).join(',') === documentIds.join(',');
           if (same) return { id: existingBankLinks[0].id, idempotent: true };
           throw new Error('SAMSTAEDA_BANKI_THEGAR_STADFESTUR');
         }
         if (bank.status !== 'UNRECONCILED') throw new Error('SAMSTAEDA_BANKI_THEGAR_AFGREIDDUR');
 
-        const [documents, documentClaims, payment] = await Promise.all([
-          tx.aiDetectedDocument.findMany({
+        // Prisma's interactive transaction shares one pg connection. Execute these
+        // independent checks sequentially: concurrent client.query() calls on that
+        // connection are deprecated and may be rejected in newer pg versions.
+        const documents = await tx.aiDetectedDocument.findMany({
             where: { id: { in: documentIds }, receipt: { companyId: input.companyId } },
             select: {
               id: true, receiptId: true, merchantName: true, receiptNumber: true, totalAmount: true,
@@ -244,15 +427,16 @@ export async function confirmVisualDocumentSet(input: ConfirmationInput) {
               receipt: { select: { description: true, fileHash: true } },
               financialEventLinks: { where: { role: 'PRIMARY' }, select: { id: true } },
             },
-          }),
-          tx.financialReconciliationParticipant.findMany({
+          });
+        const documentClaims = await tx.financialReconciliationParticipant.findMany({
             where: {
-              sourceType: DOCUMENT_SOURCE, role: 'EVIDENCE', sourceKey: { in: documentIds.map(String) },
+              sourceType: DOCUMENT_SOURCE, sourceKey: { in: documentIds.map(String) },
               reconciliation: { companyId: input.companyId, status: 'CONFIRMED' },
             }, select: { sourceKey: true },
-          }),
-          tx.financialEventPayment.findFirst({ where: { bankTransactionId: bank.id }, select: { id: true } }),
-        ]);
+          });
+        const payment = await tx.financialEventPayment.findFirst({
+          where: { bankTransactionId: bank.id, status: 'CONFIRMED' }, select: { id: true },
+        });
         if (payment) throw new Error('SAMSTAEDA_BANKI_THEGAR_GREIDSLA');
         // A family transfer owns the same movement through BankAllocationClaim.
         // Refuse the confirmation if we cannot prove that no such claim exists.
@@ -261,7 +445,7 @@ export async function confirmVisualDocumentSet(input: ConfirmationInput) {
         if (table[0]?.present) {
           const claims = await tx.$queryRaw<Array<{ bankTransactionId: number }>>`
             SELECT "bankTransactionId" FROM public."BankAllocationClaim"
-            WHERE "bankTransactionId" = ${bank.id}`;
+            WHERE "bankTransactionId" = ${bank.id} AND "state" = 'ACTIVE'`;
           if (claims.length) throw new Error('SAMSTAEDA_BANKI_THEGAR_UTHLUTADUR');
         }
         if (documents.length !== documentIds.length) throw new Error('SAMSTAEDA_SKJAL_EKKI_FUNDID');
@@ -339,7 +523,7 @@ export async function confirmVisualDocumentSet(input: ConfirmationInput) {
 export async function voidVisualDocumentSet(input: {
   companyId: number; userId: number; bankAccountId: number; reconciliationId: number; reason: string;
 }) {
-  if (!documentSetStorageEnabled()) throw new Error('SAMSTAEDA_VISTUN_OHEIMIL');
+  if (!documentSetStorageEnabled(process.env, { companyId: input.companyId, bankAccountId: input.bankAccountId })) throw new Error('SAMSTAEDA_VISTUN_OHEIMIL');
   requirePositiveInteger(input.companyId);
   requirePositiveInteger(input.userId);
   requirePositiveInteger(input.bankAccountId);
@@ -350,6 +534,10 @@ export async function voidVisualDocumentSet(input: {
   for (let attempt = 0; ; attempt++) {
     try {
       return await prisma.$transaction(async tx => {
+        await assertProductionDatabaseTls(tx);
+        // Existing explicit Production gate, with a second DB-side guard contract.
+        // No change to local tests or unrelated reconciliation services.
+        if (process.env.VERCEL_ENV === 'production') await assertVerifiedBankAllocationContract(tx);
         const group = await tx.financialReconciliation.findFirst({
           where: {
             id: input.reconciliationId, companyId: input.companyId,
@@ -367,14 +555,23 @@ export async function voidVisualDocumentSet(input: {
         const table = await tx.$queryRaw<Array<{ present: boolean }>>`
           SELECT to_regclass('public."BankAllocationClaim"') IS NOT NULL AS present`;
         if (table[0]?.present) {
-          const claims = await tx.$queryRaw<Array<{ bankTransactionId: number }>>`
-            SELECT "bankTransactionId" FROM public."BankAllocationClaim"
+          // A confirmed document set owns its own sticky DB claim. That same
+          // claim must NOT prevent voiding its owner. Other claims still block.
+          const claims = await tx.$queryRaw<Array<{
+            bankTransactionId: number; kind: string; ownerFamily: string; ownerKey: string;
+          }>>`
+            SELECT "bankTransactionId", kind, "ownerFamily", "ownerKey"
+            FROM public."BankAllocationClaim"
             WHERE "bankTransactionId" = ${bank.id}`;
-          if (claims.length) throw new Error('SAMSTAEDA_BANKI_THEGAR_UTHLUTADUR');
+          if (claims.some(claim => claim.kind !== 'ORDINARY' ||
+              claim.ownerFamily !== 'RECONCILIATION' ||
+              claim.ownerKey !== String(group.id))) {
+            throw new Error('SAMSTAEDA_BANKI_THEGAR_UTHLUTADUR');
+          }
         }
         // A subsequent payment event must not be detached by voiding this set.
         const subsequentPayment = await tx.financialEventPayment.findFirst({
-          where: { bankTransactionId: bank.id }, select: { id: true },
+          where: { bankTransactionId: bank.id, status: 'CONFIRMED' }, select: { id: true },
         });
         if (subsequentPayment) throw new Error('SAMSTAEDA_BANKI_THEGAR_GREIDSLA');
         const other = await tx.financialReconciliationParticipant.findFirst({
