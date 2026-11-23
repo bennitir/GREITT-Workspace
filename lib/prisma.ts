@@ -1,15 +1,10 @@
 import { PrismaPg } from "@prisma/adapter-pg";
 import { PrismaClient } from "../app/generated/prisma/client";
+import { assertSafeVercelPreviewEnvironment } from "./core/preview-environment";
+import { prismaPgConnectionOptions } from "./core/verified-database-tls";
 
-const connectionString = process.env.DATABASE_URL;
-
-if (!connectionString) {
-  throw new Error("DATABASE_URL vantar.");
-}
-
-const adapter = new PrismaPg({
-  connectionString,
-});
+assertSafeVercelPreviewEnvironment();
+const adapter = new PrismaPg(prismaPgConnectionOptions());
 
 const globalForPrisma = globalThis as unknown as {
   prismaV11: PrismaClient | undefined;

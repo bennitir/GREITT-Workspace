@@ -7,6 +7,7 @@ import { revalidatePath } from "next/cache";
 import { redirect } from "next/navigation";
 import { Prisma } from "@/app/generated/prisma/client";
 import { getCompanyAccess } from "@/lib/core/access-control";
+import { requireFinancialSourcePrepareAccess } from "@/lib/core/financial-source-mutation-access";
 import {
   confirmBankFinancialEventPayment as confirmBankFinancialEventPaymentCore,
 } from "@/lib/financial-reconciliation/event-confirmation";
@@ -23,7 +24,7 @@ import {
 import { prisma } from "@/lib/prisma";
 import { sourceFileSha256, sourceFileSize } from "@/lib/bank/import-provenance";
 
-async function bankContext(requestedCompanyId?: number) {
+async function bankContext(requestedCompanyId?: number, requiredCapability?: "prepare") {
   const store = await cookies();
   const token = store.get("sessionToken")?.value;
   const cookieCompanyId = Number(store.get("activeCompanyId")?.value);
@@ -49,6 +50,11 @@ async function bankContext(requestedCompanyId?: number) {
     if (!access?.isActive) throw new Error("Aðgang vantar.");
   }
 
+  if (requiredCapability === "prepare") {
+    // Use the effective user, including restricted ADMIN impersonation, rather
+    // than interpreting a session/membership as authorization to mutate.
+    requireFinancialSourcePrepareAccess(await getCompanyAccess(companyId));
+  }
   return { companyId, userId: session.user.id };
 }
 
@@ -61,7 +67,7 @@ async function requireBankAccount(bankAccountId: number, companyId: number) {
 }
 
 export async function createBankAccount(formData: FormData) {
-  const { companyId } = await bankContext();
+  const { companyId } = await bankContext(undefined, "prepare");
   const name = String(formData.get("name") ?? "").trim();
   const bankName = String(formData.get("bankName") ?? "").trim();
   const accountNumber = String(formData.get("accountNumber") ?? "").trim();
@@ -83,7 +89,7 @@ export async function createBankAccount(formData: FormData) {
 }
 
 export async function createBankTransaction(formData: FormData) {
-  const { companyId } = await bankContext();
+  const { companyId } = await bankContext(undefined, "prepare");
   const bankAccountId = Number(formData.get("bankAccountId"));
   const date = String(formData.get("date") ?? "");
   const text = String(formData.get("text") ?? "").trim();
@@ -167,7 +173,7 @@ function bankRowFingerprint(bankAccountId: number, date: Date, raw: Record<strin
 }
 
 export async function previewBankStatement(formData: FormData) {
-  const { companyId } = await bankContext();
+  const { companyId } = await bankContext(undefined, "prepare");
   const bankAccountId = Number(formData.get("bankAccountId"));
   if (!bankAccountId) throw new Error("Bankareikning vantar.");
   await requireBankAccount(bankAccountId, companyId);
@@ -269,7 +275,7 @@ export async function previewBankStatement(formData: FormData) {
 }
 
 export async function cancelBankImport(formData: FormData) {
-  const { companyId } = await bankContext();
+  const { companyId } = await bankContext(undefined, "prepare");
   const batchId = Number(formData.get("batchId"));
   if (!batchId) throw new Error("Innflutningsbunki vantar.");
 
@@ -288,7 +294,7 @@ export async function cancelBankImport(formData: FormData) {
 }
 
 export async function confirmBankImport(formData: FormData) {
-  const { companyId } = await bankContext();
+  const { companyId } = await bankContext(undefined, "prepare");
   const batchId = Number(formData.get("batchId"));
   if (!batchId) throw new Error("Innflutningsbunki vantar.");
 

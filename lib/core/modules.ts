@@ -40,6 +40,14 @@ export const GLOGGT_MODULES = {
     description: "Verk, vinnustundir, tæki, efni og verkasaga.",
     available: false,
   },
+
+  // Eigandabundin þróunareining. Aldrei sjálfgefið virk.
+  fjolskylduvidauki: {
+    id: "fjolskylduvidauki",
+    name: "Fjölskylduviðauki",
+    description: "Persónulegar millifærslur, lán, gjafir og bifreiðir.",
+    available: false,
+  },
 } as const;
 
 export type GloggtModuleId = keyof typeof GLOGGT_MODULES;
