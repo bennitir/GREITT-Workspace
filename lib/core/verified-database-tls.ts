@@ -67,7 +67,7 @@ export function prismaPgConnectionOptions(env: Environment = process.env): Verif
       !url.hostname || !url.username || !url.password || !url.pathname || url.hash ||
       DISALLOWED_URL_PARAMETERS.some(parameter => url.searchParams.has(parameter)) ||
       url.searchParams.getAll('sslmode').length > 1 ||
-      (url.searchParams.has('sslmode') && url.searchParams.get('sslmode') !== 'verify-full')) {
+      (url.searchParams.has('sslmode') && !['require', 'verify-full'].includes(url.searchParams.get('sslmode') ?? ''))) {
     throw new Error('GLOGGT_PG_TLS_URL_INVALID');
   }
 
