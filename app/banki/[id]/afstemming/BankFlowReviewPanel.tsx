@@ -75,10 +75,10 @@ const translations = {
 } as const;
 
 export default function BankFlowReviewPanel({ language, bankAccountId, bankAccountName, bankAccountNumber,
-  bankTransactionId, bankAmount, bankText, inspectAction, saved, confirmEnabled, confirmAction, voidAction,
+  bankTransactionId, bankAmount, bankDate, bankText, inspectAction, saved, confirmEnabled, confirmAction, voidAction,
   ownerReviewAction, onBeginOwnTransferReview }: {
   language: string; bankAccountId: number; bankAccountName: string; bankAccountNumber: string | null;
-  bankTransactionId: number; bankAmount: string; bankText: string;
+  bankTransactionId: number; bankAmount: string; bankDate: string; bankText: string;
   inspectAction: (bankAccountId: number, transactionId: number) => Promise<InternalTransferReviewResult>;
   saved?: SavedOwnTransfer;
   confirmEnabled: boolean;
@@ -132,6 +132,13 @@ export default function BankFlowReviewPanel({ language, bankAccountId, bankAccou
   return <section data-testid="bank-flow-read-only" className="mt-3 rounded-lg border border-slate-300 bg-slate-50 p-3 text-sm">
     <h4 className="font-semibold text-slate-900">{t.title}</h4>
     <p className="mt-1 font-medium text-slate-800">{direction}</p>
+    {!saved && <div data-testid="own-transfer-prominent-search" className="mt-3 rounded-lg border border-teal-300 bg-teal-50 p-3">
+      <p className="text-xs font-semibold text-teal-950">{t.chooseHint}</p>
+      <button type="button" onClick={inspect} disabled={pending}
+        className="mt-2 w-full rounded border border-teal-800 bg-white px-3 py-2 text-left font-semibold text-teal-950 hover:bg-teal-100 disabled:opacity-60">
+        {pending ? t.looking : t.look}
+      </button>
+    </div>}
     <dl className="mt-2 space-y-2">
       <div><dt className="font-semibold">{t.source}</dt><dd className="break-words">{bankAccountName} · {bankAccountNumber || t.missingAccount}</dd></div>
       <div><dt className="font-semibold">{t.target}</dt><dd className={saved ? "font-semibold text-emerald-900" : "font-semibold text-amber-900"}>{saved ? <>{t.confirmed}: {saved.oppositeBankAccountName} · {saved.oppositeBankAccountNumber || t.missingAccount}</> : t.unknown}</dd></div>
@@ -149,10 +156,6 @@ export default function BankFlowReviewPanel({ language, bankAccountId, bankAccou
       <button type="button" onClick={undoSelected} disabled={!confirmEnabled || pending || voidReason.trim().length < 8}
         className="mt-2 rounded border border-amber-800 bg-white px-3 py-2 font-semibold text-amber-950 disabled:opacity-50">{t.undoButton}</button>
     </section>}
-    {!saved && <button type="button" onClick={inspect} disabled={pending}
-      className="mt-3 rounded border border-teal-700 bg-white px-3 py-2 font-semibold text-teal-900 disabled:opacity-60">
-      {pending ? t.looking : t.look}
-    </button>}
     {result && <div className="mt-3" role="status" aria-live="polite">
       {!result.ok ? <p className="text-amber-900">{t.fail}</p> : <>
         <p className="font-semibold">{result.matches.length ? t.hits : t.noHits}</p>
@@ -168,9 +171,24 @@ export default function BankFlowReviewPanel({ language, bankAccountId, bankAccou
         </ul>}
         {chosen && <section data-testid="own-transfer-confirm-preview" className="mt-3 rounded border border-teal-300 bg-teal-50 p-3">
           <h5 className="font-bold">{t.selected}</h5>
-          <p className="mt-1">#{bankTransactionId}: {bankAccountName} · {bankAmount} ISK</p>
-          <p>#{chosen.transactionId}: {chosen.bankAccountName} · {chosen.amount} ISK</p>
-          <p className="mt-1 text-xs">{t.chooseHint}</p>
+          <div data-testid="own-transfer-two-sided-preview" className="mt-3 grid grid-cols-1 gap-2 sm:grid-cols-2">
+            <div className="rounded border border-slate-300 bg-white p-3">
+              <p className="text-xs font-bold text-slate-700">{t.source}</p>
+              <p className="mt-1 font-semibold">{bankAccountName}</p>
+              <p className="break-words text-xs">{bankAccountNumber || t.missingAccount}</p>
+              <p className="mt-2 text-xs">{t.bankMovement} #{bankTransactionId} · {formatCounterBankDate(bankDate, language)}</p>
+              <p className="mt-1 text-lg font-bold">{bankAmount} ISK</p>
+            </div>
+            <div className="rounded border border-teal-300 bg-white p-3">
+              <p className="text-xs font-bold text-teal-950">{t.otherSide}</p>
+              <p className="mt-1 font-semibold">{chosen.bankAccountName}</p>
+              <p className="break-words text-xs">{chosen.bankAccountNumber || t.missingAccount}</p>
+              <p className="mt-2 text-xs">{t.bankMovement} #{chosen.transactionId} · {formatCounterBankDate(chosen.date, language)}</p>
+              <p className="mt-1 text-lg font-bold">{chosen.amount} ISK</p>
+              <p className="mt-1 break-words text-xs text-slate-700">{chosen.text}</p>
+            </div>
+          </div>
+          <p className="mt-2 text-xs">{t.chooseHint}</p>
           <p className="mt-2 text-xs text-slate-700">{t.noReceiptNeeded}</p>
           <BankAccountOwnerPanel key={`${bankAccountId}:${chosen.bankAccountId}`}
             language={language} sourceAccountId={bankAccountId}

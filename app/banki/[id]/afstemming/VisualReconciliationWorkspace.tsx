@@ -74,6 +74,7 @@ export default function VisualReconciliationWorkspace({ model, text: t, language
 }) {
   const router = useRouter();
   const [groupMessage, setGroupMessage] = useState<string | null>(null);
+  const [copyReviewStatus, setCopyReviewStatus] = useState<'copied' | 'failed' | null>(null);
   const [voidReason, setVoidReason] = useState('');
   const [groupPending, startGroupAction] = useTransition();
   const [inspectionPending, startInspection] = useTransition();
@@ -293,6 +294,7 @@ export default function VisualReconciliationWorkspace({ model, text: t, language
   const rowStyle = 'mb-2 block w-full rounded-lg border p-3 text-left focus-visible:outline-2 focus-visible:outline-teal-700';
   function selectTransaction(bankId: number) {
     setSelectedId(bankId);
+    setCopyReviewStatus(null);
     setSourceKey(null);
     setPreview(null);
     setSuggestedPreview(null);
@@ -444,6 +446,42 @@ export default function VisualReconciliationWorkspace({ model, text: t, language
     });
   }
 
+  // A deliberate, read-only handoff note. Draft comparisons are never described
+  // as persisted, confirmed or booked, even when their amounts balance.
+  async function copySelectedReviewNote() {
+    if (!selected) return;
+    const lines = [
+      'GLÖGGT — yfirlit yfir bankahreyfingu',
+      'SKRIFVARIÐ AFRIT: Þetta er hvorki bókun né staðfesting á afstemmingu.',
+      `Bankareikningur #${model.bankAccountId} · Bankhreyfing #${selected.id}`,
+      `Dagsetning: ${date(selected.date)}`,
+      `Texti: ${selected.text}`,
+      `Fjárhæð: ${amount(selected.amount)}`,
+      `Staða bankahreyfingar: ${selected.bankStatus}`,
+      `Heimildagögn ófullkomin: ${model.incomplete || historicalEvidenceUnavailable ? 'Já' : 'Ekki merkt ófullkomin í þessari sýn'}`,
+      '',
+      'Staðfestar skjalatengingar sem eru sýnilegar hér:',
+      ...(savedGroup ? [
+        `- Staðfest skjalasafn #${savedGroup.id}: ${savedGroup.documents.map(doc => `skjal #${doc.documentId ?? doc.receiptId}`).join(', ') || 'engin skjöl birt'}`,
+      ] : []),
+      ...existingConfirmed.map(group =>
+        `- Eldri afstemming #${group.id}: ${group.documents.map(doc => `skjal #${doc.documentId}`).join(', ') || 'engin skjöl birt'}`),
+      ...(!savedGroup && existingConfirmed.length === 0 ? ['- Engin staðfest skjalatenging sýnileg í þessu yfirliti.'] : []),
+      '',
+      `Óvistuð pörunardrög (${comparison.length}):`,
+      ...(comparison.length ? comparison.map(item =>
+        `- ${item.title} | skjal #${item.documentId ?? item.receiptId} | ${date(item.date)} | ${amount(item.amount)}`
+      ) : ['- Engin drög valin.']),
+      'Athugið: Óvistuð drög eru aðeins í þessari vafralotu. Jafnar fjárhæðir staðfesta ekki tengingu.',
+    ];
+    try {
+      await navigator.clipboard.writeText(lines.join('\n'));
+      setCopyReviewStatus('copied');
+    } catch {
+      setCopyReviewStatus('failed');
+    }
+  }
+
   return <section aria-label={t.title} className="mx-auto my-4 max-w-[1600px] rounded-2xl border border-emerald-100 bg-[#f2f6f3] p-4 text-[#173a3d] sm:p-6">
     <header className="flex flex-wrap items-center justify-between gap-3">
       <h1 className="text-2xl font-bold">{t.title}</h1>
@@ -528,11 +566,22 @@ export default function VisualReconciliationWorkspace({ model, text: t, language
           <dl className="flex flex-wrap gap-x-6 gap-y-2 text-sm"><div><dt className="text-slate-600">{t.date}</dt><dd>{date(selected.date)}</dd></div><div><dt className="text-slate-600">BankTransaction</dt><dd>#{selected.id}</dd></div></dl>
           <p className="mt-3 rounded-lg bg-slate-100 p-3 text-sm" data-testid="bank-status-summary"><strong>{t.bankStatusLabel}:</strong> {selected.bankStatus === 'RECONCILED'
             ? t.bankAlreadyReconciledBadge : selected.bankStatus === 'UNRECONCILED' ? t.bankUnreconciledBadge : t.bankStatusUnknown}</p>
+          <div className="mt-3 flex flex-wrap items-center gap-3 rounded-lg border border-slate-200 bg-white p-3" data-testid="visual-copy-review-note">
+            <button type="button" className="rounded-lg border border-teal-700 px-3 py-2 text-sm font-semibold text-teal-900 hover:bg-teal-50"
+              onClick={() => { void copySelectedReviewNote(); }}>
+              Afrita yfirlit færslu
+            </button>
+            <p role="status" aria-live="polite" className="text-xs text-slate-700">
+              {copyReviewStatus === 'copied' ? 'Yfirlit afritað á klippiborðið.' :
+                copyReviewStatus === 'failed' ? 'Ekki tókst að afrita. Athugaðu heimild vafrans fyrir klippiborðið.' :
+                'Skrifvarið yfirlit; óvistuð drög eru skýrt aðgreind frá staðfestingum.'}
+            </p>
+          </div>
           {transferReview && <BankFlowReviewPanel key={`bank-flow:${selected.id}`}
             language={language} bankAccountId={model.bankAccountId}
             bankAccountName={transferReview.bankAccountName}
             bankAccountNumber={transferReview.bankAccountNumber}
-            bankTransactionId={selected.id} bankAmount={selected.amount}
+            bankTransactionId={selected.id} bankAmount={selected.amount} bankDate={selected.date}
             bankText={selected.text} inspectAction={transferReview.inspectAction}
             saved={transferReview.saved.find(link => link.bankTransactionId === selected.id)}
             confirmEnabled={transferReview.confirmEnabled}
