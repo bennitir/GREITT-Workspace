@@ -110,6 +110,26 @@ export default function VisualReconciliationWorkspace({ model, text: t, language
   const middleScroll = useRef<HTMLDivElement>(null);
   const rightScroll = useRef<HTMLDivElement>(null);
   const transactionScroll = useRef<HTMLDivElement>(null);
+  const workspaceGrid = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    const grid = workspaceGrid.current;
+    if (!grid) return;
+    // Fill the visible desktop height even when headings wrap or the page scrolls.
+    const measure = () => {
+      const top = `${Math.max(0, grid.getBoundingClientRect().top)}px`;
+      if (grid.style.getPropertyValue('--workspace-top') !== top) grid.style.setProperty('--workspace-top', top);
+    };
+    measure();
+    const observer = new ResizeObserver(measure);
+    observer.observe(grid.parentElement!);
+    window.addEventListener('resize', measure);
+    window.addEventListener('scroll', measure, { passive: true });
+    return () => {
+      observer.disconnect();
+      window.removeEventListener('resize', measure);
+      window.removeEventListener('scroll', measure);
+    };
+  }, []);
   const [documentSearchTerm, setDocumentSearchTerm] = useState<string | null>(null);
   const [documentSearchFailed, setDocumentSearchFailed] = useState(false);
   const [documentSearchBroadenedTo, setDocumentSearchBroadenedTo] = useState<string | null>(null);
@@ -290,7 +310,7 @@ export default function VisualReconciliationWorkspace({ model, text: t, language
   useEffect(() => {
     if (previewUrl) rightScroll.current?.scrollTo({ top: 0, behavior: 'smooth' });
   }, [previewUrl]);
-  const panel = 'min-w-0 overflow-hidden rounded-xl border border-emerald-100 bg-white lg:flex lg:h-[calc(100dvh-18rem)] lg:min-h-[26rem] lg:flex-col';
+  const panel = 'min-w-0 overflow-hidden rounded-xl border border-emerald-100 bg-white lg:flex lg:h-[calc(100dvh-var(--workspace-top,18rem)-1rem)] lg:min-h-[26rem] lg:flex-col';
   const heading = 'border-b border-emerald-100 p-4 text-base font-semibold lg:shrink-0';
   const rowStyle = 'mb-2 block w-full rounded-lg border p-3 text-left focus-visible:outline-2 focus-visible:outline-teal-700';
   function selectTransaction(bankId: number) {
@@ -516,7 +536,7 @@ export default function VisualReconciliationWorkspace({ model, text: t, language
       </div>
       <p className="mt-2 text-xs text-slate-600">{t.progressNotice}</p>
     </section>
-    <div className="grid items-start gap-4 lg:grid-cols-[minmax(200px,.8fr)_minmax(240px,1fr)_minmax(300px,1.2fr)]">
+    <div ref={workspaceGrid} className="grid items-start gap-4 lg:grid-cols-[minmax(200px,.8fr)_minmax(240px,1fr)_minmax(300px,1.2fr)]">
       <section className={panel} aria-label={t.transactions}>
         <h2 className={heading}>{t.transactions}</h2>
         <div ref={transactionScroll} className="max-h-[65vh] overflow-y-auto p-3 lg:min-h-0 lg:max-h-none lg:flex-1 lg:overscroll-contain" tabIndex={0}>
@@ -813,7 +833,7 @@ export default function VisualReconciliationWorkspace({ model, text: t, language
         <h2 className={heading}>{t.sources}</h2>
         {/* A single independently scrolling body for evidence, archive search and document preview. */}
         <div ref={rightScroll} className="lg:min-h-0 lg:flex-1 lg:overflow-y-auto lg:overscroll-contain" tabIndex={0}>
-        {previewUrl && <section data-testid="document-preview" className="border-t border-emerald-100 p-3">
+        {previewUrl && <section data-testid="document-preview" className="border-t border-emerald-100 p-3 lg:flex lg:h-full lg:flex-col">
           <p className="mb-2 text-xs text-slate-600">Receipt #{preview?.receiptId}{preview?.documentId != null ? ` · AiDetectedDocument #${preview.documentId}` : ''}</p>
           <div className="flex flex-wrap items-center justify-between gap-3">
             <h3 className="font-semibold">{t.openDocument} #{preview?.documentId ?? preview?.receiptId}

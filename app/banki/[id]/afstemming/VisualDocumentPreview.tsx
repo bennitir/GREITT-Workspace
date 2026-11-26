@@ -108,7 +108,7 @@ function DocumentPreview({ url, title, language }: Props) {
 
   const ready = source.kind === 'pdf' || source.kind === 'image';
   const button = 'rounded border border-slate-300 bg-white px-2 py-1 text-sm disabled:opacity-40 focus-visible:outline-2 focus-visible:outline-teal-700';
-  return <div data-testid="document-file-preview" className="mt-3 flex h-[58vh] min-h-[360px] w-full flex-col overflow-hidden rounded border bg-slate-100">
+  return <div data-testid="document-file-preview" className="mt-3 flex h-[58vh] min-h-[360px] w-full flex-col overflow-hidden rounded border bg-slate-100 lg:h-auto lg:min-h-0 lg:flex-1">
     <div className="flex shrink-0 flex-wrap items-center gap-2 border-b bg-white p-2">
       {source.kind === 'pdf' && <>
         <button type="button" className={button} aria-label={labels.previous} disabled={pageNumber <= 1}
