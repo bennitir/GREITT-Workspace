@@ -2,6 +2,7 @@
 
 import { useEffect, useRef, useState, useTransition } from 'react';
 import { useRouter } from 'next/navigation';
+import VisualDocumentPreview from './VisualDocumentPreview';
 import FamilyFinanceWorkspacePanel from './FamilyFinanceWorkspacePanel';
 import ReconciliationEvidenceChain from './ReconciliationEvidenceChain';
 import { chainConfirmationsForBank } from '../../_lib/visual-evidence-chain';
@@ -827,13 +828,12 @@ export default function VisualReconciliationWorkspace({ model, text: t, language
           </p>}
           <p className="my-2 text-sm">{t.security}</p>
           <a className="text-sm font-semibold underline" href={previewUrl} target="_blank" rel="noopener noreferrer">{t.openDocument} ↗</a>
-          <iframe
+          {embeddedFileUrl && <VisualDocumentPreview
+            key={previewUrl}
+            url={embeddedFileUrl}
             title={t.openDocument}
-            src={embeddedFileUrl ?? undefined}
-            referrerPolicy="no-referrer"
-            loading="lazy"
-            className="mt-3 h-[58vh] min-h-[360px] w-full rounded border bg-white"
-          />
+            language={language}
+          />}
         </section>}
         <div className="max-h-[45vh] overflow-auto p-3 lg:max-h-none lg:overflow-visible">
           {(existingConfirmed.length > 0 || savedGroup) && <section data-testid="linked-sources-confirmed" className="mb-3 rounded-lg border border-emerald-300 bg-emerald-50 p-3 text-sm">
