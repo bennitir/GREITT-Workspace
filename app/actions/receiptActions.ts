@@ -86,6 +86,8 @@ import {
 import {
   lockDocumentIdentityCompany,
 } from "@/lib/receipts/document-instance-service";
+import { assertFinalBookkeepingPosting, type PostingLine } from "@/lib/core/bookkeeping-final-posting";
+import { assertManualReceiptPostingAvailable, assertUnpostedDocument, assertUnpostedReceipt } from "@/lib/core/bookkeeping-lifecycle-policy";
 
 async function isInventoryModuleEnabled(companyId: number) {
   const moduleSettings = await getCompanyModuleSettings(companyId);
@@ -122,6 +124,9 @@ async function claimDetectedDocumentContentMutation(
   },
 ) {
   const { companyId, receiptId, documentId, expectedRevision, userId, reason } = params;
+  // Serialize canonical-content mutations with book/delete/identity operations.
+  // Holding this transaction advisory lock is safe if caller already holds it.
+  await lockDocumentIdentityCompany(tx, companyId);
   const current = await tx.aiDetectedDocument.findFirst({
     where: {
       id: documentId,
@@ -1021,54 +1026,17 @@ export async function prepareExistingReceiptManually(
 }
 
 export async function addReceiptEntries(receiptId: number) {
+  // Former demo action wrote fixed amounts and circumvented normal posting.
+  // Keep its explicit company-scoped access check but reject the legacy path.
   const companyId = await requireActiveCompanyBookAccess();
   const receipt = await prisma.receipt.findFirst({
     where: { id: receiptId, companyId },
     select: { id: true },
   });
-
-  if (!receipt) {
-    throw new Error("Fylgiskjal fannst ekki.");
-  }
-
-  const existingEntries = await prisma.receiptEntry.count({
-    where: {
-      receiptId: receipt.id,
-    },
-  });
-
-  if (existingEntries > 0) {
-    return;
-  }
-
-  await prisma.receiptEntry.createMany({
-    data: [
-      {
-        account: "2550",
-        text: "Staðgreiðsla",
-        debit: 53508,
-        credit: 0,
-        receiptId: receipt.id,
-      },
-      {
-        account: "4530",
-        text: "Tryggingagjald",
-        debit: 12532,
-        credit: 0,
-        receiptId: receipt.id,
-      },
-      {
-        account: "1510",
-        text: "Banki",
-        debit: 0,
-        credit: 66040,
-        receiptId: receipt.id,
-      },
-    ],
-  });
-
-  revalidatePath(`/fylgiskjol/${receipt.id}`);
+  if (!receipt) throw new Error("Fylgiskjal fannst ekki.");
+  throw new Error("Þessi eldri bókunarleið er lokuð. Notaðu yfirferð og endanlega bókun.");
 }
+
 export async function saveOcrResult(
 
   receiptId: number,
@@ -1110,6 +1078,24 @@ function isVatPostingAccount(account: {
     account.entryRole === "VAT_INPUT" ||
     account.entryRole === "VAT_OUTPUT"
   );
+}
+
+// Must run inside the SAME DB transaction as claim, voucher and ledger writes.
+// The caller's suggested account list is not authoritative.
+async function assertPersistedPostingLines(
+  tx: Prisma.TransactionClient,
+  companyId: number,
+  entries: readonly PostingLine[],
+  postingDate: Date | null | undefined,
+) {
+  const accounts = await tx.account.findMany({
+    where: {
+      companyId,
+      number: { in: [...new Set(entries.map((entry) => entry.account))] },
+    },
+    select: { number: true, isActive: true },
+  });
+  assertFinalBookkeepingPosting(entries, accounts, postingDate);
 }
 
 async function assertCompanyVatPostingAllowed(
@@ -6042,6 +6028,7 @@ export async function applyConfirmedBookingSuggestions(
   }
 
   await prisma.$transaction(async (tx) => {
+    await lockDocumentIdentityCompany(tx, document.receipt.companyId);
     const reviewedAt = new Date();
     const reviewClaim = await tx.aiDetectedDocument.updateMany({
       where: {
@@ -7384,6 +7371,18 @@ if (!document.date) {
     // company-scoped transaction lock. This prevents an identity/binding writer
     // from changing the evidence while duplicate reasons are being evaluated.
     await lockDocumentIdentityCompany(tx, document.receipt.companyId);
+    // A manual receipt posting can have completed while this child was in
+    // preflight. The shared advisory lock alone is insufficient: check the
+    // parent again *inside* the locked transaction before claiming this child.
+    const lockedParentReceipt = await tx.receipt.findFirst({
+      where: { id: document.receiptId, companyId: document.receipt.companyId },
+      select: { status: true, voucherNumber: true },
+    });
+    if (!lockedParentReceipt || lockedParentReceipt.status === "APPROVED" ||
+        lockedParentReceipt.voucherNumber !== null) {
+      throw new Error("Ekki er hægt að bóka undirskjal þegar foreldrafylgiskjalið er þegar bókað.");
+    }
+
 
     const company = await tx.company.findUnique({
       where: {
@@ -7555,6 +7554,14 @@ if (olderUnbookedDocument?.date) {
     const postingClaim = await tx.aiDetectedDocument.updateMany({
       where: {
         id: document.id,
+        receiptId: document.receiptId,
+        contentRevision: document.contentRevision,
+        reviewedContentRevision: document.contentRevision,
+        reviewedAt: { not: null },
+        disposedAt: null,
+        disposition: null,
+        duplicateMarkedAt: null,
+        needsAttentionAt: null,
         approvedAt: null,
         voucherNumber: null,
       },
@@ -7570,6 +7577,33 @@ if (olderUnbookedDocument?.date) {
     }
 
     perf("tx posting claim");
+
+    // Claim is revision-bound. Re-read the actual persisted lines *after* the
+    // claim rather than posting a snapshot fetched before the transaction.
+    // An edit committed between preflight and claim invalidates this attempt.
+    const postingDocument = await tx.aiDetectedDocument.findFirst({
+      where: {
+        id: document.id,
+        receiptId: document.receiptId,
+        receipt: { companyId: company.id },
+      },
+      include: { bookingEntries: true },
+    });
+    if (!postingDocument ||
+        postingDocument.contentRevision !== document.contentRevision ||
+        postingDocument.reviewedContentRevision !== document.contentRevision ||
+        !postingDocument.reviewedAt ||
+        !postingDocument.date ||
+        postingDocument.disposition || postingDocument.disposedAt ||
+        postingDocument.duplicateMarkedAt || postingDocument.needsAttentionAt) {
+      throw new Error("Fylgiskjalið hefur breyst frá yfirferð. Endurhlaðið það áður en bókað er.");
+    }
+    await assertPersistedPostingLines(
+      tx,
+      company.id,
+      postingDocument.bookingEntries,
+      postingDocument.date,
+    );
 
     let voucherNumber: number;
 
@@ -7632,7 +7666,7 @@ if (usedByAi || usedByManual) {
     perf("tx voucher allocation + uniqueness + reservation");
 
     await tx.receiptEntry.createMany({
-      data: document.bookingEntries.map(
+      data: postingDocument.bookingEntries.map(
         (entry) => ({
           account: entry.account,
           text: entry.text,
@@ -7643,20 +7677,20 @@ if (usedByAi || usedByManual) {
       ),
     });
 
-    const hasVatActivity = document.bookingEntries.some(
+    const hasVatActivity = postingDocument.bookingEntries.some(
   (entry) =>
     entry.account === "2510" ||
     entry.account === "2520"
 );
 
-const isVatSettlement = document.bookingEntries.some(
+const isVatSettlement = postingDocument.bookingEntries.some(
   (entry) => entry.account === "2590"
 );
 
 if (hasVatActivity && !isVatSettlement) {
-  const vatYear = document.date!.getUTCFullYear();
+  const vatYear = postingDocument.date!.getUTCFullYear();
   const vatPeriod =
-    Math.floor(document.date!.getUTCMonth() / 2) + 1;
+    Math.floor(postingDocument.date!.getUTCMonth() / 2) + 1;
 
   await tx.vatPeriod.upsert({
     where: {
@@ -7713,7 +7747,7 @@ if (hasVatActivity && !isVatSettlement) {
           receiptNumber: document.receiptNumber,
           documentDate: document.date?.toISOString() ?? null,
           totalAmount: document.totalAmount,
-          bookingEntries: document.bookingEntries.map((entry) => ({
+          bookingEntries: postingDocument.bookingEntries.map((entry) => ({
             account: entry.account,
             text: entry.text,
             debit: entry.debit,
@@ -7801,76 +7835,12 @@ perf("tx finalize receipt");
 
   return { status: "BOOKED" };
 }
-  export async function approveAiSuggestion(receiptId: number) {
-  const receipt = await prisma.receipt.findUnique({
-    where: {
-      id: receiptId,
-    },
-    include: {
-      company: true,
-    },
-  });
+export async function approveAiSuggestion(_receiptId: number): Promise<never> {
+  // Legacy AI approval had no company-scoped atomic posting contract.
+  // There is no current UI caller. Do not reinstate without full review.
+  throw new Error("Eldri AI-bókunarleið er lokuð. Notaðu yfirferð og endanlega bókun.");
+}
 
-  if (!receipt) {
-    throw new Error("Fylgiskjal fannst ekki.");
-  }
-
-  if (!receipt.aiDate || receipt.aiAmount == null) {
-    throw new Error("Engin full AI-tillaga er til að samþykkja.");
-  }
-
-  const approvedAiDate = receipt.aiDate;
-  const approvedAiAmount = receipt.aiAmount;
-
-  const aiEntries = await prisma.aiBookingEntry.findMany({
-    where: {
-      receiptId,
-    },
-  });
-
-  if (aiEntries.length === 0) {
-    throw new Error("Engin AI-bókhaldstillaga er til að samþykkja.");
-  }
-
-  const existingEntries = await prisma.receiptEntry.count({
-    where: {
-      receiptId,
-    },
-  });
-
-  if (existingEntries > 0) {
-    throw new Error("Þetta fylgiskjal hefur þegar verið bókað.");
-  }
-
-  await prisma.$transaction(async (tx) => {
-    await assertCompanyVatPostingAllowed(
-      tx,
-      receipt.company,
-      aiEntries
-    );
-
-    await tx.receipt.update({
-    where: {
-      id: receiptId,
-    },
-    data: {
-      date: approvedAiDate,
-      amount: approvedAiAmount,
-      aiApprovedAt: new Date(),
-    },
-  });
-
-    await tx.receiptEntry.createMany({
-      data: aiEntries.map((entry) => ({
-        account: entry.account,
-        text: entry.text,
-        debit: entry.debit,
-        credit: entry.credit,
-        receiptId,
-      })),
-    });
-  });
-  }
 export async function approveManualReceipt(
   receiptId: number,
   bookingEntries: {
@@ -7908,6 +7878,28 @@ export async function approveManualReceipt(
   }
 
   await prisma.$transaction(async (tx) => {
+    // Posting and deletion must use the SAME company-scoped lifecycle lock.
+    // A preflight receipt read is not authoritative after a concurrent change.
+    await lockDocumentIdentityCompany(tx, companyId);
+    const currentReceipt = await tx.receipt.findFirst({
+      where: { id: receiptId, companyId },
+      select: { updatedAt: true, status: true, voucherNumber: true },
+    });
+    // Manual posting must never silently coexist with posted child documents.
+    const [bookedChildCount, postedEntryCount] = await Promise.all([
+      tx.aiDetectedDocument.count({
+        where: { receiptId, OR: [
+          { approvedAt: { not: null } }, { voucherNumber: { not: null } },
+        ] },
+      }),
+      tx.receiptEntry.count({ where: { receiptId } }),
+    ]);
+    assertManualReceiptPostingAvailable({
+      previous: receipt,
+      current: currentReceipt,
+      bookedChildCount,
+      postedEntryCount,
+    });
     const postingClaim = await tx.receipt.updateMany({
       where: {
         id: receiptId,
@@ -7932,6 +7924,8 @@ export async function approveManualReceipt(
     if (!company) {
       throw new Error("Fyrirtæki fannst ekki.");
     }
+
+    await assertPersistedPostingLines(tx, company.id, bookingEntries, receipt.date);
 
     await assertCompanyVatPostingAllowed(
       tx,
@@ -8625,6 +8619,15 @@ const existingEntries = await prisma.aiDetectedDocumentEntry.findMany({
   },
 });
 
+if (submittedIds.size !== entries.length ||
+    entries.some((entry) => !Number.isSafeInteger(entry.id) || entry.id < 1)) {
+  throw new Error("Bókunarlínur innihalda ógild eða tvítekin auðkenni.");
+}
+const actualIds = new Set(existingEntries.map((entry) => entry.id));
+if (entries.some((entry) => !actualIds.has(entry.id))) {
+  throw new Error("Bókunarlína tilheyrir ekki þessu fylgiskjali.");
+}
+
 const entryIdsToDelete = existingEntries
   .map((entry) => entry.id)
   .filter((id) => !submittedIds.has(id));
@@ -8663,7 +8666,7 @@ await prisma.$transaction(async (tx) => {
   });
 
   for (const entry of entries) {
-    await tx.aiDetectedDocumentEntry.updateMany({
+    const updated = await tx.aiDetectedDocumentEntry.updateMany({
       where: {
         id: entry.id,
         documentId,
@@ -8675,6 +8678,9 @@ await prisma.$transaction(async (tx) => {
         credit: entry.credit,
       },
     });
+    if (updated.count !== 1) {
+      throw new Error("Bókunarlína breyttist á meðan unnið var. Endurhlaðið skjalið.");
+    }
   }
 }, { isolationLevel: Prisma.TransactionIsolationLevel.Serializable });
 
@@ -8882,96 +8888,131 @@ export async function deleteDetectedDocumentEntry(entryId: number) {
 }
 export async function deleteDetectedDocument(documentId: number) {
   const companyId = await requireActiveCompanyDeleteAccess();
-  const document = await prisma.aiDetectedDocument.findFirst({
-  where: {
-    id: documentId,
-    receipt: {
-      companyId,
-    },
-  },
-});
+  // Same transaction-scoped company lock as detected/manual posting.
+  // Both authorization scope and mutable state are checked *after* the lock.
+  const receiptId = await prisma.$transaction(async (tx) => {
+    await lockDocumentIdentityCompany(tx, companyId);
+    const document = await tx.aiDetectedDocument.findFirst({
+      where: { id: documentId, receipt: { companyId } },
+      select: {
+        receiptId: true,
+        contentRevision: true,
+        reviewedAt: true,
+        approvedAt: true,
+        voucherNumber: true,
+      },
+    });
+    if (!document) throw new Error("Greint fylgiskjal fannst ekki.");
+    assertUnpostedDocument(document);
+    const parent = await tx.receipt.findFirst({
+      where: { id: document.receiptId, companyId },
+      select: { status: true, voucherNumber: true },
+    });
+    if (!parent || parent.status === "APPROVED" || parent.voucherNumber != null) {
+      throw new Error("Ekki er hægt að eyða undirskjali úr bókuðu fylgiskjali.");
+    }
 
-  if (!document) {
-    throw new Error("Greint fylgiskjal fannst ekki.");
-  }
+    // A confirmed payment/reconciliation must prevent deleting its evidence.
+    // For unconfirmed PRIMARY events this also invalidates stale derivations.
+    try {
+      await invalidateReviewedFinancialDerivationsForContentChange(tx, {
+        companyId, documentId,
+      });
+    } catch (error) {
+      if (error instanceof Error && error.message.startsWith("REVIEW_CONTENT_LOCKED|")) {
+        throw new Error("Ekki er hægt að eyða fylgiskjali með staðfestri greiðslu eða afstemmingu.");
+      }
+      throw error;
+    }
 
-  if (document.approvedAt || document.voucherNumber) {
-    throw new Error(
-      "Ekki er hægt að eyða greindu fylgiskjali sem hefur þegar verið bókað."
-    );
-  }
-
-  await prisma.aiDetectedDocument.delete({
-    where: {
-      id: documentId,
-    },
+    const removed = await tx.aiDetectedDocument.deleteMany({
+      where: {
+        id: documentId,
+        receiptId: document.receiptId,
+        contentRevision: document.contentRevision,
+        reviewedAt: document.reviewedAt,
+        approvedAt: null,
+        voucherNumber: null,
+        receipt: { companyId, status: { not: "APPROVED" }, voucherNumber: null },
+      },
+    });
+    if (removed.count !== 1) {
+      throw new Error("Fylgiskjalið breyttist meðan eyðing fór fram. Endurhlaðið síðuna.");
+    }
+    return document.receiptId;
   });
 
-  revalidatePath(`/fylgiskjol/${document.receiptId}`);
+  revalidatePath(`/fylgiskjol/${receiptId}`);
   revalidatePath("/fylgiskjol");
 }
 
 export async function deleteReceipt(receiptId: number) {
   const companyId = await requireActiveCompanyDeleteAccess();
-  const receipt = await prisma.receipt.findFirst({
-    where: {
-      id: receiptId,
-      companyId,
-    },
-    include: {
-      aiDetectedDocuments: true,
-      entries: true,
-    },
-  });
+  await prisma.$transaction(async (tx) => {
+    await lockDocumentIdentityCompany(tx, companyId);
+    const receipt = await tx.receipt.findFirst({
+      where: { id: receiptId, companyId },
+      include: {
+        aiDetectedDocuments: {
+          select: {
+            id: true,
+            approvedAt: true,
+            voucherNumber: true,
+          },
+        },
+        _count: { select: { entries: true } },
+      },
+    });
+    if (!receipt) throw new Error("Fylgiskjal fannst ekki.");
 
-  if (!receipt) {
-    throw new Error("Fylgiskjal fannst ekki.");
-  }
+    // An unapproved parent can nevertheless contain posted child documents.
+    // ReceiptEntry has ON DELETE CASCADE: deleting it would erase ledger lines.
+    assertUnpostedReceipt(receipt);
 
-  // Ekki má eyða fylgiskjali sem hefur verið bókað
-  const hasApprovedDocument = receipt.aiDetectedDocuments.some(
-    (document) => document.approvedAt !== null
-  );
+    // Never delete confirmed reconciliation/payment evidence indirectly.
+    for (const document of receipt.aiDetectedDocuments) {
+      try {
+        await invalidateReviewedFinancialDerivationsForContentChange(tx, {
+          companyId, documentId: document.id,
+        });
+      } catch (error) {
+        if (error instanceof Error && error.message.startsWith("REVIEW_CONTENT_LOCKED|")) {
+          throw new Error("Ekki er hægt að eyða fylgiskjali með staðfestri greiðslu eða afstemmingu.");
+        }
+        throw error;
+      }
+    }
 
-  if (hasApprovedDocument || receipt.status === "APPROVED") {
-    throw new Error(
-      "Ekki er hægt að eyða fylgiskjali sem hefur þegar verið bókað."
-    );
-  }
-
-  await prisma.receipt.delete({
-    where: {
-      id: receiptId,
-    },
+    // A conditional delete is needed even though the posting lock was held:
+    // other legacy parent edits may not yet participate in this lock.
+    const removed = await tx.receipt.deleteMany({
+      where: {
+        id: receiptId,
+        companyId,
+        status: { not: "APPROVED" },
+        voucherNumber: null,
+        updatedAt: receipt.updatedAt,
+      },
+    });
+    if (removed.count !== 1) {
+      throw new Error("Fylgiskjalið breyttist meðan eyðing fór fram. Endurhlaðið síðuna.");
+    }
   });
   revalidatePath("/fylgiskjol");
 }
-  export async function markReceiptReviewed(receiptId: number) {
+export async function markReceiptReviewed(receiptId: number) {
   const companyId = await requireActiveCompanyReviewBookkeepingAccess();
-  const receipt = await prisma.receipt.findFirst({
-    where: {
-      id: receiptId,
-      companyId,
-    },
+  await prisma.$transaction(async (tx) => {
+    await lockDocumentIdentityCompany(tx, companyId);
+    // Review must not regress a receipt already approved by a concurrent post.
+    const updated = await tx.receipt.updateMany({
+      where: { id: receiptId, companyId, status: { not: "APPROVED" }, voucherNumber: null },
+      data: { status: "REVIEWED" },
+    });
+    if (updated.count !== 1) {
+      throw new Error("Ekki er hægt að breyta bókuðu eða óaðgengilegu fylgiskjali.");
+    }
   });
-
-  if (!receipt) {
-    throw new Error("Fylgiskjal fannst ekki.");
-  }
-
-  if (receipt.status === "APPROVED") {
-    throw new Error("Ekki er hægt að breyta bókuðu fylgiskjali.");
-  }
-
-  await prisma.receipt.update({
-    where: {
-      id: receiptId,
-    },
-    data: {
-      status: "REVIEWED",
-    },
-  });
-
   revalidatePath(`/fylgiskjol/${receiptId}`);
   revalidatePath("/fylgiskjol");
   revalidatePath("/stjornbord");

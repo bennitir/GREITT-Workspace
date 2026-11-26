@@ -5,6 +5,7 @@ import { cookies } from "next/headers";
 import { revalidatePath } from "next/cache";
 import { redirect } from "next/navigation";
 import { getCompanyAccess } from "@/lib/core/access-control";
+import { requireFinancialSourcePrepareAccess } from "@/lib/core/financial-source-mutation-access";
 import {
   confirmCardReviewedDocumentReconciliation as confirmCardReviewedDocumentReconciliationCore,
 } from "@/lib/financial-reconciliation/card-reviewed-document-confirmation";
@@ -26,7 +27,7 @@ import {
 
 const CARD_STATEMENT_SOURCE = "PAYMENT_CARD_STATEMENT_XLSX";
 
-async function cardContext() {
+async function cardContext(requiredCapability?: "prepare") {
   const store = await cookies();
   const token = store.get("sessionToken")?.value;
   const companyId = Number(store.get("activeCompanyId")?.value);
@@ -51,6 +52,11 @@ async function cardContext() {
     if (!access?.isActive) throw new Error("Aðgang vantar.");
   }
 
+  if (requiredCapability === "prepare") {
+    // Use the effective user, including restricted ADMIN impersonation, rather
+    // than interpreting a session/membership as authorization to mutate.
+    requireFinancialSourcePrepareAccess(await getCompanyAccess(companyId));
+  }
   return { companyId, userId: session.user.id };
 }
 
@@ -137,7 +143,7 @@ function parseCardDate(value: unknown): Date | null {
 }
 
 export async function createPaymentCard(formData: FormData) {
-  const { companyId } = await cardContext();
+  const { companyId } = await cardContext("prepare");
   const name = text(formData.get("name"));
   const issuerName = text(formData.get("issuerName"));
   const network = text(formData.get("network"));
@@ -172,7 +178,7 @@ export async function createPaymentCard(formData: FormData) {
 }
 
 export async function previewPaymentCardStatement(formData: FormData) {
-  const { companyId } = await cardContext();
+  const { companyId } = await cardContext("prepare");
   const paymentCardId = Number(formData.get("paymentCardId"));
   if (!paymentCardId) throw new Error("Greiðslukort vantar.");
   await requirePaymentCard(paymentCardId, companyId);
@@ -346,7 +352,7 @@ export async function previewPaymentCardStatement(formData: FormData) {
 }
 
 export async function cancelPaymentCardImport(formData: FormData) {
-  const { companyId } = await cardContext();
+  const { companyId } = await cardContext("prepare");
   const batchId = Number(formData.get("batchId"));
   if (!batchId) throw new Error("Innflutningsbunki vantar.");
 
@@ -362,7 +368,7 @@ export async function cancelPaymentCardImport(formData: FormData) {
 }
 
 export async function confirmPaymentCardImport(formData: FormData) {
-  const { companyId } = await cardContext();
+  const { companyId } = await cardContext("prepare");
   const batchId = Number(formData.get("batchId"));
   if (!batchId) throw new Error("Innflutningsbunki vantar.");
 

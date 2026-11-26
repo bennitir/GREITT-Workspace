@@ -29,6 +29,17 @@ test("unambiguous printed installment number is an unverified observation", () =
   assert.equal(Object.hasOwn(data, "obligationId"), false);
 });
 
+test("installment number marker remains detectable without treating page count as installment", () => {
+  const data = buildDeterministicData(
+    "Innheimtubréf númer: 338379\nAfborgun nr. 16 af 480\nSíða 1 af 10",
+  );
+  assert.deepEqual(occurrenceFields(data), {
+    occurrenceSequenceCandidate: 16,
+    occurrenceTotalCandidate: 480,
+    occurrenceSource: "PDF_TEXT_UNVERIFIED",
+  });
+});
+
 test("same installment in multiple notations remains one unverified candidate", () => {
   const data = buildDeterministicData(
     "Gjalddagi 17 af 480\nAfborgun 17/480\nTil greiðslu 240.000 kr.",

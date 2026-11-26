@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 
 import {
+  assertBookkeepingPostingAccess,
   effectiveBookkeepingCapabilities,
   READ_ONLY_BOOKKEEPING_CAPABILITIES,
 } from "./bookkeeping-access-policy";
@@ -39,4 +40,37 @@ test("non-viewer roles preserve explicit granular bookkeeping capabilities", () 
     canBookEntries: true,
     canManageCompanySettings: false,
   });
+});
+
+test("booking is allowed only when the explicit capability is enabled", () => {
+  const access = {
+    accessRole: "BOOKKEEPER",
+    canPrepareBookkeeping: true,
+    canReviewBookkeeping: true,
+    canReconcileBookkeeping: false,
+    canApproveExpenses: false,
+    canManageCompanySettings: false,
+  };
+  assert.equal(
+    effectiveBookkeepingCapabilities({ ...access, canBookEntries: true }).canBookEntries,
+    true,
+  );
+  assert.equal(
+    effectiveBookkeepingCapabilities({ ...access, canBookEntries: false }).canBookEntries,
+    false,
+  );
+});
+
+test("posting access allows authorized members and rejects missing membership or capability", () => {
+  assert.doesNotThrow(() =>
+    assertBookkeepingPostingAccess({ allowed: true, canBookEntries: true }),
+  );
+  assert.throws(
+    () => assertBookkeepingPostingAccess({ allowed: false, canBookEntries: true }),
+    /aðgang/,
+  );
+  assert.throws(
+    () => assertBookkeepingPostingAccess({ allowed: true, canBookEntries: false }),
+    /heimild/,
+  );
 });

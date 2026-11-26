@@ -3,7 +3,10 @@ import {
   getRequestAuthContext,
   getRequestUserCompany,
 } from "@/lib/core/request-context";
-import { effectiveBookkeepingCapabilities } from "@/lib/core/bookkeeping-access-policy";
+import {
+  assertBookkeepingPostingAccess,
+  effectiveBookkeepingCapabilities,
+} from "@/lib/core/bookkeeping-access-policy";
 
 export const COMPANY_ACCESS_ROLES = [
   "OWNER",
@@ -141,8 +144,7 @@ export async function requireCompanyWriteAccess(companyId: number) {
 
 export async function requireCompanyBookAccess(companyId: number) {
   const access = await getCompanyAccess(companyId);
-  if (!access.allowed) throw new Error("Þú hefur ekki aðgang að þessu fyrirtæki.");
-  if (!access.canBookEntries) throw new Error("Þú hefur ekki heimild til að bóka.");
+  assertBookkeepingPostingAccess(access);
   return access;
 }
 

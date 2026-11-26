@@ -77,14 +77,23 @@ function occurrenceEvidenceFromMatch(
 }
 
 /**
- * Extracts an occurrence identity independently of document/vendor vocabulary.
+ * A printed N-of-M fraction is not inherently a payment occurrence: a page,
+ * item or table row can have the same shape. Keep semantic classification
+ * independent of vendor identities and of the reference/binding verification.
+ * Unknown labels are NOT affirmative installment evidence (fail closed).
  *
- * "13 af 84" / "13 of 84" is treated as schedule-shaped source evidence.
- * The word immediately preceding the sequence is retained only as provenance;
- * it is NOT a semantic allow-list.
- *
- * Multiple different N/M values are ambiguous and therefore fail closed.
- * Slash notation remains conservative because dates such as 01/02 are common.
+ * This is a restricted vocabulary of *financial sequence roles*, not a set of
+ * issuer names. The original exact field label is retained for provenance.
+ */
+export function isInstallmentSequenceLabel(label: string): boolean {
+  const normalized = normalizeLabel(label);
+  return /^(?:gjalddag(?:i|a)|afborgun(?:ar(?:numer|nr|n[uú]mer))?|(?:greidsl|greiðsl)(?:a|u)|installment|repayment|payment)$/.test(normalized);
+}
+
+/**
+ * Extracts only semantically identifiable payment occurrences, irrespective
+ * of document issuer. Unrelated N-of-M values (e.g. Page 1 of 10) are ignored.
+ * Distinct eligible payment sequences in one document remain ambiguous.
  */
 export function findDeterministicOccurrenceEvidence(
   sourceText: string,
@@ -95,7 +104,7 @@ export function findDeterministicOccurrenceEvidence(
   // "N af M" / "N of M" keeps the printed field word for provenance, without
   // requiring vendor names or issuer-specific labels.
   const writtenPattern =
-    /\b([\p{L}\p{M}][\p{L}\p{M}'’.-]*)\s*[:#-]?\s*(\d{1,5})\s+(?:af|of)\s+(\d{1,6})\b/giu;
+    /\b([\p{L}\p{M}][\p{L}\p{M}'’.-]*)(?:\s+(?:nr\.?|númer|numer|no\.?|number))?\s*[:#-]?\s*(\d{1,5})\s+(?:af|of)\s+(\d{1,6})\b/giu;
 
   // Slash notation requires installment-shaped vocabulary. Unqualified N/M is
   // also used for dates, fractions and table cells and cannot prove an instance.
@@ -108,7 +117,7 @@ export function findDeterministicOccurrenceEvidence(
   for (const pattern of [writtenPattern, ...slashPatterns]) {
     for (const match of normalized.matchAll(pattern)) {
       const evidence = occurrenceEvidenceFromMatch(match);
-      if (!evidence) continue;
+      if (!evidence || !isInstallmentSequenceLabel(evidence.fieldLabel)) continue;
       const key = `${evidence.sequenceText}/${evidence.totalText}`;
       if (!unique.has(key)) unique.set(key, evidence);
       // Two distinct schedule-like values on one page are ambiguous even if
