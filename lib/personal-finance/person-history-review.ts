@@ -10,7 +10,7 @@ export const HISTORY_RECEIPT_LIMIT = 300;
 export type EvidenceKind = 'PERSON'|'PLATE'|'MILEAGE_FEE'|'INSURANCE'|'VEHICLE_TAX'|'VEHICLE_SERVICE'|'LENDER';
 export const EVIDENCE_LABELS: Record<EvidenceKind,string> = {
   PERSON: 'Nafn einstaklings í texta',
-  PLATE: 'Bílnúmer JNN32 í heimild',
+  PLATE: 'Bílnúmer í heimild',
   MILEAGE_FEE: 'Mögulegt kílómetragjald',
   INSURANCE: 'Mögulegar tryggingar',
   VEHICLE_TAX: 'Mögulegt bifreiðagjald',
@@ -45,7 +45,8 @@ function wholeWord(text:string,word:string):boolean {
   const escaped=word.replace(/[.*+?^${}()|[\]\\]/g,'\\$&');
   return new RegExp('(^|[^\\p{L}\\p{N}])'+escaped+'(?=$|[^\\p{L}\\p{N}])','iu').test(text);
 }
-// Read-only plate evidence: bank text often separates letters and numbers with
+// Read-only plate evidence: only look for a plate supplied explicitly by caller.
+// Bank text often separates letters and numbers with
 // a space or dash. These are only search hints, never ownership or a payment.
 function plateMentioned(text:string,plate:string):boolean {
   const normalizedPlate=normalize(plate).replace(/[^a-z0-9]/g,'');
@@ -56,7 +57,7 @@ function plateMentioned(text:string,plate:string):boolean {
   return new RegExp('(^|[^\\p{L}\\p{N}])'+spelling+'(?=$|[^\\p{L}\\p{N}])','iu').test(text);
 }
 function any(text:string,needles:string[]):boolean{return needles.some(n=>text.includes(n));}
-export function classifyHistoryEvidence(source:{text?:unknown;reference?:unknown;raw?:unknown},personName:string,plate='JNN32'):EvidenceKind[]{
+export function classifyHistoryEvidence(source:{text?:unknown;reference?:unknown;raw?:unknown},personName:string,plate=''):EvidenceKind[]{
   const text=normalize([source.text,source.reference,source.raw].filter(x=>typeof x==='string').join(' '));
   const kinds:EvidenceKind[]=[];
   const person=normalize(personName);
@@ -69,7 +70,7 @@ export function classifyHistoryEvidence(source:{text?:unknown;reference?:unknown
   if(any(text,['ergo fjármögn','ergo fjar','ergo lán']))kinds.push('LENDER');
   return kinds;
 }
-export function candidateSearchTerms(personName:string,plate='JNN32'):string[]{
+export function candidateSearchTerms(personName:string,plate=''):string[]{
   return [personName,plate,'kílómetragjald','km gjald','bifreiðagjald','ökutækjagjald',
     'trygging','Sjóvá','Verna','smur','dekk','Frumherji','Ergo'].filter(Boolean);
 }
