@@ -7,6 +7,7 @@ import { calculateFamilyLoanLedger, type FamilyLoanLedgerAccount, type FamilyLoa
 import { checkJournalCreate, checkJournalMovement, type JournalCreateInput,
   type JournalMovementInput, type JournalSnapshot } from './family-loan-journal-contract';
 import { assembleJournalSnapshot } from './family-loan-journal-projection';
+import { parseStoredFamilyLoanAmountIsk } from './family-loan-journal-amount';
 import { familyLoanJournalLocalEnabled } from './family-loan-journal-policy';
 
 const unavailable = 'FAMILY_JOURNAL_LOCAL_STORAGE_DISABLED';
@@ -110,7 +111,7 @@ export async function addFamilyLoanJournalMovement(input: JournalMovementInput):
         AND "loanId"=${input.loanId} ORDER BY id`;
     const prior = previous.find(r => r.idempotencyKey === input.requestId);
     if (prior) {
-      if (prior.kind !== input.kind || Number(prior.amountIsk) !== input.amountIsk ||
+      if (prior.kind !== input.kind || parseStoredFamilyLoanAmountIsk(prior.amountIsk) !== input.amountIsk ||
           prior.effectiveDate !== input.effectiveDate || prior.note !== input.note.trim() ||
           prior.bankTransactionId !== input.bankTransactionId || prior.reversalOfId !== input.reversalOfId)
         throw Error('FAMILY_IDEMPOTENCY_COLLISION');
@@ -126,7 +127,7 @@ export async function addFamilyLoanJournalMovement(input: JournalMovementInput):
     };
     // A reversal refers to a real ID and cannot collide with the temporary ID.
     calculateFamilyLoanLedger({ companyId, loans, movements: [
-      ...previous.map(r => ({ ...r, amountIsk: Number(r.amountIsk) })), proposed] });
+      ...previous.map(r => ({ ...r, amountIsk: parseStoredFamilyLoanAmountIsk(r.amountIsk) })), proposed] });
     const rows = await tx.$queryRaw<{ id: number }[]>`
       INSERT INTO public."FamilyLoanLedgerMovement"
         ("companyId","loanId",kind,"amountIsk","effectiveDate","bankTransactionId",

@@ -2,10 +2,13 @@
  * No floating currency, no balance calculation from installment history.
  */
 export function parseIskAmount(input: string, emptyIsZero = false): number {
-  const value = input.trim().replace(/[\u00a0\u202f ]/g, '');
+  const value = input.trim();
   if (!value && emptyIsZero) return 0;
-  if (!/^(?:\d+|\d{1,3}(?:\.\d{3})+)$/.test(value)) throw Error('Sláðu inn heilar krónur án aukastafa.');
-  const number = Number(value.replace(/\./g, ''));
+  // Validate grouping BEFORE removing separators. Otherwise "1 2" becomes 12 kr.
+  // Preserve plain digits (including zero) and properly grouped thousands.
+  const groupedIsk = /^(?:\d+|\d{1,3}(?:\.\d{3})+|\d{1,3}(?:[ \u00a0\u202f]\d{3})+)$/;
+  if (!groupedIsk.test(value)) throw Error('Sláðu inn heilar krónur án aukastafa.');
+  const number = Number(value.replace(/[. \u00a0\u202f]/g, ''));
   if (!Number.isSafeInteger(number) || number < 0) throw Error('Upphæð er ekki gild.');
   return number;
 }

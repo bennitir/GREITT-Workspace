@@ -3,6 +3,7 @@ import { useState, useTransition } from 'react';
 import { useRouter } from 'next/navigation';
 import type { FamilyPerson } from '@/lib/personal-finance/transfer-split';
 import type { JournalSnapshot, JournalCreateInput, JournalMovementInput, JournalActionResult } from '@/lib/personal-finance/family-loan-journal-contract';
+import { parseEnteredFamilyLoanAmountIsk } from '@/lib/personal-finance/family-loan-journal-amount';
 
 type Props = {
   people: FamilyPerson[]; snapshot: JournalSnapshot | null; enabled: boolean;
@@ -11,12 +12,6 @@ type Props = {
   movementAction?: (input: JournalMovementInput) => Promise<JournalActionResult>;
 };
 function kr(n: number) { return `${new Intl.NumberFormat('is-IS',{maximumFractionDigits:0}).format(n)} kr.`; }
-function plainMoney(s: string) {
-  const trimmed = s.replace(/[\.\s]/g,'');
-  if (!/^\d+$/.test(trimmed)) return null;
-  const value = Number(trimmed);
-  return Number.isSafeInteger(value) && value > 0 ? value : null;
-}
 function requestKey(): string { return crypto.randomUUID(); }
 /** This is a company-scoped local TEST journal, never a bookkeeping posting.
  * The bank movement is optional evidence only for the FULL exact amount.
@@ -50,7 +45,7 @@ export default function FamilyLoanJournalPanel({people,snapshot,enabled,currentB
   }
   function addEntry() {
     if (!enabled || !movementAction) return;
-    const n=plainMoney(amount);
+    const n=parseEnteredFamilyLoanAmountIsk(amount);
     if (n === null) {setMessage('Skráðu jákvæða fjárhæð í heilum krónum.');return;}
     const idempotency = movementKey ?? requestKey();setMovementKey(idempotency);
     setMessage('');
