@@ -27,7 +27,7 @@ import {
   tryParseDeterministicPageReceiptBundle,
   extractDeterministicPurchaseLinesForTemplate,
 } from "@/lib/receipts/ingestion";
-import { assertReceiptSize } from "@/lib/receipts/file-limits";
+import { assertReceiptContent, assertReceiptSize } from "@/lib/receipts/file-limits";
 import {
   requireActiveCompanyWriteAccess,
   requireActiveCompanyPrepareBookkeepingAccess,
@@ -240,6 +240,7 @@ async function saveReceiptFile(
 ) {
   assertReceiptSize(file.size);
   const buffer = providedBuffer ?? Buffer.from(await file.arrayBuffer());
+  const verifiedContentType = assertReceiptContent(file, buffer);
   const safeFileName = file.name
     .replace(/ð/gi, "d")
     .replace(/þ/gi, "th")
@@ -255,7 +256,7 @@ async function saveReceiptFile(
   const { error } = await supabaseAdmin.storage
     .from("fylgiskjol")
     .upload(storagePath, buffer, {
-      contentType: file.type || "application/octet-stream",
+      contentType: verifiedContentType,
       upsert: false,
     });
 
@@ -491,6 +492,7 @@ export async function createReceipt(formData: FormData) {
 
   assertReceiptSize(file.size);
   const buffer = Buffer.from(await file.arrayBuffer());
+  assertReceiptContent(file, buffer);
   const fileHash = crypto
     .createHash("sha256")
     .update(buffer)
