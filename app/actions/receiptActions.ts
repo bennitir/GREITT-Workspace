@@ -27,6 +27,7 @@ import {
   tryParseDeterministicPageReceiptBundle,
   extractDeterministicPurchaseLinesForTemplate,
 } from "@/lib/receipts/ingestion";
+import { assertReceiptSize } from "@/lib/receipts/file-limits";
 import {
   requireActiveCompanyWriteAccess,
   requireActiveCompanyPrepareBookkeepingAccess,
@@ -237,6 +238,7 @@ async function saveReceiptFile(
   companyId: number,
   providedBuffer?: Buffer,
 ) {
+  assertReceiptSize(file.size);
   const buffer = providedBuffer ?? Buffer.from(await file.arrayBuffer());
   const safeFileName = file.name
     .replace(/ð/gi, "d")
@@ -247,7 +249,8 @@ async function saveReceiptFile(
     .replace(/[^a-zA-Z0-9._-]/g, "_");
 
   const timestamp = Date.now();
-  const storagePath = `${companyId}/${timestamp}-${safeFileName}`;
+  // A millisecond timestamp alone is not a unique Storage key across users.
+  const storagePath = `${companyId}/${timestamp}-${crypto.randomUUID()}-${safeFileName}`;
 
   const { error } = await supabaseAdmin.storage
     .from("fylgiskjol")
@@ -486,6 +489,7 @@ export async function createReceipt(formData: FormData) {
     throw new Error("Ekkert fylgiskjal var valið.");
   }
 
+  assertReceiptSize(file.size);
   const buffer = Buffer.from(await file.arrayBuffer());
   const fileHash = crypto
     .createHash("sha256")
@@ -761,7 +765,15 @@ export async function createManualReceipt(formData: FormData) {
       select: { id: true },
     });
   } catch (error) {
-    if (uploaded?.storagePath) {
+    // Only a definite insert rejection justifies deleting the uploaded original.
+    // On a connection error, the database may already have committed the row.
+    // Removing Storage then would leave a receipt without its source document.
+    const code =
+      error && typeof error === "object" && "code" in error
+        ? String((error as { code?: unknown }).code ?? "")
+        : "";
+
+    if (code === "P2002" && uploaded?.storagePath) {
       await supabaseAdmin.storage
         .from("fylgiskjol")
         .remove([uploaded.storagePath])
