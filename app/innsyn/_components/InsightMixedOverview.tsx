@@ -323,8 +323,10 @@ export function InsightMixedOverview({
   const periodOptions: Array<{ preset: InsightPeriodPreset; label: string }> = [
     { preset: "LAST_12_MONTHS", label: t.last12 },
     { preset: "THIS_YEAR", label: t.thisYear },
+    { preset: "LAST_YEAR", label: t.lastYear },
     { preset: "THIS_QUARTER", label: t.thisQuarter },
     { preset: "THIS_MONTH", label: t.thisMonth },
+    { preset: "LAST_MONTH", label: t.lastMonth },
   ];
 
   const narrative: Array<{ text: string; state: InsightTruthState }> = [];

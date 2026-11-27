@@ -11,8 +11,10 @@ import type { InsightDrilldownSelection } from "../_lib/drilldown";
 const allowedPresets = new Set<InsightPeriodPreset>([
   "LAST_12_MONTHS",
   "THIS_YEAR",
+  "LAST_YEAR",
   "THIS_QUARTER",
   "THIS_MONTH",
+  "LAST_MONTH",
 ]);
 
 function parsePreset(value: string | string[] | undefined): InsightPeriodPreset {
