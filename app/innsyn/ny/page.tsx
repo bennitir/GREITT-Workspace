@@ -66,6 +66,7 @@ export default async function NewInsightPage({
     redirect("/fyrirtaeki");
   }
 
+  let canReviewVehicleEvidence = activeUser.role === "ADMIN";
   if (activeUser.role !== "ADMIN") {
     const access = await prisma.userCompany.findUnique({
       where: {
@@ -74,12 +75,13 @@ export default async function NewInsightPage({
           companyId,
         },
       },
-      select: { isActive: true },
+      select: { isActive: true, accessRole: true },
     });
 
     if (!access?.isActive) {
       redirect("/fyrirtaeki");
     }
+    canReviewVehicleEvidence = access.accessRole === "OWNER";
   }
 
   const [params, userSettings] = await Promise.all([
@@ -102,6 +104,7 @@ export default async function NewInsightPage({
       summary={summary}
       language={userSettings?.interfaceLanguage ?? "is"}
       selectedUnitPriceId={selectedUnitPriceId}
+      canReviewVehicleEvidence={canReviewVehicleEvidence}
     />
   );
 }

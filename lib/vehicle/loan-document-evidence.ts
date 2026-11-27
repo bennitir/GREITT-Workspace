@@ -46,6 +46,20 @@ function shortExcerpt(source: string, plate: string): string {
   return `${start > 0 ? "\u2026" : ""}${clean.slice(start, start + 240)}${start + 240 < clean.length ? "\u2026" : ""}`;
 }
 
+/** Candidate retrieval tokens; do exact bounded matching after the DB query. */
+export function vehiclePlateQueryTerms(plate: string): string[] {
+  if (typeof plate !== "string") return [];
+  const compact = plate.trim().toUpperCase().replace(/[\s-]/g, "");
+  if (!/^[A-Z0-9]{3,10}$/.test(compact)) return [];
+  const parts = /^([A-Z]{1,4})([0-9]{2,6})$/.exec(compact);
+  if (!parts) return [compact];
+  const [, letters, digits] = parts;
+  return [compact, `${letters}-${digits}`, `${letters} ${digits}`,
+    `${letters}  ${digits}`, `${letters} -${digits}`,
+    `${letters}- ${digits}`, `${letters} - ${digits}`,
+    `${letters}\t${digits}`, `${letters}\u00a0${digits}`];
+}
+
 /**
  * Find same-document co-mentions in already analyzed summaries. An LLM summary
  * might be inaccurate; the result is a navigation lead, never an ownership,
