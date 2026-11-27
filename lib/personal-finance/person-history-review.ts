@@ -53,7 +53,8 @@ function plateMentioned(text:string,plate:string):boolean {
   if(normalizedPlate.length<4 || normalizedPlate.length>12)return false;
   const parts=/^([a-z]{1,4})(\d{2,6})$/.exec(normalizedPlate);
   if(!parts)return wholeWord(text,normalizedPlate);
-  const spelling=parts[1]+'[-\\s\\u2010-\\u2015]?'+parts[2];
+  // Match the same plate separators used by U09 candidate retrieval.
+  const spelling=parts[1]+'(?:\\s?[-\\u2010-\\u2015]\\s?|\\s?)'+parts[2];
   return new RegExp('(^|[^\\p{L}\\p{N}])'+spelling+'(?=$|[^\\p{L}\\p{N}])','iu').test(text);
 }
 function any(text:string,needles:string[]):boolean{return needles.some(n=>text.includes(n));}

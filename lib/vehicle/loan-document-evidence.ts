@@ -27,11 +27,11 @@ export function loanReferenceInSummary(summary: string, identifier: string | nul
  */
 function plateMentionSpan(text: string, plate: string): { index: number; length: number } | null {
   if (typeof text !== "string" || typeof plate !== "string") return null;
-  const normalized = plate.trim().toUpperCase().replace(/[\s-]/g, "");
+  const normalized = plate.trim().toUpperCase().replace(/[\s\u2010-\u2015-]/g, "");
   if (!/^[A-Z0-9]{3,10}$/.test(normalized)) return null;
   const segments = normalized.match(/[A-Z]+|[0-9]+/g);
   if (!segments) return null;
-  const flexible = segments.join("(?:[ \t\u00a0]?-[ \t\u00a0]?|[ \t\u00a0]{1,2})?");
+  const flexible = segments.join("(?:[ \t\u00a0]?[-\u2010-\u2015][ \t\u00a0]?|[ \t\u00a0]{1,2})?");
   const occurrence = new RegExp(`(^|[^\\p{L}\\p{N}])(${flexible})(?![\\p{L}\\p{N}])`, "iu").exec(text);
   if (!occurrence) return null;
   return { index: occurrence.index + occurrence[1].length, length: occurrence[2].length };
@@ -49,7 +49,7 @@ function shortExcerpt(source: string, plate: string): string {
 /** Candidate retrieval tokens; do exact bounded matching after the DB query. */
 export function vehiclePlateQueryTerms(plate: string): string[] {
   if (typeof plate !== "string") return [];
-  const compact = plate.trim().toUpperCase().replace(/[\s-]/g, "");
+  const compact = plate.trim().toUpperCase().replace(/[\s\u2010-\u2015-]/g, "");
   if (!/^[A-Z0-9]{3,10}$/.test(compact)) return [];
   const parts = /^([A-Z]{1,4})([0-9]{2,6})$/.exec(compact);
   if (!parts) return [compact];
@@ -57,7 +57,9 @@ export function vehiclePlateQueryTerms(plate: string): string[] {
   return [compact, `${letters}-${digits}`, `${letters} ${digits}`,
     `${letters}  ${digits}`, `${letters} -${digits}`,
     `${letters}- ${digits}`, `${letters} - ${digits}`,
-    `${letters}\t${digits}`, `${letters}\u00a0${digits}`];
+    `${letters}\t${digits}`, `${letters}\u00a0${digits}`,
+    ...["\u2010", "\u2011", "\u2012", "\u2013", "\u2014", "\u2015"]
+      .map(dash => `${letters}${dash}${digits}`)];
 }
 
 /**
