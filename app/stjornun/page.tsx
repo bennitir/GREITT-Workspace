@@ -34,6 +34,7 @@ const serviceHref: Partial<Record<GloggtModuleId, string>> = {
   birgdir: "/birgdir",
   vinnustundir: "/vinnustundir",
   verk: "/verk",
+  fjolskylduvidauki: "/banki",
 };
 
 export default async function CompanyManagementPage({
@@ -104,8 +105,11 @@ export default async function CompanyManagementPage({
           : role === "VIEWER"
             ? ui.viewer
             : role;
+  const isFamilyOwner = access.role === "OWNER" || access.role === "ADMIN";
+  const familyIsEnabled = isCompanyModuleEnabled("fjolskylduvidauki", moduleSettings);
   const enabledModules = GLOGGT_MODULE_LIST.filter((module) =>
-    isCompanyModuleEnabled(module.id, moduleSettings),
+    isCompanyModuleEnabled(module.id, moduleSettings) &&
+    (module.id !== "fjolskylduvidauki" || isFamilyOwner),
   );
   const mobileFeatures = MOBILE_FEATURE_LIST.filter((feature) =>
     isMobileFeatureAvailable(feature.key as MobileFeatureKey, moduleSettings),
@@ -153,6 +157,12 @@ export default async function CompanyManagementPage({
             })}
           </div>
         )}
+        {!familyIsEnabled ? (
+          <div className="mt-4 rounded-xl border border-slate-200 bg-slate-50 px-4 py-3">
+            <p className="font-semibold text-slate-900">{t.services.fjolskylduvidauki}</p>
+            <p className="mt-1 text-sm text-slate-600">{t.familyDevelopment}</p>
+          </div>
+        ) : null}
       </section>
 
       <section className="grid gap-4 md:grid-cols-2">

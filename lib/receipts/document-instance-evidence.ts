@@ -5,6 +5,7 @@ import {
   parseDocumentIdentityEnvelope,
 } from "./document-instance-envelope";
 import {
+  findDeterministicOccurrenceEvidence,
   normalizeReviewedCanonicalText,
   reviewedCanonicalTextDigest,
   reviewedTextConfirmsObligationReference,
@@ -152,7 +153,14 @@ export async function verifyDocumentInstanceEvidence(
     const pageTextRaw = pages[provenance.pageNumber - 1];
     if (typeof pageTextRaw !== "string" || !pageTextRaw.trim()) return null;
 
+    // A verbatim phrase is necessary but insufficient when the same page
+    // prints two different schedules. Re-read the whole authoritative page
+    // before confirming which occurrence the document represents.
+    const uniqueOccurrence = findDeterministicOccurrenceEvidence(pageTextRaw);
     if (
+      !uniqueOccurrence ||
+      uniqueOccurrence.sequenceText !== candidate.instance.sequenceText ||
+      uniqueOccurrence.totalText !== candidate.instance.totalText ||
       !sourceTextGroundsCandidate({
         sourceText: pageTextRaw,
         verbatimText: evidence.verbatimText,
@@ -188,7 +196,11 @@ export async function verifyDocumentInstanceEvidence(
       return null;
     }
 
+    const uniqueOccurrence = findDeterministicOccurrenceEvidence(reviewed.text);
     if (
+      !uniqueOccurrence ||
+      uniqueOccurrence.sequenceText !== candidate.instance.sequenceText ||
+      uniqueOccurrence.totalText !== candidate.instance.totalText ||
       !reviewedTextConfirmsObligationReference(
         reviewed.text,
         candidate.reference.value,

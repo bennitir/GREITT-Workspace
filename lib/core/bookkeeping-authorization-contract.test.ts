@@ -13,6 +13,10 @@ const vatActions = fs.readFileSync(
   path.join(repoRoot, "app/actions/vatActions.ts"),
   "utf8",
 );
+const accessControl = fs.readFileSync(
+  path.join(repoRoot, "lib/core/access-control.ts"),
+  "utf8",
+);
 
 function exportedActionSource(source: string, name: string) {
   const declaration = `export async function ${name}`;
@@ -57,6 +61,10 @@ test("receipt mutations bind capability and target to the active company", () =>
       ["requireActiveCompanyBookAccess()", "companyId"],
     ],
     [
+      "approveDetectedDocument",
+      ["requireCompanyBookAccess(document.receipt.companyId)"],
+    ],
+    [
       "addDetectedDocumentEntry",
       ["requireActiveCompanyPrepareBookkeepingAccess()", "receipt: { companyId }"],
     ],
@@ -80,6 +88,29 @@ test("receipt mutations bind capability and target to the active company", () =>
   for (const [name, expected] of contracts) {
     assertContainsAll(name, exportedActionSource(receiptActions, name), expected);
   }
+});
+
+test("manual and detected posting require book authorization before entering the posting transaction", () => {
+  const actions: Array<[string, string]> = [
+    ["approveManualReceipt", "requireActiveCompanyBookAccess()"],
+    ["approveDetectedDocument", "requireCompanyBookAccess(document.receipt.companyId)"],
+  ];
+
+  for (const [name, authorization] of actions) {
+    const source = exportedActionSource(receiptActions, name);
+    const authorizationIndex = source.indexOf(authorization);
+    const transactionIndex = source.indexOf("prisma.$transaction");
+    assert.ok(authorizationIndex >= 0, `${name} must authorize booking`);
+    assert.ok(
+      transactionIndex > authorizationIndex,
+      `${name} must reject unauthorized users before the posting transaction`,
+    );
+  }
+});
+
+test("company booking gate applies the membership and capability rule", () => {
+  const source = exportedActionSource(accessControl, "requireCompanyBookAccess");
+  assert.match(source, /assertBookkeepingPostingAccess\(access\)/);
 });
 
 test("AI analysis authorizes and scopes the receipt before taking the analysis lease", () => {

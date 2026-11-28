@@ -337,3 +337,57 @@ test("reviewed canonical fallback still requires the immutable original file has
   });
   assert.equal(await verifyDocumentInstanceEvidence(f.document, f.deps), null);
 });
+
+
+test("conflicting schedules on the original source page cannot confirm an instance", async () => {
+  const f = fixture();
+  f.deps.extractTextPages = async () => [
+    f.pages[0],
+    "Innheimtubréf númer: 338379\nGjalddagi 16 af 480\nGjalddagi 17 af 480",
+  ];
+  assert.equal(await verifyDocumentInstanceEvidence(f.document, f.deps), null);
+});
+
+test("a forged printed page count cannot verify as installment evidence", async () => {
+  const f = fixture();
+  const candidate: IdentityCandidate = {
+    ...f.candidate,
+    instance: {
+      ...f.candidate.instance,
+      sequenceText: "1",
+      totalText: "10",
+      provenance: {
+        ...f.candidate.instance.provenance,
+        fieldLabel: "Page",
+      },
+    },
+  };
+  const evidence = { ...f.evidence, verbatimText: "Page 1 of 10" };
+  const verifiedEvidenceDigest = documentIdentityEvidenceDigest(candidate, evidence);
+  const proposal = planDocumentIdentityTransition({
+    metadata: null,
+    previousAudit: null,
+    context: {
+      companyId: 8,
+      receiptId: 101,
+      documentId: 100,
+      obligationEntityId: 42,
+      bindingRevision: "binding-1",
+      sourceFileHash: f.document.sourceFileHash!,
+      verifiedEvidenceDigest,
+    },
+    expectedRevision: 0,
+    expectedEvidenceDigest: null,
+    actorUserId: 3,
+    requestId: "forged-page",
+    occurredAt: "2026-10-08T12:00:00Z",
+    command: { kind: "PROPOSE", candidate, evidence },
+  });
+  const audit: IdentityAuditRecord = { id: 4, ...proposal.audit };
+  f.document.extractionMetadata = attachDocumentIdentityAudit(proposal, audit);
+  f.deps.extractTextPages = async () => [
+    "Forsíða",
+    "Innheimtubréf númer: 338379\nPage 1 of 10",
+  ];
+  assert.equal(await verifyDocumentInstanceEvidence(f.document, f.deps), null);
+});

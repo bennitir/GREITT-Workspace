@@ -36,6 +36,7 @@ const text = {
       birgdir: "Birgðir",
       vinnustundir: "Vinnustundir",
       verk: "Verk",
+      fjolskylduvidauki: "Fjölskylduviðauki",
     },
     serviceHelp: {
       bokhald: "Fylgiskjöl, bókanir, VSK og bókhaldsferli.",
@@ -44,7 +45,9 @@ const text = {
       birgdir: "Birgðir, talningar, staðsetningar og hreyfingar.",
       vinnustundir: "Vinnutími starfsfólks og tengd yfirsýn.",
       verk: "Verk, fólk, tæki, efni og framkvæmd.",
+      fjolskylduvidauki: "Persónulegar millifærslur, lán, gjafir og bifreiðir. Aðeins fyrir eiganda.",
     },
+    familyDevelopment: "Í þróun · óvirkt. Engin gögn verða vistuð með þessari breytingu.",
     mobileEmpty: "Engin vinnuaðgerð er sýnileg í Mobile fyrir þetta fyrirtæki. Persónulegar stillingar eru áfram aðgengilegar.",
   },
   en: {
@@ -75,8 +78,9 @@ const text = {
       inventoryCount: { name: "Stocktake", help: "Inventory counting and scanning in Mobile." },
       receiptCapture: { name: "Document capture", help: "Photograph an invoice or receipt and send it to Bookkeeping." },
     },
-    services: { bokhald: "Bookkeeping", sala: "Sales", laun: "Payroll", birgdir: "Inventory", vinnustundir: "Work hours", verk: "Work" },
-    serviceHelp: { bokhald: "Documents, postings, VAT and bookkeeping workflow.", sala: "Sales, invoices and receivables.", laun: "Payroll processing and payroll filings.", birgdir: "Inventory, counts, locations and movements.", vinnustundir: "Employee work hours and related overview.", verk: "Work, people, equipment, materials and execution." },
+    services: { bokhald: "Bookkeeping", sala: "Sales", laun: "Payroll", birgdir: "Inventory", vinnustundir: "Work hours", verk: "Work", fjolskylduvidauki: "Family add-on" },
+    serviceHelp: { bokhald: "Documents, postings, VAT and bookkeeping workflow.", sala: "Sales, invoices and receivables.", laun: "Payroll processing and payroll filings.", birgdir: "Inventory, counts, locations and movements.", vinnustundir: "Employee work hours and related overview.", verk: "Work, people, equipment, materials and execution.", fjolskylduvidauki: "Personal transfers, loans, gifts and vehicles. Owner access only." },
+    familyDevelopment: "In development · disabled. This change saves no data.",
     mobileEmpty: "No work action is visible in Mobile for this company. Personal settings remain available.",
   },
   pl: {
@@ -107,8 +111,9 @@ const text = {
       inventoryCount: { name: "Inwentaryzacja", help: "Liczenie i skanowanie zapasów w Mobile." },
       receiptCapture: { name: "Fotografowanie dokumentów", help: "Zrób zdjęcie faktury lub paragonu i wyślij do księgowości." },
     },
-    services: { bokhald: "Księgowość", sala: "Sprzedaż", laun: "Płace", birgdir: "Magazyn", vinnustundir: "Czas pracy", verk: "Zadania" },
-    serviceHelp: { bokhald: "Dokumenty, księgowania, VAT i proces księgowy.", sala: "Sprzedaż, faktury i należności.", laun: "Obsługa płac i deklaracje płacowe.", birgdir: "Zapasy, inwentaryzacje, lokalizacje i ruchy.", vinnustundir: "Czas pracy pracowników i przegląd.", verk: "Zadania, ludzie, sprzęt, materiały i realizacja." },
+    services: { bokhald: "Księgowość", sala: "Sprzedaż", laun: "Płace", birgdir: "Magazyn", vinnustundir: "Czas pracy", verk: "Zadania", fjolskylduvidauki: "Dodatek rodzinny" },
+    serviceHelp: { bokhald: "Dokumenty, księgowania, VAT i proces księgowy.", sala: "Sprzedaż, faktury i należności.", laun: "Obsługa płac i deklaracje płacowe.", birgdir: "Zapasy, inwentaryzacje, lokalizacje i ruchy.", vinnustundir: "Czas pracy pracowników i przegląd.", verk: "Zadania, ludzie, sprzęt, materiały i realizacja.", fjolskylduvidauki: "Przelewy rodzinne, pożyczki, prezenty i pojazdy. Tylko właściciel." },
+    familyDevelopment: "W trakcie tworzenia · wyłączone. Ta zmiana nie zapisuje danych.",
     mobileEmpty: "Dla tej firmy w Mobile nie jest widoczna żadna czynność robocza. Ustawienia osobiste pozostają dostępne.",
   },
   sr: {
@@ -139,8 +144,9 @@ const text = {
       inventoryCount: { name: "Попис залиха", help: "Бројање и скенирање залиха у Mobile-у." },
       receiptCapture: { name: "Фотографисање докумената", help: "Фотографишите рачун или признаницу и пошаљите у књиговодство." },
     },
-    services: { bokhald: "Књиговодство", sala: "Продаја", laun: "Зараде", birgdir: "Залихе", vinnustundir: "Радни сати", verk: "Послови" },
-    serviceHelp: { bokhald: "Документа, књижења, ПДВ и ток књиговодства.", sala: "Продаја, рачуни и потраживања.", laun: "Обрачун зарада и пријаве.", birgdir: "Залихе, пописи, локације и кретања.", vinnustundir: "Радни сати запослених и преглед.", verk: "Послови, људи, опрема, материјали и извршење." },
+    services: { bokhald: "Књиговодство", sala: "Продаја", laun: "Зараде", birgdir: "Залихе", vinnustundir: "Радни сати", verk: "Послови", fjolskylduvidauki: "Породични додатак" },
+    serviceHelp: { bokhald: "Документа, књижења, ПДВ и ток књиговодства.", sala: "Продаја, рачуни и потраживања.", laun: "Обрачун зарада и пријаве.", birgdir: "Залихе, пописи, локације и кретања.", vinnustundir: "Радни сати запослених и преглед.", verk: "Послови, људи, опрема, материјали и извршење.", fjolskylduvidauki: "Породичне уплате, зајмови, поклони и возила. Само власник." },
+    familyDevelopment: "У развоју · искључено. Ова измена не чува податке.",
     mobileEmpty: "Ниједна радна радња није видљива у Mobile-у за ову компанију. Лична подешавања су и даље доступна.",
   },
 } as const;

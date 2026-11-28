@@ -106,7 +106,7 @@ test("occurrence extraction is label-agnostic while obligation gating stays sepa
 
 test("multiple different schedule-shaped occurrences fail closed", () => {
   const reviewed =
-    "Krafa nr. 24345. Fyrri 13 af 84 en annar texti segir 14 af 84.";
+    "Krafa nr. 24345. Gjalddagi 13 af 84 en Afborgun 14 af 84.";
 
   assert.equal(
     findReviewedOccurrenceEvidence(reviewed),
@@ -128,4 +128,73 @@ test("reviewed canonical digest is stable across whitespace but changes with the
     reviewedCanonicalTextDigest("Innheimtubréf nr. 338379 Gjalddagi 16 af 480"),
     reviewedCanonicalTextDigest("Innheimtubréf nr. 338379 Gjalddagi 17 af 480"),
   );
+});
+
+test("original PDF and reviewed summaries share the same issuer-independent occurrence reader", () => {
+  const cases = [
+    ["Lán nr. 338379. Gjalddagi 16 af 480", "16", "480"],
+    ["Lán nr. 338379. Gjalddagi 17/480", "17", "480"],
+    ["Claim nr. 24345. Payment 13 of 84", "13", "84"],
+    ["Lán nr. 338379. Afborgun 16 / 480", "16", "480"],
+  ] as const;
+  for (const [source, sequence, total] of cases) {
+    const parsed = findReviewedOccurrenceEvidence(source);
+    assert.equal(parsed?.sequenceText, sequence);
+    assert.equal(parsed?.totalText, total);
+  }
+});
+
+test("different N/M occurrences fail closed regardless of text or slash form", () => {
+  for (const source of [
+    "Gjalddagi 16 af 480, Gjalddagi 17 af 480",
+    "Gjalddagi 16 af 480, Gjalddagi 17/480",
+    "Gjalddagi 16/480, Gjalddagi 17/480",
+    "Gjalddagi 16/480, Greiðsla 17 af 480",
+  ]) {
+    assert.equal(findReviewedOccurrenceEvidence(source), null, source);
+  }
+});
+
+test("a matching N/M printed twice is one candidate; unrelated dates and slashes are not payment numbers", () => {
+  const source = "Útgáfudagur 01/02/2026. Gjalddagi 17 af 480. " +
+    "Gjalddagi 17/480. Tilvísun 17/480.";
+  assert.equal(findReviewedOccurrenceEvidence(source)?.sequenceText, "17");
+  assert.equal(findReviewedOccurrenceEvidence("Dagsetning 01/02/2026 og tilvísun 17/480."), null);
+});
+
+
+test("page/item/section counts never become authoritative occurrences", () => {
+  for (const label of ["Page", "Síða", "Blaðsíða", "Item", "Section", "Row", "Line", "Kafli"]) {
+    assert.equal(findReviewedOccurrenceEvidence(`Loan number 338379\n${label} 1 of 10`), null);
+  }
+});
+
+test("printed installment is selected independently of page counts", () => {
+  assert.deepEqual(
+    findReviewedOccurrenceEvidence("Loan number 338379\nInstallment 16 of 480\nPage 1 of 10"),
+    { fieldLabel: "Installment", sequenceText: "16", totalText: "480", verbatimText: "Installment 16 of 480" },
+  );
+  assert.deepEqual(
+    findReviewedInstallmentEvidence("Innheimtubréf nr. 338379. Síða 2 af 8. Gjalddagi 17 af 480.", "338379"),
+    { fieldLabel: "Gjalddagi", sequenceText: "17", totalText: "480", verbatimText: "Gjalddagi 17 af 480" },
+  );
+});
+
+test("installment labels may include a printed number marker", () => {
+  assert.deepEqual(
+    findReviewedOccurrenceEvidence("Afborgun nr. 16 af 480. Síða 1 af 10."),
+    { fieldLabel: "Afborgun", sequenceText: "16", totalText: "480", verbatimText: "Afborgun nr. 16 af 480" },
+  );
+  assert.deepEqual(
+    findReviewedOccurrenceEvidence("Payment No. 13 of 84. Page 1 of 10."),
+    { fieldLabel: "Payment", sequenceText: "13", totalText: "84", verbatimText: "Payment No. 13 of 84" },
+  );
+});
+
+test("two genuinely different installment counts fail closed despite page counts", () => {
+  assert.equal(
+    findReviewedOccurrenceEvidence("Gjalddagi 16 af 480. Page 1 of 10. Afborgun 17 af 480."),
+    null,
+  );
+  assert.equal(findReviewedOccurrenceEvidence("Unknown 13 of 84"), null);
 });

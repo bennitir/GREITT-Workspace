@@ -312,10 +312,12 @@ export function InsightMixedOverview({
   summary,
   language,
   selectedUnitPriceId,
+  canReviewVehicleEvidence = false,
 }: {
   summary: LoadedInsightSummary;
   language: string;
   selectedUnitPriceId?: string | null;
+  canReviewVehicleEvidence?: boolean;
 }) {
   const t = insightMixedCopy(language);
   const locale = insightMixedLocale(language);
@@ -323,8 +325,10 @@ export function InsightMixedOverview({
   const periodOptions: Array<{ preset: InsightPeriodPreset; label: string }> = [
     { preset: "LAST_12_MONTHS", label: t.last12 },
     { preset: "THIS_YEAR", label: t.thisYear },
+    { preset: "LAST_YEAR", label: t.lastYear },
     { preset: "THIS_QUARTER", label: t.thisQuarter },
     { preset: "THIS_MONTH", label: t.thisMonth },
+    { preset: "LAST_MONTH", label: t.lastMonth },
   ];
 
   const narrative: Array<{ text: string; state: InsightTruthState }> = [];
@@ -407,7 +411,14 @@ export function InsightMixedOverview({
             <h1 className="mt-2 text-3xl font-bold tracking-tight text-slate-950 md:text-4xl">{summary.company.name}</h1>
             <p className="mt-2 max-w-3xl text-sm leading-6 text-slate-600">{t.subtitle}</p>
           </div>
-          <a href="/innsyn" className="rounded-lg border bg-white px-4 py-2 text-sm font-semibold text-slate-700 shadow-sm hover:bg-slate-50">← {t.back}</a>
+          <div className="flex flex-wrap items-center gap-2">
+            {canReviewVehicleEvidence && (
+              <a href="/innsyn/ny/heimildir" className="rounded-lg border bg-white px-4 py-2 text-sm font-semibold text-blue-800 shadow-sm hover:bg-slate-50">
+                {"Heimildaleit \u00f6kut\u00e6kja"}
+              </a>
+            )}
+            <a href="/innsyn" className="rounded-lg border bg-white px-4 py-2 text-sm font-semibold text-slate-700 shadow-sm hover:bg-slate-50">← {t.back}</a>
+          </div>
         </div>
 
         <div className="mt-6 grid gap-3 rounded-2xl border bg-white p-4 shadow-sm lg:grid-cols-[1fr_auto] lg:items-center">

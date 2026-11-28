@@ -5,6 +5,25 @@ import { ReconciliationCoverageOverview } from "@/app/banki/_components/Reconcil
 import { BankOriginatedFlowOverview } from "@/app/banki/[id]/afstemming/BankOriginatedFlowOverview";
 import { ReviewedDocumentCandidateOverview } from "@/app/banki/[id]/afstemming/ReviewedDocumentCandidateOverview";
 import { bankReconciliationText } from "@/app/banki/_lib/i18n/reconciliation-text";
+import { visualReconciliationText } from "@/app/banki/_lib/i18n/visual-reconciliation-text";
+import { buildVisualReconciliation } from "@/app/banki/_lib/visual-reconciliation";
+import VisualReconciliationWorkspace from "./VisualReconciliationWorkspace";
+import { confirmSelectedVisualDocuments, inspectSelectedVisualDocuments, voidSelectedVisualDocuments } from "./document-set-actions";
+import { getDocumentSetsWithHistory, documentSetStorageEnabled, documentSetStorageState } from "@/lib/financial-reconciliation/document-set-service";
+import { getExistingConfirmedBankDocuments } from "@/lib/financial-reconciliation/existing-confirmed-bank-documents";
+import { searchVisualDocuments } from "./document-search-actions";
+import { inspectPossibleInternalTransfer, confirmOwnTransferAction, voidOwnTransferAction,
+  reviewBankAccountOwnersAction,
+} from "./internal-transfer-actions";
+import { ownTransferAccountReady } from "@/lib/personal-finance/own-transfer-policy";
+import { getSavedOwnTransfers } from "@/lib/financial-reconciliation/own-account-transfer-service";
+import { getFamilyTransferBlocks } from "@/lib/personal-finance/transfer-eligibility-repository";
+import { getFamilyTransferSplits } from "@/lib/personal-finance/transfer-split-repository";
+import { getFamilyLoanRegistry } from "@/lib/personal-finance/family-loan-registry-repository";
+import { familySplitStorageEnabled } from "@/lib/personal-finance/family-storage-policy";
+import { familyLoanJournalLocalEnabled } from "@/lib/personal-finance/family-loan-journal-policy";
+import { getFamilyLoanJournal } from "@/lib/personal-finance/family-loan-journal-repository";
+import { createFamilyLoanJournalAction, addFamilyLoanJournalMovementAction } from "./family-loan-journal-actions";
 import type { CandidateReason } from "@/lib/financial-reconciliation/candidates";
 import {
   getBankFinancialEventCandidates,
@@ -36,12 +55,11 @@ import {
   normalizeBankClassificationPatternText,
   suggestBankTransactionClassification,
 } from "@/lib/financial-reconciliation/source-classification";
-import { getCompanyAccess } from "@/lib/core/access-control";
+import { requireActiveCompanyReadAccess } from "@/lib/core/company-read-access";
 import { getCurrentInterfaceLanguage } from "@/lib/i18n/current-language";
 import { reconciliationCoverageText } from "@/lib/i18n/reconciliation-coverage";
 import { financialSourceClassificationText } from "@/lib/i18n/financial-source-classification";
 import { formatNumber } from "@/lib/locale";
-import { cookies } from "next/headers";
 import Link from "next/link";
 import { notFound } from "next/navigation";
 import { prisma } from "@/lib/prisma";
@@ -52,6 +70,7 @@ type Props = {
   }>;
   searchParams: Promise<{
     view?: string;
+    layout?: string;
   }>;
 };
 
@@ -72,20 +91,17 @@ function formatFinancialEventAmount(amount: string, currency: string) {
 
 export default async function AfstemmingPage({ params, searchParams }: Props) {
   const { id } = await params;
-  const { view: rawView } = await searchParams;
-
-  const cookieStore = await cookies();
-  const activeCompanyId = Number(
-    cookieStore.get("activeCompanyId")?.value
-  );
+  const { view: rawView, layout } = await searchParams;
+  // Both views authorize the company before the first business-data query.
+  const { companyId: activeCompanyId, access } = await requireActiveCompanyReadAccess();
 
   const bankAccountId = Number(id);
 
-  if (!activeCompanyId || !bankAccountId) {
+  if (!Number.isSafeInteger(bankAccountId) || bankAccountId <= 0) {
     notFound();
   }
 
-  const [language, account, access] = await Promise.all([
+  const [language, account] = await Promise.all([
     getCurrentInterfaceLanguage(),
     prisma.bankAccount.findFirst({
       where: {
@@ -95,6 +111,7 @@ export default async function AfstemmingPage({ params, searchParams }: Props) {
       },
       select: {
         id: true,
+        name: true,
         bankName: true,
         accountNumber: true,
         company: {
@@ -106,7 +123,6 @@ export default async function AfstemmingPage({ params, searchParams }: Props) {
         },
       },
     }),
-    getCompanyAccess(activeCompanyId),
   ]);
 
   if (!account || !access.allowed) {
@@ -312,6 +328,93 @@ export default async function AfstemmingPage({ params, searchParams }: Props) {
     { all: 0, active: 0, personal: 0, excluded: 0, review: 0 },
   );
 
+  const visualText = visualReconciliationText(language);
+  if (layout === "visual") {
+    // Explicit opt-in only; no default activation or database write here.
+    const familyModule = await prisma.companyModule.findUnique({
+      where: { companyId_moduleId: { companyId: activeCompanyId, moduleId: "fjolskylduvidauki" } },
+      select: { enabled: true },
+    });
+    // A company flag is never sufficient for personal information access.
+    const familyOwner = access.role === "OWNER" || access.role === "ADMIN";
+    const ownTransferReviewer = access.canReconcileBookkeeping &&
+      (familyOwner || access.role === "BOOKKEEPER");
+    const familyEnabled = familyOwner && familyModule?.enabled === true;
+    const familyCanEdit = familyEnabled && access.canReconcileBookkeeping;
+    const familyPeople = familyEnabled && familyCanEdit ? await prisma.insightEntity.findMany({
+      where: { companyId: activeCompanyId, entityType: "PERSON", status: "ACTIVE" },
+      select: { id: true, name: true }, orderBy: [{ name: "asc" }, { id: "asc" }],
+    }) : [];
+    const model = buildVisualReconciliation({
+      companyId: activeCompanyId,
+      bankAccountId,
+      reconciliation,
+      documents: reviewedDocumentResult,
+      confirmedDocuments: confirmedReviewedDocumentResult,
+      events: eventCandidateResult,
+      confirmedEvents: confirmedEventLinkResult,
+    }, new Set(transactions.map(transaction => transaction.id)));
+    // BankTransaction.status is authoritative even when the reconciliation
+    // candidate layers contain no confirmed evidence. Never infer that a bank
+    // movement is UNRECONCILED from an empty document/evidence projection.
+    const bankStatuses = model.transactions.length ? await prisma.bankTransaction.findMany({
+      where: {
+        id: { in: model.transactions.map(row => row.id) },
+        bankAccountId,
+        bankAccount: { companyId: activeCompanyId, isActive: true },
+      },
+      select: { id: true, status: true },
+    }) : [];
+    const statusById = new Map(bankStatuses.map(row => [row.id, row.status]));
+    const modelWithBankStatuses = {
+      ...model,
+      transactions: model.transactions.map(row => ({ ...row, bankStatus: statusById.get(row.id) ?? null })),
+    };
+    const familyBlocks = familyEnabled && familyCanEdit
+      ? await getFamilyTransferBlocks(activeCompanyId, bankAccountId, model.transactions.map(row=>row.id)) : {};
+    const familySaved = familyEnabled && familyCanEdit ? await getFamilyTransferSplits(bankAccountId) : [];
+    const familyLoanRegistry = familyEnabled && familyCanEdit ? await getFamilyLoanRegistry(activeCompanyId) : { loans: [], truncated: false };
+    const journalEnabled = familyEnabled && familyCanEdit && familyLoanJournalLocalEnabled();
+    const familyJournal = journalEnabled ? await getFamilyLoanJournal() : null;
+    const [documentSets, existingConfirmedRead, ownTransfers] = await Promise.all([
+      getDocumentSetsWithHistory(activeCompanyId, bankAccountId),
+      getExistingConfirmedBankDocuments(activeCompanyId, bankAccountId, model.transactions.map(row => row.id)),
+      ownTransferReviewer ? getSavedOwnTransfers(activeCompanyId, bankAccountId) : Promise.resolve([]),
+    ]);
+    return (
+      <main className="p-3 sm:p-6">
+        <Link className="text-sm underline" href={`/banki/${bankAccountId}/afstemming?view=${requestedView}`}>
+          {visualText.standard}
+        </Link>
+        <VisualReconciliationWorkspace key={`${activeCompanyId}:${bankAccountId}:${requestedView}`}
+          model={modelWithBankStatuses} text={visualText} language={language}
+          documentSearchAction={searchVisualDocuments}
+          documentSets={documentSets}
+          existingConfirmedReconciliations={existingConfirmedRead.reconciliations}
+          historicalEvidenceUnavailable={!existingConfirmedRead.ok}
+          documentSetCanConfirm={access.canReconcileBookkeeping && !model.incomplete && documentSetStorageEnabled(process.env, { companyId: activeCompanyId, bankAccountId })}
+          documentSetLockReason={!access.canReconcileBookkeeping ? 'ROLE_CANNOT_RECONCILE' : model.incomplete ? 'INCOMPLETE_SOURCE_DATA' : documentSetStorageState(process.env, { companyId: activeCompanyId, bankAccountId })}
+          documentSetInspectAction={inspectSelectedVisualDocuments}
+          documentSetConfirmAction={confirmSelectedVisualDocuments}
+          documentSetVoidAction={voidSelectedVisualDocuments}
+          transferReview={ownTransferReviewer ? {
+            bankAccountName: `${account.name} · ${account.bankName}`,
+            bankAccountNumber: account.accountNumber,
+            inspectAction: inspectPossibleInternalTransfer,
+            confirmEnabled: access.canReconcileBookkeeping && ownTransferAccountReady(process.env, { companyId: activeCompanyId, bankAccountId }),
+            saved: ownTransfers,
+            confirmAction: confirmOwnTransferAction,
+            voidAction: voidOwnTransferAction,
+            ownerReviewAction: reviewBankAccountOwnersAction,
+          } : undefined}
+          family={{enabled:familyEnabled, draftOnly:familyOwner && !familyEnabled, canEdit:familyCanEdit, people:familyPeople, blocks:familyBlocks, saved:familySaved,
+            loanRegistry:familyLoanRegistry.loans, loanRegistryTruncated:familyLoanRegistry.truncated,
+            storageEnabled:familySplitStorageEnabled(), journalSnapshot:familyJournal, journalEnabled,
+            createJournalAction:createFamilyLoanJournalAction, movementJournalAction:addFamilyLoanJournalMovementAction}} />
+      </main>
+    );
+  }
+
   function reasonText(reason: CandidateReason) {
     switch (reason) {
       case "EXACT_DATE_AMOUNT_PARTY":
@@ -337,6 +440,10 @@ export default async function AfstemmingPage({ params, searchParams }: Props) {
 
   return (
     <main className="p-8">
+      <Link className="mb-4 inline-block rounded-lg bg-teal-800 px-4 py-2 text-white"
+        href={`/banki/${bankAccountId}/afstemming?layout=visual&view=${requestedView}`}>
+        {visualText.title}
+      </Link>
       <h1 className="text-2xl font-bold">
         ⚖️ {t.title}
       </h1>

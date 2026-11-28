@@ -638,7 +638,39 @@ export async function loginUser(
       cookieStore.delete("activeCompanyId");
     }
   } else {
-    cookieStore.delete("activeCompanyId");
+    // One authorized active company requires no manual selection.
+    // Admin accounts have global company access; other users need an active membership.
+    const availableCompanyIds =
+      user.role === "ADMIN"
+        ? (
+            await prisma.company.findMany({
+              where: { isActive: true },
+              select: { id: true },
+              take: 2,
+            })
+          ).map((company) => company.id)
+        : (
+            await prisma.userCompany.findMany({
+              where: {
+                userId: user.id,
+                isActive: true,
+                company: { isActive: true },
+              },
+              select: { companyId: true },
+              take: 2,
+            })
+          ).map((link) => link.companyId);
+
+    if (availableCompanyIds.length === 1) {
+      cookieStore.set("activeCompanyId", String(availableCompanyIds[0]), {
+        httpOnly: true,
+        sameSite: "lax",
+        path: "/",
+        secure: process.env.NODE_ENV === "production",
+      });
+    } else {
+      cookieStore.delete("activeCompanyId");
+    }
   }
 
   if (user.mustChangePassword) {

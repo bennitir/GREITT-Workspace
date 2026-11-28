@@ -22,6 +22,18 @@ export const READ_ONLY_BOOKKEEPING_CAPABILITIES: EffectiveBookkeepingCapabilitie
   canManageCompanySettings: false,
 };
 
+export function assertBookkeepingPostingAccess(access: {
+  allowed: boolean;
+  canBookEntries: boolean;
+}): void {
+  if (!access.allowed) {
+    throw new Error("Þú hefur ekki aðgang að þessu fyrirtæki.");
+  }
+  if (!access.canBookEntries) {
+    throw new Error("Þú hefur ekki heimild til að bóka.");
+  }
+}
+
 /**
  * VIEWER er harður read-only boundary fyrir bókhald.
  * Granular capability-gildi mega ekki óvart yfirskrifa það, jafnvel þótt

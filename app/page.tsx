@@ -30,6 +30,13 @@ export default async function Home() {
   const language = userSettings?.interfaceLanguage ?? "is";
   const t = uiText(language);
   const o = uiOptions(language);
+  // The optional family-finance module is not in the older home option dictionary.
+  const namedModules = {
+    ...o.modules,
+    fjolskylduvidauki: language === "en" ? "Family finance" :
+      language === "pl" ? "Finanse rodzinne" :
+      language === "sr" ? "Породичне финансије" : "Fjölskylduviðauki",
+  };
   const ht = homeText(language);
 
   const now = new Date();
@@ -333,7 +340,7 @@ export default async function Home() {
 
               <p className="mt-3 text-sm text-slate-500">
   {t.activeModules}:{" "}
-  {enabledModules.map((module) => o.modules[module.id]).join(", ")}
+  {enabledModules.map((module) => namedModules[module.id]).join(", ")}
 </p>
 
             </div>

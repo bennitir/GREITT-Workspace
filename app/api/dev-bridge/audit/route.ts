@@ -1,8 +1,16 @@
 import { NextResponse } from "next/server";
-import { prisma } from "@/lib/prisma";
+
 
 export async function GET() {
+  // Internal diagnostics are never exposed by hosted or production builds.
+  if (process.env.NODE_ENV !== "development" || process.env.VERCEL) {
+    return new Response("Not found", {
+      status: 404,
+      headers: { "Cache-Control": "private, no-store" },
+    });
+  }
   try {
+    const { prisma } = await import("@/lib/prisma");
     const now = new Date();
 
     const [
